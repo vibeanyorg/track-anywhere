@@ -276,6 +276,52 @@ def test_api_account_summary_groups_real_accounts_by_subtype():
     assert "asset" in ewallet_cash[0]["types"]
 
 
+def test_api_account_summary_separates_assets_and_liabilities():
+    assert app is not None
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {service.owner_token}"}
+
+    asset_resp = client.post(
+        "/api/v1/accounts",
+        json={
+            "name": "Summary Bank Cash",
+            "type": "asset",
+            "currency": "CNY",
+            "opening_balance": "100",
+            "institution_type": "bank",
+            "subtype": "debit_card",
+            "institution": "Summary Bank",
+        },
+        headers={**headers, "X-Idempotency-Key": "api-summary-bank-asset"},
+    )
+    liability_resp = client.post(
+        "/api/v1/accounts",
+        json={
+            "name": "Summary Bank Credit",
+            "type": "liability",
+            "currency": "CNY",
+            "opening_balance": "30",
+            "institution_type": "bank",
+            "subtype": "credit_card",
+            "institution": "Summary Bank",
+        },
+        headers={**headers, "X-Idempotency-Key": "api-summary-bank-liability"},
+    )
+    assert asset_resp.status_code == 200
+    assert liability_resp.status_code == 200
+
+    summary_resp = client.get("/api/v1/summary/accounts?group_by=institution&institution_type=bank&currency=CNY", headers=headers)
+
+    assert summary_resp.status_code == 200
+    groups = summary_resp.json()["groups"]
+    summary_bank = [group for group in groups if group["key"] == "Summary Bank"][0]
+    assert summary_bank["amount"] == "130"
+    assert summary_bank["asset_amount"] == "100"
+    assert summary_bank["liability_amount"] == "30"
+    assert summary_bank["net_amount"] == "70"
+    assert summary_bank["types"] == ["asset", "liability"]
+
+
 def test_api_create_and_list_user():
     assert app is not None
     client = TestClient(app)

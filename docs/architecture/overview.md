@@ -41,6 +41,8 @@ Each account remains single-asset. Multi-currency providers such as Wise should 
 
 Account summaries group confirmed balances by `type`, `institution_type`, `subtype`, `institution`, or `currency`. Summaries do not do FX conversion; multi-currency providers are returned as separate currency totals.
 
+Summary rows expose raw `amount` plus `asset_amount`, `liability_amount`, and `net_amount`. Use `asset_amount` for total assets and `net_amount` for net-worth style views; liabilities are stored as positive amounts owed.
+
 ## Security Posture
 
 Security is a prerequisite for high-authority Agent/OCR flows, not a final hardening pass. Attachment parsing fails closed outside local development when scanner/parsing hardening is unavailable. Audit and logs redact sensitive payloads by default.

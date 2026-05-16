@@ -1,0 +1,4 @@
+interface:
+  display_name: "Track Anywhere Ledger"
+  short_description: "Use the ta CLI safely for local personal accounting."
+  default_prompt: "Use the Track Anywhere ledger skill to create accounts, record balances or transactions, and verify the local ledger through the ta CLI."

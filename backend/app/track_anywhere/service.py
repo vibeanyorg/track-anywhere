@@ -239,12 +239,18 @@ class FinanceService:
                     "key": key,
                     "currency": account_currency,
                     "amount": Decimal("0"),
+                    "asset_amount": Decimal("0"),
+                    "liability_amount": Decimal("0"),
                     "account_count": 0,
                     "account_ids": [],
                     "types": set(),
                 },
             )
             group["amount"] += amount
+            if account.type == "liability":
+                group["liability_amount"] += amount
+            else:
+                group["asset_amount"] += amount
             group["account_count"] += 1
             group["account_ids"].append(account.account_id)
             group["types"].add(account.type)
@@ -259,6 +265,9 @@ class FinanceService:
                     "key": group["key"],
                     "currency": group["currency"],
                     "amount": str(group["amount"]),
+                    "asset_amount": str(group["asset_amount"]),
+                    "liability_amount": str(group["liability_amount"]),
+                    "net_amount": str(group["asset_amount"] - group["liability_amount"]),
                     "account_count": group["account_count"],
                     "account_ids": sorted(group["account_ids"]),
                     "types": sorted(group["types"]),
