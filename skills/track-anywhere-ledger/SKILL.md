@@ -1,37 +1,44 @@
 ---
 name: track-anywhere-ledger
-description: "Use the local Track Anywhere `ta` CLI for personal accounting tasks: creating accounts, recording balance snapshots, recording transfers or expenses, confirming screenshot/OCR-derived financial data, checking balances, generating summaries, and operating Hermes/OpenClaw-style ledger agents safely. Trigger when the user asks to 记账, 查账, 创建账户, 更新余额, record card/account/wallet/brokerage/crypto balances, process bank or wallet screenshots, or manage the local Track Anywhere ledger."
+description: "Use the local Track Anywhere `ta` CLI for personal accounting tasks: create accounts, record balance snapshots, record transfers or expenses, confirm screenshot/OCR-derived financial data, check balances, generate summaries, and operate Hermes/OpenClaw-style ledger agents safely. Trigger when the user asks to 记账, 查账, 创建账户, 更新余额, record card/account/wallet/brokerage/crypto balances, process bank or wallet screenshots, or manage the local Track Anywhere ledger."
 ---
 
 # Track Anywhere Ledger
 
-Use this skill to operate the local Track Anywhere ledger through the `ta` CLI.
-
-Run commands from the Track Anywhere project root. Prefer `TRACK_ANYWHERE_ROOT` when it is set:
+Run commands from the Track Anywhere repo root. If `TRACK_ANYWHERE_ROOT` is set, move there first:
 
 ```bash
-cd "${TRACK_ANYWHERE_ROOT:?Set TRACK_ANYWHERE_ROOT to the local track-anywhere repo}"
+if [ -n "${TRACK_ANYWHERE_ROOT:-}" ]; then
+  cd "$TRACK_ANYWHERE_ROOT"
+fi
 ```
 
 ## Core Rules
 
-- Use `ta` or the HTTP API for mutations. Do not write directly to SQLite.
-- Prefer `--json` for all agent workflows.
-- Before any mutation, run `ta data backup --label before-<change> --json`.
-- Use stable `--idempotency-key` values on every write.
-- Treat screenshots/OCR/oral input as uncertain. If details are incomplete, create a draft or record a balance snapshot; do not invent merchants or categories.
-- Verify every write with CLI reads before reporting success.
-- Keep a running local API alive if the user asked for it; do not stop it.
+- NEVER write to SQLite directly. Use `ta` or the HTTP API.
+- ALWAYS pass `--json` when the command supports it.
+- Before every write, run `ta data backup --label before-<change> --json`.
+- Pass a stable `--idempotency-key` on every write. Reuse the same key on retry.
+- Screenshots, OCR, and spoken input are uncertain. When details are missing, record a balance snapshot or a draft. NEVER invent merchants, amounts, or categories.
+- After every write, read the affected accounts and transactions. Report only verified results.
+- If the user asked to keep the API running, do not stop it at the end of the task.
 
 ## Workflow
 
 1. Discover syntax with `ta --help` and relevant subcommand help.
-2. Read current accounts/balances with `ta account find/list/show/balance --json`.
-3. Back up before writes.
-4. Write via `ta account create`, `ta account adjust`, `ta tx record`, or draft commands.
-5. Verify affected balances/transactions.
-6. Report backup path, account IDs, transaction IDs, verified balances, and any uncertainty.
+2. Read current state with `ta account find/list/show/balance --json` or `ta tx list/show --json`.
+3. Back up with `ta data backup --label before-<change> --json`.
+4. Write with `ta account create`, `ta account adjust`, `ta tx record`, or draft commands.
+5. Verify affected balances and transactions with CLI reads.
+6. Report backup path, account IDs, transaction IDs, verified balances, and unresolved uncertainty.
 
-## Detailed Reference
+## Runbook Topics
 
-Read [references/ledger-runbook.md](references/ledger-runbook.md) when you need concrete command examples, account taxonomy, credit-card repayment handling, fee handling, summaries, or screenshot balance-snapshot patterns.
+- concrete command examples
+- account taxonomy
+- balance snapshots from screenshots
+- credit-card repayment and fee handling
+- summaries and multi-currency rules
+- API health and startup handling
+
+Reference: [references/ledger-runbook.md](references/ledger-runbook.md)

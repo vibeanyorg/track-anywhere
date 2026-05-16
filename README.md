@@ -1,56 +1,59 @@
 # Track Anywhere
 
-Track Anywhere is a local-first personal accounting system for people who want a complete financial ledger without making day-to-day capture painful.
+Track Anywhere is a local-first personal ledger. It keeps official balances strict while allowing drafts, screenshots, and agent input to become entries only after review.
 
-The project combines a strict confirmed ledger, draft-first capture, a human- and agent-friendly CLI, a FastAPI backend, and a placeholder Next.js web UI. It is designed for workflows such as:
+It ships a FastAPI backend, a `ta` CLI usable by humans and agents, SQLite persistence by default, PostgreSQL-compatible storage URLs, and a Next.js frontend stub.
 
-- tracking bank cards, credit cards, e-wallets, fintech balances, brokerage holdings, and crypto wallets
-- recording balance snapshots from screenshots or manual review
-- separating assets, liabilities, expenses, and internal system accounts
-- letting agents create draft records or update balances through audited CLI/API commands
-- keeping real local financial data out of git by default
+Status: MVP. The CLI and backend are usable locally. The frontend is not yet a full product surface.
 
-> Status: early MVP. The CLI and backend are usable for local development; the web UI is intentionally still a placeholder.
+## Typical use
 
-## Core Ideas
+- Track bank cards, credit cards, e-wallets, fintech balances, brokerage holdings, and crypto wallets.
+- Record balance snapshots from screenshots or manual review.
+- Separate assets, liabilities, expenses, and internal system accounts.
+- Let agents create drafts or update balances through audited CLI/API commands.
+- Keep local financial data out of git by default.
 
-- **Strict confirmed ledger**: official balances are derived from confirmed postings.
-- **Draft-first capture**: OCR, screenshots, and voice-like descriptions can become drafts before they become financial truth.
-- **Agent-safe operations**: mutating commands use idempotency keys, audit events, scoped credentials, and explicit verification.
-- **Local-first persistence**: SQLite is the default local store; PostgreSQL-compatible URLs are supported through SQLAlchemy.
-- **Single-asset accounts**: multi-currency services such as Wise are modeled as one account per currency; crypto wallets are modeled as one account per token/network.
+## Core model
 
-## Repository Layout
+- **Confirmed-only balances**: official balances come from confirmed postings; drafts never affect them unless explicitly requested as projections.
+- **Draft-first capture**: uncertain input from OCR, screenshots, or agents can stay in review before it becomes ledger truth.
+- **Agent-safe writes**: mutations require idempotency keys, emit audit events, and should be verified by follow-up reads.
+- **Single-asset accounts**: multi-currency services are modeled as one account per currency; crypto wallets are modeled as one account per token/network.
+
+## Repository layout
 
 ```text
 backend/   FastAPI app, ledger domain, persistence, tests
-cli/       `ta` command-line client
-frontend/  Next.js placeholder UI
+cli/       ta command-line client
+frontend/  Next.js frontend stub
 docs/      Architecture, operations, ADRs, agent guidance
 skills/    Codex/Hermes/OpenClaw skill for safe ledger operation
 ```
 
 ## Quick Start
 
+### 1. Install
+
 Requirements:
 
 - Python 3.12+
 - `uv`
-- Node.js if you want to run the placeholder frontend
-
-Install dependencies:
+- Node.js only if you want to run the frontend stub
 
 ```bash
 uv sync --extra dev
 ```
 
-Start the API:
+### 2. Run the API
 
 ```bash
 uv run uvicorn track_anywhere.api:app --app-dir backend/app --host 127.0.0.1 --port 8000
 ```
 
-In another shell, issue a local development token and store it for the CLI:
+### 3. Authenticate the CLI
+
+In another shell:
 
 ```bash
 uv run ta auth dev-token --json
@@ -58,15 +61,11 @@ uv run ta auth login <token-from-json>
 uv run ta auth status --json
 ```
 
-Create a user:
+### 4. Create a user and account
 
 ```bash
 uv run ta user create alice --display-name "Alice" --idempotency-key user-create-alice --json
-```
 
-Create an account and set an opening balance:
-
-```bash
 uv run ta account create "Example Cash" \
   --type asset \
   --currency CNY \
@@ -76,24 +75,42 @@ uv run ta account create "Example Cash" \
   --institution local \
   --idempotency-key account-create-example-cash \
   --json
+```
 
+### 5. Record and verify a balance
+
+```bash
 uv run ta account adjust <account_id> \
   --amount 100 \
   --currency CNY \
   --purpose "Opening cash balance" \
   --idempotency-key balance-update-example-cash-opening \
   --json
-```
 
-Check the balance:
-
-```bash
 uv run ta account balance <account_id> --json
 ```
 
+## Data safety
+
+Treat local data as real financial data. The default SQLite database lives at:
+
+```text
+.local/track-anywhere.sqlite3
+```
+
+`.local/`, `.omx/`, `.env*`, SQLite files, and generated artifacts are ignored by git.
+
+Back up before every mutation:
+
+```bash
+uv run ta data backup --label before-change --json
+```
+
+Backups are written to `.local/backups/`, also ignored by git. See [Data Backup](docs/operations/data-backup.md).
+
 ## CLI
 
-Discover the command surface from the CLI itself:
+Discover syntax from the CLI:
 
 ```bash
 uv run ta --help
@@ -102,7 +119,7 @@ uv run ta tx --help
 uv run ta summary --help
 ```
 
-Useful read commands:
+Read the ledger:
 
 ```bash
 uv run ta account list --json
@@ -112,7 +129,7 @@ uv run ta tx list --account-id <account_id> --limit 10 --json
 uv run ta summary accounts --group-by institution --currency CNY --json
 ```
 
-Useful write commands:
+Write to the ledger:
 
 ```bash
 uv run ta account create "<name>" --type asset --currency CNY --idempotency-key <key> --json
@@ -121,62 +138,38 @@ uv run ta tx record --amount <amount> --currency CNY --from-account-id <source> 
 uv run ta capture "spent 38 on lunch" --dry-run --json
 ```
 
-For agent workflows, always prefer `--json`, stable idempotency keys, and post-write verification.
+Agent workflows: pass `--json`, supply a stable `--idempotency-key`, back up before writes, and re-read affected records after every write.
 
-## Data Safety
+## Account model
 
-Local data is real financial data. The default SQLite database lives at:
-
-```text
-.local/track-anywhere.sqlite3
-```
-
-`.local/`, `.omx/`, `.env*`, SQLite files, and generated artifacts are ignored by git.
-
-Before any mutation against real local data:
-
-```bash
-uv run ta data backup --label before-change --json
-```
-
-Backups are written to `.local/backups/`, also ignored by git. See [Data Backup](docs/operations/data-backup.md).
-
-## Account Model
-
-Accounts keep ledger direction separate from product grouping:
-
-- `type`: `asset`, `liability`, `expense`, `equity`, or `system`
-- `institution_type`: `bank`, `e_wallet`, `fintech`, `brokerage`, `cash`, `crypto_wallet`, `system`, or `other`
-- `subtype`: extensible product shape such as `debit_card`, `credit_card`, `money_market`, `fund`, `multicurrency_wallet`, or `crypto_token`
+- `type`: ledger direction, such as `asset`, `liability`, `expense`, `equity`, or `system`
+- `institution_type`: provider category, such as `bank`, `e_wallet`, `fintech`, `brokerage`, `cash`, `crypto_wallet`, `system`, or `other`
+- `subtype`: product shape, such as `debit_card`, `credit_card`, `money_market`, `fund`, `multicurrency_wallet`, or `crypto_token`
 - `institution`: human provider name
 
 Liabilities are stored as positive amounts owed. Summary rows expose `asset_amount`, `liability_amount`, and `net_amount` so reports do not confuse gross totals with net worth.
 
-## Agent Usage
+## Agent usage
 
-This repo includes a skill for Codex/Hermes/OpenClaw-style agents:
+Use the in-repo skill when an agent is already working inside this checkout:
 
 ```text
 skills/track-anywhere-ledger
 ```
 
-It teaches agents to use `ta` safely: back up before writes, avoid direct SQLite mutation, use idempotency keys, handle screenshot-derived data conservatively, and verify balances after every change.
-
-Standalone skill repository:
-
-[vibeanyorg/track-anywhere-ledger-skill](https://github.com/vibeanyorg/track-anywhere-ledger-skill)
-
-Install:
+Install the standalone skill package for agents that need a reusable public skill:
 
 ```bash
 npx skills add vibeanyorg/track-anywhere-ledger-skill --skill track-anywhere-ledger
 ```
 
-For project-local agent guidance, see [Hermes/OpenClaw Agent Guide](docs/agents/hermes-openclaw.md).
+Standalone skill repo: [vibeanyorg/track-anywhere-ledger-skill](https://github.com/vibeanyorg/track-anywhere-ledger-skill)
+
+Project-local agent guide: [Hermes/OpenClaw Agent Guide](docs/agents/hermes-openclaw.md)
 
 ## Frontend
 
-The frontend is a placeholder Next.js app:
+Run the frontend stub:
 
 ```bash
 cd frontend
@@ -184,7 +177,7 @@ npm install
 npm run dev
 ```
 
-The backend and CLI are the active MVP surface.
+Use the CLI and backend for the current MVP.
 
 ## Development
 
@@ -210,10 +203,13 @@ The public API surface is covered by snapshot tests under `backend/tests/snapsho
 - [ADR 0001: Draft-First Capture With Strict Confirmed Ledger](docs/adr/0001-draft-first-strict-ledger.md)
 - [Hermes/OpenClaw Agent Guide](docs/agents/hermes-openclaw.md)
 
-## Current Limitations
+## Not yet implemented
 
-- No complex import pipeline yet.
-- No full-featured web UI yet.
-- No automatic FX conversion in summaries.
+- Full import pipeline.
+- Full-featured web UI.
+- Automatic FX conversion in summaries.
+
+## Operational caveats
+
 - PostgreSQL backup support is not implemented; use `pg_dump` when running against PostgreSQL.
-- Security defaults are designed for local development first. Review deployment settings before exposing the API.
+- Defaults assume local-only use. Review auth, CORS, and bind address before exposing the API.

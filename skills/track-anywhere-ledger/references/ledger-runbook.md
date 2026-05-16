@@ -1,8 +1,8 @@
 # Track Anywhere Ledger Runbook
 
-## Command Discovery
+## Read Commands
 
-Use the CLI as source of truth:
+Discover syntax from the CLI:
 
 ```bash
 ta --help
@@ -11,7 +11,7 @@ ta tx --help
 ta summary --help
 ```
 
-Use JSON whenever supported:
+Always request JSON:
 
 ```bash
 ta account list --json
@@ -23,23 +23,21 @@ ta tx show <transaction_id> --json
 ta summary accounts --group-by institution --currency CNY --json
 ```
 
-## Safety
+Use SQL only when no CLI read covers the question. SQL must be read-only. Always report that SQL was used and why.
 
-This ledger contains real personal financial data.
+## Write Safety
 
-- Never commit `.local/`, SQLite databases, backups, screenshots, tokens, or raw private exports.
-- Do not mutate without backup:
+Back up before every write:
 
 ```bash
 ta data backup --label before-<short-change-name> --json
 ```
 
-- If a command times out after reaching the API, retry with the same idempotency key before trying a different write.
-- Read-only SQL is allowed only when a required CLI read command is missing; report that explicitly.
+On timeout after the API received the request, retry with the same `--idempotency-key`. Do not change the payload.
 
 ## Account Taxonomy
 
-Accounting `type`:
+Choose accounting `type` from ledger direction:
 
 | Type | Meaning |
 | --- | --- |
@@ -49,7 +47,7 @@ Accounting `type`:
 | `equity` | Opening-balance or balancing accounts. Usually system-owned. |
 | `system` | Internal adjustment accounts. Do not present as real assets. |
 
-Provider `institution_type`:
+Choose `institution_type` from provider category:
 
 | Institution Type | Examples |
 | --- | --- |
@@ -61,13 +59,11 @@ Provider `institution_type`:
 | `cash` | Physical cash |
 | `other` | Fees or uncategorized operational accounts |
 
-Common `subtype` slugs: `debit_card`, `credit_card`, `checking`, `ewallet_cash`, `ewallet_money_market`, `money_market`, `wealth_management`, `fund`, `multicurrency_wallet`, `payroll_balance`, `crypto_token`, `fee`.
+Use lowercase `subtype` slugs such as `debit_card`, `credit_card`, `checking`, `ewallet_cash`, `ewallet_money_market`, `money_market`, `wealth_management`, `fund`, `multicurrency_wallet`, `payroll_balance`, `crypto_token`, or `fee`.
 
-Model each account as one currency or asset. Wise should be separate `Wise USD`, `Wise EUR`, `Wise CNY` accounts. Crypto should be separate token/network accounts such as `SafePal USDC (Arbitrum)`.
+Model each account as one currency or asset. Wise should be separate `Wise USD`, `Wise EUR`, and `Wise CNY` accounts. Crypto should be separate token/network accounts such as `SafePal USDC (Arbitrum)`.
 
-## Common Writes
-
-### Create Account
+## Create Account
 
 ```bash
 ta account create "<name>" \
@@ -83,9 +79,17 @@ ta account create "<name>" \
 
 For credit cards, use `--type liability --subtype credit_card`.
 
-### Balance Snapshot
+## Balance Snapshot
 
 Use this when a screenshot only gives the current balance or the user says not to record spending.
+
+**`account adjust` takes a delta, not a target.** Compute this first:
+
+```text
+delta = screenshot_balance - current_official_balance
+```
+
+Then write the adjustment:
 
 ```bash
 ta account balance <account_id> --json
@@ -99,9 +103,7 @@ ta account adjust <account_id> \
 ta account balance <account_id> --json
 ```
 
-`account adjust` takes a delta, not a target balance. Compute `delta = screenshot_balance - current_official_balance`.
-
-### Transfer Or Explicit Expense
+## Transfer Or Explicit Expense
 
 Use `ta tx record` when source and target are clear:
 
@@ -119,15 +121,15 @@ ta tx record \
 
 For explicit fees, create or reuse an `expense` account such as `费用-手续费` with `institution_type=other` and `subtype=fee`.
 
-### Credit Card Repayment With Fee
+## Credit Card Repayment With Fee
 
-Because liabilities are stored as positive amount owed, do not use a normal asset-to-liability transfer for repayment. Use three writes:
+Liabilities are positive amounts owed, so a normal asset-to-liability transfer would increase the debt. Repay with three separate writes:
 
 1. Record the explicit fee as source asset -> fee expense.
 2. Decrease the source asset by the repayment principal with `account adjust`.
 3. Decrease the credit-card liability by the same repayment principal with `account adjust`.
 
-Verify:
+After all three writes, verify:
 
 - Source asset decreased by `principal + fee`.
 - Credit-card liability decreased by `principal`.
@@ -135,7 +137,7 @@ Verify:
 
 ## Summaries
 
-Use summaries instead of SQL:
+Read aggregates with `ta summary`, not SQL:
 
 ```bash
 ta summary accounts --group-by institution --currency CNY --json
@@ -148,17 +150,18 @@ Summary rows expose `amount`, `asset_amount`, `liability_amount`, and `net_amoun
 - Use `asset_amount` for total assets.
 - Use `liability_amount` for amount owed.
 - Use `net_amount` for net-worth-style reporting.
-- Do not add different currencies together unless the user gives explicit FX rates and asks for conversion.
+
+NEVER sum across currencies. If the user supplies FX rates and requests conversion, do it explicitly and label the result.
 
 ## API Handling
 
-Check API health when needed:
+Health check:
 
 ```bash
 curl -s http://127.0.0.1:8000/api/v1/health
 ```
 
-If the API is down and the CLI needs it:
+If a CLI call fails with connection refused, start the API:
 
 ```bash
 uv run uvicorn track_anywhere.api:app --app-dir backend/app --host 127.0.0.1 --port 8000
@@ -166,13 +169,13 @@ uv run uvicorn track_anywhere.api:app --app-dir backend/app --host 127.0.0.1 --p
 
 If the user asked to keep the API running, leave it running after the task.
 
-## Final Report
+## Final Report Template
 
-Report concisely:
-
-- Backup path.
-- What was recorded.
-- Account IDs and transaction IDs.
-- Verified balances.
-- Any direct SQL read and why it was necessary.
-- API status when relevant.
+```text
+Recorded: <what changed>
+Backup: <backup path>
+Accounts: <account ids and verified balances>
+Transactions: <transaction ids>
+Verification: <commands/results checked>
+Notes: <uncertainty, SQL usage, API status if relevant>
+```
