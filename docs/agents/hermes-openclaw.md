@@ -2,17 +2,13 @@
 
 Use this guide when a Hermes/OpenClaw agent operates a local Track Anywhere checkout through the `ta` CLI.
 
-For reusable skill installation, prefer:
-
-```bash
-npx skills add vibeanyorg/track-anywhere-ledger-skill --skill track-anywhere-ledger
-```
-
-The in-repo skill lives at:
+The canonical in-repo skill lives at:
 
 ```text
 skills/track-anywhere-ledger
 ```
+
+Keep agent guidance in this repository so it evolves with the `ta` CLI and API.
 
 ## Operating Contract
 

@@ -177,19 +177,13 @@ Performance reports use the investment events plus the account's current confirm
 
 ## Agent usage
 
-Use the in-repo skill when an agent is already working inside this checkout:
+The canonical Track Anywhere ledger skill lives in this repository:
 
 ```text
 skills/track-anywhere-ledger
 ```
 
-Install the standalone skill package for agents that need a reusable public skill:
-
-```bash
-npx skills add vibeanyorg/track-anywhere-ledger-skill --skill track-anywhere-ledger
-```
-
-Standalone skill repo: [vibeanyorg/track-anywhere-ledger-skill](https://github.com/vibeanyorg/track-anywhere-ledger-skill)
+Keep this in-repo skill updated with CLI/API changes so agent guidance and implementation stay in one source of truth.
 
 Project-local agent guide: [Hermes/OpenClaw Agent Guide](docs/agents/hermes-openclaw.md)
 
