@@ -1,0 +1,77 @@
+{
+  "paths": {
+    "/api/v1/accounts": [
+      "get",
+      "post"
+    ],
+    "/api/v1/accounts/{account_id}": [
+      "get",
+      "patch"
+    ],
+    "/api/v1/auth/dev-token": [
+      "post"
+    ],
+    "/api/v1/attachments": [
+      "post"
+    ],
+    "/api/v1/credentials/agent": [
+      "post"
+    ],
+    "/api/v1/credentials/revoke": [
+      "post"
+    ],
+    "/api/v1/drafts/capture": [
+      "post"
+    ],
+    "/api/v1/drafts/confirm": [
+      "post"
+    ],
+    "/api/v1/drafts/reject": [
+      "post"
+    ],
+    "/api/v1/drafts/supersede": [
+      "post"
+    ],
+    "/api/v1/funds": [
+      "post"
+    ],
+    "/api/v1/funds/allocate": [
+      "post"
+    ],
+    "/api/v1/funds/spend": [
+      "post"
+    ],
+    "/api/v1/health": [
+      "get"
+    ],
+    "/api/v1/ledger/adjustments": [
+      "post"
+    ],
+    "/api/v1/ledger/reverse": [
+      "post"
+    ],
+    "/api/v1/ledger/transactions": [
+      "get",
+      "post"
+    ],
+    "/api/v1/ledger/transactions/{transaction_id}": [
+      "get"
+    ],
+    "/api/v1/query/accounts/{account_id}/balance": [
+      "get"
+    ],
+    "/api/v1/reconciliation/actions": [
+      "post"
+    ],
+    "/api/v1/session/dev-local": [
+      "post"
+    ],
+    "/api/v1/summary/accounts": [
+      "get"
+    ],
+    "/api/v1/users": [
+      "get",
+      "post"
+    ]
+  }
+}

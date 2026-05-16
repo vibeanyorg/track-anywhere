@@ -1,0 +1,11 @@
+{
+  "dry_run": true,
+  "payload": {
+    "amount": null,
+    "currency": "CNY",
+    "expense_account_id": null,
+    "memo": "spent 38",
+    "source_account_id": null
+  },
+  "policy_decision": "would_create_draft"
+}

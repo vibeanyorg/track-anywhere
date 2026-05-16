@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+ASSET_CODE_PATTERN = r"^[A-Z][A-Z0-9]{1,15}$"
+INSTITUTION_TYPES = Literal["bank", "e_wallet", "fintech", "brokerage", "cash", "crypto_wallet", "system", "other"]
+
+
+class StrictCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    schema_version: Literal["v1"] = "v1"
+
+
+class CreateAccountCommand(StrictCommand):
+    name: str = Field(min_length=1, max_length=120)
+    type: Literal["asset", "liability", "income", "expense", "equity", "fund", "system"]
+    currency: str = Field(pattern=ASSET_CODE_PATTERN)
+    opening_balance: Decimal = Decimal("0")
+    institution_type: INSTITUTION_TYPES | None = None
+    subtype: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    institution: str | None = Field(default=None, min_length=1, max_length=120)
+
+    @field_validator("institution")
+    @classmethod
+    def normalize_empty_institution(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("institution must not be blank")
+        return stripped
+
+
+class UpdateAccountMetadataCommand(StrictCommand):
+    institution_type: INSTITUTION_TYPES | None = None
+    subtype: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    institution: str | None = Field(default=None, min_length=1, max_length=120)
+
+    @field_validator("institution")
+    @classmethod
+    def normalize_empty_institution(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("institution must not be blank")
+        return stripped
+
+
+class CreateUserCommand(StrictCommand):
+    username: str = Field(min_length=2, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+
+
+class CaptureDraftCommand(StrictCommand):
+    memo: str = Field(min_length=1, max_length=256)
+    amount: Decimal | None = Field(default=None, gt=0)
+    currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
+    source_account_id: str | None = None
+    expense_account_id: str | None = None
+    fund_id: str | None = None
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @field_validator("memo")
+    @classmethod
+    def reject_policy_override_text(cls, value: str) -> str:
+        lowered = value.lower()
+        forbidden = ["ignore policy", "requires_confirmation=false", "ledger_impact", "actor=", "scope="]
+        if any(item in lowered for item in forbidden):
+            raise ValueError("memo contains policy override text")
+        return value
+
+
+class RecordTransactionCommand(StrictCommand):
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
+    from_account_id: str
+    to_account_id: str
+    purpose: str = Field(min_length=1, max_length=256)
+
+
+class BalanceAdjustmentCommand(StrictCommand):
+    account_id: str
+    amount: Decimal
+    currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    purpose: str = Field(min_length=1, max_length=256)
+
+    @field_validator("amount")
+    @classmethod
+    def reject_zero_amount(cls, value: Decimal) -> Decimal:
+        if value == Decimal("0"):
+            raise ValueError("amount must not be zero")
+        return value
+
+
+class ConfirmDraftCommand(StrictCommand):
+    draft_id: str
+    expected_version: int = Field(ge=1)
+
+
+class RejectDraftCommand(StrictCommand):
+    draft_id: str
+    expected_version: int = Field(ge=1)
+    reason: str = Field(default="", max_length=240)
+
+
+class SupersedeDraftCommand(StrictCommand):
+    draft_id: str
+    expected_version: int = Field(ge=1)
+    replacement: CaptureDraftCommand
+
+
+class CreateFundCommand(StrictCommand):
+    name: str = Field(min_length=1, max_length=120)
+    currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
+
+
+class FundAllocationCommand(StrictCommand):
+    fund_id: str
+    source_account_id: str
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
+    expected_version: int = Field(ge=1)
+    memo: str = Field(default="", max_length=256)
+
+
+class FundSpendCommand(StrictCommand):
+    fund_id: str
+    expense_account_id: str
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
+    expected_version: int = Field(ge=1)
+    memo: str = Field(default="", max_length=256)
+
+
+class ReverseTransactionCommand(StrictCommand):
+    transaction_id: str
+    memo: str = Field(min_length=1, max_length=256)
+
+
+class IssueCredentialCommand(StrictCommand):
+    scopes: list[str] = Field(min_length=1, max_length=12)
+    ttl_minutes: int = Field(default=30, ge=1, le=24 * 60)
+
+
+class RevokeCredentialCommand(StrictCommand):
+    target_token: str = Field(min_length=1, max_length=256)
+    reason: str = Field(default="", max_length=240)
+
+
+class ReconciliationActionCommand(StrictCommand):
+    summary: str = Field(min_length=1, max_length=500)

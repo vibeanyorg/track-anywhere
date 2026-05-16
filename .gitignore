@@ -1,0 +1,40 @@
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+.local/
+*.sqlite
+*.sqlite3
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Frontend generated artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/tsconfig.tsbuildinfo
+
+# Agent/runtime data
+.omx/
+
+# Logs and scratch files
+*.log
+tmp/
+temp/
