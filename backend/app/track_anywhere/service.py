@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import timedelta
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from hashlib import sha256
 from typing import Any
@@ -20,6 +20,7 @@ from .commands import (
     FundSpendCommand,
     IssueCredentialCommand,
     ReconciliationActionCommand,
+    RecordInvestmentEventCommand,
     RecordTransactionCommand,
     RejectDraftCommand,
     RevokeCredentialCommand,
@@ -30,6 +31,7 @@ from .commands import (
 from .drafts import DraftBook
 from .errors import NotFound, StaleVersion, ValidationError
 from .idempotency import IdempotencyStore
+from .investments import InvestmentBook, InvestmentEvent, investment_performance_report
 from .ledger import Account, Ledger, Posting, Transaction
 from .security import Actor, CredentialStore, DeploymentSecurityConfig, validate_startup_security
 from .storage import OrmStorage, new_owner_token
@@ -43,6 +45,8 @@ OWNER_SCOPES = {
     "ledger:confirm",
     "ledger:read",
     "ledger:reverse",
+    "investment:read",
+    "investment:write",
     "budget:write",
     "attachment:write",
     "credential:write",
@@ -65,6 +69,7 @@ class FinanceService:
         self.ledger = Ledger()
         self.drafts = DraftBook()
         self.budgets = BudgetBook()
+        self.investments = InvestmentBook()
         self.attachments = AttachmentIntake(self.config)
         self.users = UserDirectory()
         self.reconciliation_actions: list[dict[str, Any]] = []
@@ -464,6 +469,79 @@ class FinanceService:
         )
         self._persist()
         return result
+
+    def record_investment_event(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[InvestmentEvent, bool]:
+        actor = self.actor_from_token(token, "investment:write")
+        command = RecordInvestmentEventCommand.model_validate(payload)
+        account = self.ledger.get_account(command.account_id)
+        if account.type != "asset":
+            raise ValidationError("investment events can only be recorded against asset accounts")
+        if account.currency != command.currency:
+            raise ValidationError("investment event currency must match account currency")
+        request_hash = self._hash_command(command)
+
+        def run():
+            event = self.investments.record(
+                account_id=command.account_id,
+                event_type=command.event_type,
+                amount=command.amount,
+                currency=command.currency,
+                occurred_at=command.occurred_at,
+                memo=command.memo,
+                units=command.units,
+                nav=command.nav,
+            )
+            self.audit.record(
+                operation="investment.event.record",
+                actor=actor,
+                entity_ref=event.event_id,
+                details=command.model_dump(mode="json"),
+            )
+            return event
+
+        result = self.idempotency.run(
+            key=idempotency_key,
+            actor=actor,
+            operation="investment.event.record",
+            request_hash=request_hash,
+            fn=run,
+        )
+        self._persist()
+        return result
+
+    def list_investment_events(self, token: str, account_id: str | None = None) -> list[InvestmentEvent]:
+        self.actor_from_token(token, "investment:read")
+        if account_id is not None:
+            self.ledger.get_account(account_id)
+        return self.investments.list(account_id)
+
+    def investment_performance(self, token: str, account_id: str, *, as_of: str | None = None):
+        self.actor_from_token(token, "investment:read")
+        account = self.ledger.get_account(account_id)
+        try:
+            as_of_datetime = datetime.fromisoformat(as_of) if as_of is not None else None
+        except ValueError as exc:
+            raise ValidationError("as_of must be an ISO-8601 datetime") from exc
+        if as_of_datetime is None:
+            as_of_datetime = max(
+                (event.occurred_at for event in self.investments.list(account_id)),
+                default=None,
+            )
+        if as_of_datetime is None:
+            as_of_datetime = max(
+                (transaction.occurred_at for transaction in self.ledger.transactions.values()),
+                default=None,
+            )
+        if as_of_datetime is None:
+            as_of_datetime = datetime.now(timezone.utc)
+        current_value = self.ledger.balance(account_id).get(account.currency, Decimal("0"))
+        return investment_performance_report(
+            account_id=account_id,
+            currency=account.currency,
+            current_value=current_value,
+            events=self.investments.list(account_id),
+            as_of=as_of_datetime,
+        )
 
     def confirm_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[Transaction, bool]:
         actor = self.actor_from_token(token, "ledger:confirm")

@@ -315,6 +315,21 @@ if FastAPI is not None:
         except (TrackAnywhereError, PydanticValidationError) as exc:
             _raise_command_error(exc, "ledger.balance.adjust")
 
+    @app.post("/api/v1/investments/events", dependencies=[Depends(session_guard)])
+    async def record_investment_event(payload: dict[str, Any], token: str = Depends(token_from_header), key: str = Depends(idempotency_key)):
+        try:
+            event, replay = service.record_investment_event(token, payload, idempotency_key=key)
+            return {"event": _serialize(event), "idempotent_replay": replay}
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "investment.event.record")
+
+    @app.get("/api/v1/investments/accounts/{account_id}/performance", dependencies=[Depends(session_guard)])
+    async def investment_performance(account_id: str, as_of: str | None = None, token: str = Depends(token_from_header)):
+        try:
+            return service.investment_performance(token, account_id, as_of=as_of)
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "investment.performance")
+
     @app.post("/api/v1/drafts/confirm", dependencies=[Depends(session_guard)])
     async def confirm_draft(payload: dict[str, Any], token: str = Depends(token_from_header), key: str = Depends(idempotency_key)):
         try:

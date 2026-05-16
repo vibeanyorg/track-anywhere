@@ -18,6 +18,7 @@ from .audit import AuditEvent
 from .budgets import BudgetFund
 from .drafts import DraftTransaction
 from .idempotency import CommandReceipt
+from .investments import InvestmentEvent
 from .ledger import Account, Posting, Transaction
 from .security import Actor, Credential
 from .users import AppUser
@@ -117,6 +118,21 @@ class FundRecord(Base):
     spent: Mapped[str] = mapped_column(String(80))
     version: Mapped[int] = mapped_column(Integer)
     flow: Mapped[list[dict[str, str]]] = mapped_column(JSON)
+
+
+class InvestmentEventRecord(Base):
+    __tablename__ = "investment_events"
+
+    event_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(80))
+    event_type: Mapped[str] = mapped_column(String(40))
+    amount: Mapped[str] = mapped_column(String(80))
+    currency: Mapped[str] = mapped_column(String(ASSET_CODE_LENGTH))
+    occurred_at: Mapped[str] = mapped_column(String(80))
+    memo: Mapped[str] = mapped_column(String(256))
+    units: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    nav: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    version: Mapped[int] = mapped_column(Integer)
 
 
 class AttachmentRecord(Base):
@@ -252,6 +268,7 @@ class OrmStorage:
             service.ledger.transactions = self._load_transactions(session)
             service.drafts.drafts = self._load_drafts(session)
             service.budgets.funds = self._load_funds(session)
+            service.investments.events = self._load_investment_events(session)
             service.attachments.attachments = {
                 row.attachment_id: Attachment(
                     attachment_id=row.attachment_id,
@@ -303,6 +320,7 @@ class OrmStorage:
             self._save_transactions(session, service.ledger.transactions.values())
             self._save_drafts(session, service.drafts.drafts.values())
             self._save_funds(session, service.budgets.funds.values())
+            self._save_investment_events(session, service.investments.events.values())
             session.add_all(
                 AttachmentRecord(
                     attachment_id=attachment.attachment_id,
@@ -339,6 +357,7 @@ class OrmStorage:
             AuditEventRecord,
             CredentialRecord,
             AttachmentRecord,
+            InvestmentEventRecord,
             FundRecord,
             DraftRecord,
             TransactionRecord,
@@ -464,6 +483,40 @@ class OrmStorage:
                 flow=to_jsonable(fund.flow),
             )
             for fund in funds
+        )
+
+    def _load_investment_events(self, session: Session) -> dict[str, InvestmentEvent]:
+        return {
+            row.event_id: InvestmentEvent(
+                event_id=row.event_id,
+                account_id=row.account_id,
+                event_type=row.event_type,
+                amount=Decimal(row.amount),
+                currency=row.currency,
+                occurred_at=datetime.fromisoformat(row.occurred_at),
+                memo=row.memo,
+                units=Decimal(row.units) if row.units is not None else None,
+                nav=Decimal(row.nav) if row.nav is not None else None,
+                version=row.version,
+            )
+            for row in session.query(InvestmentEventRecord).all()
+        }
+
+    def _save_investment_events(self, session: Session, events) -> None:
+        session.add_all(
+            InvestmentEventRecord(
+                event_id=event.event_id,
+                account_id=event.account_id,
+                event_type=event.event_type,
+                amount=str(event.amount),
+                currency=event.currency,
+                occurred_at=event.occurred_at.isoformat(),
+                memo=event.memo,
+                units=str(event.units) if event.units is not None else None,
+                nav=str(event.nav) if event.nav is not None else None,
+                version=event.version,
+            )
+            for event in events
         )
 
     def _load_credentials(self, session: Session) -> dict[str, Credential]:

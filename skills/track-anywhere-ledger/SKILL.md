@@ -28,15 +28,18 @@ fi
 1. Discover syntax with `ta --help` and relevant subcommand help.
 2. Read current state with `ta account find/list/show/balance --json` or `ta tx list/show --json`.
 3. Back up with `ta data backup --label before-<change> --json`.
-4. Write with `ta account create`, `ta account adjust`, `ta tx record`, or draft commands.
+4. Write with `ta account create`, `ta account adjust`, `ta tx record`, `ta investment event`, or draft commands.
 5. Verify affected balances and transactions with CLI reads.
 6. Report backup path, account IDs, transaction IDs, verified balances, and unresolved uncertainty.
+
+For wealth-management, money-market, or fund holdings where annualized return matters, record dated `ta investment event` cash flows (`buy`, `add`, `sell`, `income`) and verify with `ta investment performance <account_id> --json`. Do not rely only on account names or balance-snapshot free text for principal and holding period.
 
 ## Runbook Topics
 
 - concrete command examples
 - account taxonomy
 - balance snapshots from screenshots
+- investment holding events and annualized-return queries
 - credit-card repayment and fee handling
 - summaries and multi-currency rules
 - API health and startup handling

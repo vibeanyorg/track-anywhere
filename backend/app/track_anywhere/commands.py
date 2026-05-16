@@ -100,6 +100,17 @@ class BalanceAdjustmentCommand(StrictCommand):
         return value
 
 
+class RecordInvestmentEventCommand(StrictCommand):
+    account_id: str
+    event_type: Literal["buy", "add", "sell", "income"]
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    memo: str = Field(default="", max_length=256)
+    units: Decimal | None = Field(default=None, gt=0)
+    nav: Decimal | None = Field(default=None, gt=0)
+
+
 class ConfirmDraftCommand(StrictCommand):
     draft_id: str
     expected_version: int = Field(ge=1)

@@ -63,6 +63,34 @@ Use lowercase `subtype` slugs such as `debit_card`, `credit_card`, `checking`, `
 
 Model each account as one currency or asset. Wise should be separate `Wise USD`, `Wise EUR`, and `Wise CNY` accounts. Crypto should be separate token/network accounts such as `SafePal USDC (Arbitrum)`.
 
+## Investment Events
+
+Use investment events when a wealth-management, money-market, or fund account needs holding-period and annualized-return analytics. The account balance remains the current value; investment events record dated cash flows for performance.
+
+Event types:
+
+- `buy`: initial purchase
+- `add`: additional purchase or top-up
+- `sell`: redemption proceeds
+- `income`: cash income or distribution received
+
+```bash
+ta investment event <account_id> \
+  --type buy \
+  --amount 35000 \
+  --currency CNY \
+  --occurred-at 2026-04-24T00:00:00+08:00 \
+  --memo "initial purchase" \
+  --idempotency-key investment-buy-<account-id>-20260424 \
+  --json
+
+ta investment performance <account_id> \
+  --as-of 2026-05-15T00:00:00+08:00 \
+  --json
+```
+
+Performance uses XIRR over dated `buy`/`add`/`sell`/`income` events plus the current confirmed account balance. If historical trade data is missing, backfill one dated `buy` event for known principal and keep the existing balance snapshot as the current value.
+
 ## Create Account
 
 ```bash

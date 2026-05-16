@@ -164,6 +164,24 @@ def build_parser() -> argparse.ArgumentParser:
     summary_accounts.add_argument("--include-system", action="store_true")
     summary_accounts.add_argument("--json", action="store_true")
 
+    investment = sub.add_parser("investment")
+    investment_sub = investment.add_subparsers(dest="investment_command", required=True)
+    investment_event = investment_sub.add_parser("event")
+    investment_event.add_argument("account_id")
+    investment_event.add_argument("--type", dest="event_type", choices=("buy", "add", "sell", "income"), required=True)
+    investment_event.add_argument("--amount", required=True)
+    investment_event.add_argument("--currency", default="CNY")
+    investment_event.add_argument("--occurred-at")
+    investment_event.add_argument("--memo")
+    investment_event.add_argument("--units")
+    investment_event.add_argument("--nav")
+    investment_event.add_argument("--idempotency-key")
+    investment_event.add_argument("--json", action="store_true")
+    investment_performance = investment_sub.add_parser("performance")
+    investment_performance.add_argument("account_id")
+    investment_performance.add_argument("--as-of")
+    investment_performance.add_argument("--json", action="store_true")
+
     user_group = sub.add_parser("user")
     user_sub = user_group.add_subparsers(dest="user_command", required=True)
     user_create = user_sub.add_parser("create")
@@ -428,6 +446,37 @@ def main(argv: list[str] | None = None) -> int:
                     "institution_type": args.institution_type,
                     "include_system": "true" if args.include_system else None,
                 },
+            ),
+        )
+    elif args.command == "investment" and args.investment_command == "event":
+        payload = {
+            key: value
+            for key, value in {
+                "account_id": args.account_id,
+                "event_type": args.event_type,
+                "amount": args.amount,
+                "currency": args.currency,
+                "occurred_at": args.occurred_at,
+                "memo": args.memo,
+                "units": args.units,
+                "nav": args.nav,
+            }.items()
+            if value is not None
+        }
+        status, data = request_json(
+            config,
+            "POST",
+            "/api/v1/investments/events",
+            payload,
+            key=command_idempotency_key(args, "investment-event"),
+        )
+    elif args.command == "investment" and args.investment_command == "performance":
+        status, data = request_json(
+            config,
+            "GET",
+            with_query(
+                f"/api/v1/investments/accounts/{urllib.parse.quote(args.account_id)}/performance",
+                {"as_of": args.as_of},
             ),
         )
     elif args.command == "account" and args.account_command == "list":

@@ -118,6 +118,27 @@ Choose `institution_type` from provider category:
 
 Use lowercase `subtype` slugs such as `debit_card`, `credit_card`, `checking`, `ewallet_cash`, `ewallet_money_market`, `money_market`, `wealth_management`, `fund`, `multicurrency_wallet`, `payroll_balance`, `crypto_token`, or `fee`.
 
+## Investment Events
+
+For bank wealth-management, money-market, and fund accounts, use account balances for current value and `ta investment event` for dated cash flows. This preserves holding time, additional purchases, redemptions, and income so `ta investment performance` can compute holding days and money-weighted annualized return.
+
+```bash
+ta investment event <account_id> \
+  --type buy \
+  --amount 35000 \
+  --currency CNY \
+  --occurred-at 2026-04-24T00:00:00+08:00 \
+  --memo "initial purchase" \
+  --idempotency-key investment-buy-<account-id>-20260424 \
+  --json
+
+ta investment performance <account_id> \
+  --as-of 2026-05-15T00:00:00+08:00 \
+  --json
+```
+
+Use `buy` for initial principal, `add` for top-ups, `sell` for redemption proceeds, and `income` for cash distributions. Do not encode these only in account names or free-text balance snapshots when annualized return matters.
+
 ## Final Response Template
 
 ```text

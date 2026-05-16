@@ -135,6 +135,7 @@ Write to the ledger:
 uv run ta account create "<name>" --type asset --currency CNY --idempotency-key <key> --json
 uv run ta account adjust <account_id> --amount <delta> --currency CNY --purpose "<why>" --idempotency-key <key> --json
 uv run ta tx record --amount <amount> --currency CNY --from-account-id <source> --to-account-id <target> --purpose "<why>" --idempotency-key <key> --json
+uv run ta investment event <investment_account_id> --type buy --amount <principal> --occurred-at <iso-date> --idempotency-key <key> --json
 uv run ta capture "spent 38 on lunch" --dry-run --json
 ```
 
@@ -148,6 +149,31 @@ Agent workflows: pass `--json`, supply a stable `--idempotency-key`, back up bef
 - `institution`: human provider name
 
 Liabilities are stored as positive amounts owed. Summary rows expose `asset_amount`, `liability_amount`, and `net_amount` so reports do not confuse gross totals with net worth.
+
+## Investment performance
+
+Investment accounts still use normal account balances for current value. Record dated investment events for performance analytics:
+
+- `buy` or `add`: money invested into the position
+- `sell`: redemption proceeds
+- `income`: cash income or distribution received
+
+```bash
+uv run ta investment event <account_id> \
+  --type buy \
+  --amount 35000 \
+  --currency CNY \
+  --occurred-at 2026-04-24T00:00:00+08:00 \
+  --memo "initial purchase" \
+  --idempotency-key investment-buy-example \
+  --json
+
+uv run ta investment performance <account_id> \
+  --as-of 2026-05-15T00:00:00+08:00 \
+  --json
+```
+
+Performance reports use the investment events plus the account's current confirmed balance to return holding days, net contributed principal, total return, and money-weighted annualized return.
 
 ## Agent usage
 
