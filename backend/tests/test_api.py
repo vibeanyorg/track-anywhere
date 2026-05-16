@@ -245,6 +245,44 @@ def test_api_categories_expense_income_and_summary_flow():
     assert tx_list.json()["transactions"][0]["category_id"] == expense_category_id
 
 
+def test_api_credit_card_profile_flow():
+    assert app is not None
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {service.owner_token}"}
+
+    card_resp = client.post(
+        "/api/v1/accounts",
+        json={
+            "name": "API Profile Card",
+            "type": "liability",
+            "currency": "CNY",
+            "opening_balance": "300",
+            "institution_type": "bank",
+            "subtype": "credit_card",
+            "institution": "API Bank",
+        },
+        headers={**headers, "X-Idempotency-Key": "api-profile-card"},
+    )
+    assert card_resp.status_code == 200
+    card_id = card_resp.json()["account"]["account_id"]
+
+    update_resp = client.patch(
+        f"/api/v1/credit-cards/{card_id}",
+        json={"credit_limit": "10000", "available_credit": "9700", "statement_day": 8, "due_day": 26},
+        headers={**headers, "X-Idempotency-Key": "api-profile-card-update"},
+    )
+    assert update_resp.status_code == 200
+    payload = update_resp.json()["credit_card"]
+    assert payload["profile"]["credit_limit"] == "10000"
+    assert payload["current_balance"] == "300"
+    assert payload["derived_available_credit"] == "9700"
+    assert payload["utilization_rate"] == "0.03"
+
+    list_resp = client.get("/api/v1/credit-cards", headers=headers)
+    assert list_resp.status_code == 200
+    assert any(item["account"]["account_id"] == card_id for item in list_resp.json()["credit_cards"])
+
+
 def test_api_account_metadata_create_filter_and_update():
     assert app is not None
     client = TestClient(app)

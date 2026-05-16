@@ -28,7 +28,7 @@ fi
 1. Discover syntax with `ta --help` and relevant subcommand help.
 2. Read current state with `ta account find/list/show/balance --json` or `ta tx list/show --json`.
 3. Back up with `ta data backup --label before-<change> --json`.
-4. Write with `ta account create`, `ta account adjust`, `ta category create`, `ta expense record`, `ta income record`, `ta tx record`, `ta investment event`, or draft commands.
+4. Write with `ta account create`, `ta account adjust`, `ta category create`, `ta expense record`, `ta income record`, `ta credit-card update`, `ta tx record`, `ta investment event`, or draft commands.
 5. Verify affected balances and transactions with CLI reads.
 6. Report backup path, account IDs, transaction IDs, verified balances, and unresolved uncertainty.
 
@@ -42,6 +42,7 @@ For wealth-management, money-market, or fund holdings where annualized return ma
 - investment holding events and annualized-return queries
 - income/expense categories and category summaries
 - credit-card repayment and fee handling
+- credit-card limits and billing profile metadata
 - summaries and multi-currency rules
 - API health and startup handling
 

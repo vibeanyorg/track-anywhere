@@ -218,6 +218,23 @@ def build_parser() -> argparse.ArgumentParser:
     category_show.add_argument("category_id")
     category_show.add_argument("--json", action="store_true")
 
+    credit_card_group = sub.add_parser("credit-card")
+    credit_card_sub = credit_card_group.add_subparsers(dest="credit_card_command", required=True)
+    credit_card_list = credit_card_sub.add_parser("list")
+    credit_card_list.add_argument("--json", action="store_true")
+    credit_card_show = credit_card_sub.add_parser("show")
+    credit_card_show.add_argument("account_id")
+    credit_card_show.add_argument("--json", action="store_true")
+    credit_card_update = credit_card_sub.add_parser("update")
+    credit_card_update.add_argument("account_id")
+    credit_card_update.add_argument("--credit-limit")
+    credit_card_update.add_argument("--available-credit")
+    credit_card_update.add_argument("--statement-day", type=int)
+    credit_card_update.add_argument("--due-day", type=int)
+    credit_card_update.add_argument("--annual-fee")
+    credit_card_update.add_argument("--idempotency-key")
+    credit_card_update.add_argument("--json", action="store_true")
+
     account_group = sub.add_parser("account")
     account_sub = account_group.add_subparsers(dest="account_command", required=True)
     account_create = account_sub.add_parser("create")
@@ -519,6 +536,29 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "category" and args.category_command == "show":
         status, data = request_json(config, "GET", f"/api/v1/categories/{urllib.parse.quote(args.category_id)}")
+    elif args.command == "credit-card" and args.credit_card_command == "list":
+        status, data = request_json(config, "GET", "/api/v1/credit-cards")
+    elif args.command == "credit-card" and args.credit_card_command == "show":
+        status, data = request_json(config, "GET", f"/api/v1/credit-cards/{urllib.parse.quote(args.account_id)}")
+    elif args.command == "credit-card" and args.credit_card_command == "update":
+        payload = {
+            key: value
+            for key, value in {
+                "credit_limit": args.credit_limit,
+                "available_credit": args.available_credit,
+                "statement_day": args.statement_day,
+                "due_day": args.due_day,
+                "annual_fee": args.annual_fee,
+            }.items()
+            if value is not None
+        }
+        status, data = request_json(
+            config,
+            "PATCH",
+            f"/api/v1/credit-cards/{urllib.parse.quote(args.account_id)}",
+            payload,
+            key=command_idempotency_key(args, "credit-card-update"),
+        )
     elif args.command == "summary" and args.summary_command == "accounts":
         status, data = request_json(
             config,

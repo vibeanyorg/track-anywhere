@@ -135,6 +135,17 @@ ta income record --amount <amount> --to-account-id <target> --category-id <categ
 ta summary categories --kind expense --currency CNY --json
 ```
 
+## Credit Card Profiles
+
+Credit-card balances are liabilities and mean current amount owed. Record non-ledger metadata such as limit, available credit, statement day, due day, and annual fee through the profile surface:
+
+```bash
+ta credit-card update <credit_card_account_id> --credit-limit <limit> --statement-day <day> --due-day <day> --idempotency-key <key> --json
+ta credit-card show <credit_card_account_id> --json
+```
+
+Do not put limits or due dates in the account name.
+
 ## Investment Events
 
 For bank wealth-management, money-market, and fund accounts, use account balances for current value and `ta investment event` for dated cash flows. This preserves holding time, additional purchases, redemptions, and income so `ta investment performance` can compute holding days and money-weighted annualized return.

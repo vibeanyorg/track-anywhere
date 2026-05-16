@@ -288,6 +288,63 @@ def test_expense_and_income_record_commands_post_category_transactions(monkeypat
     ]
 
 
+def test_credit_card_commands_use_profile_api(monkeypatch):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key})
+        if method == "PATCH":
+            return 200, {"credit_card": {"account": {"account_id": "acc_card"}, "profile": payload}}
+        return 200, {"credit_cards": [], "credit_card": {"account": {"account_id": "acc_card"}}}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert main(["--token", "token-1", "credit-card", "list", "--json"]) == 0
+    assert main(["--token", "token-1", "credit-card", "show", "acc_card", "--json"]) == 0
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "credit-card",
+                "update",
+                "acc_card",
+                "--credit-limit",
+                "10000",
+                "--available-credit",
+                "9700",
+                "--statement-day",
+                "8",
+                "--due-day",
+                "26",
+                "--annual-fee",
+                "0",
+                "--idempotency-key",
+                "card-profile",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    assert calls == [
+        {"method": "GET", "path": "/api/v1/credit-cards", "payload": None, "key": None},
+        {"method": "GET", "path": "/api/v1/credit-cards/acc_card", "payload": None, "key": None},
+        {
+            "method": "PATCH",
+            "path": "/api/v1/credit-cards/acc_card",
+            "payload": {
+                "credit_limit": "10000",
+                "available_credit": "9700",
+                "statement_day": 8,
+                "due_day": 26,
+                "annual_fee": "0",
+            },
+            "key": "card-profile",
+        },
+    ]
+
+
 def test_user_create_posts_payload(monkeypatch, capsys):
     calls = []
 

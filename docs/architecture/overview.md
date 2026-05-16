@@ -9,6 +9,7 @@ The key boundary is the command governance layer. Web, CLI, Agent, and OCR-assis
 The current implementation establishes a minimum secure vertical slice:
 - strict ledger accounts, transactions, postings, balance derivation
 - user-created income and expense categories with first/second-level labels
+- credit-card profile metadata separate from liability balances
 - read APIs for account lookup and transaction inspection
 - draft capture and confirmation
 - draft rejection and superseding

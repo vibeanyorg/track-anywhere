@@ -121,6 +121,14 @@ class RecordIncomeCommand(StrictCommand):
     purpose: str = Field(min_length=1, max_length=256)
 
 
+class UpdateCreditCardProfileCommand(StrictCommand):
+    credit_limit: Decimal | None = Field(default=None, ge=0)
+    available_credit: Decimal | None = Field(default=None, ge=0)
+    statement_day: int | None = Field(default=None, ge=1, le=31)
+    due_day: int | None = Field(default=None, ge=1, le=31)
+    annual_fee: Decimal | None = Field(default=None, ge=0)
+
+
 class BalanceAdjustmentCommand(StrictCommand):
     account_id: str
     amount: Decimal

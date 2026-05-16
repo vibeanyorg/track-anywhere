@@ -17,6 +17,7 @@ from .attachments import Attachment
 from .audit import AuditEvent
 from .budgets import BudgetFund
 from .categories import Category
+from .credit_cards import CreditCardProfile
 from .drafts import DraftTransaction
 from .idempotency import CommandReceipt
 from .investments import InvestmentEvent
@@ -144,6 +145,18 @@ class CategoryRecord(Base):
     kind: Mapped[str] = mapped_column(String(20))
     primary: Mapped[str] = mapped_column(String(80))
     secondary: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    version: Mapped[int] = mapped_column(Integer)
+
+
+class CreditCardProfileRecord(Base):
+    __tablename__ = "credit_card_profiles"
+
+    account_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    credit_limit: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    available_credit: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    statement_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    due_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    annual_fee: Mapped[str | None] = mapped_column(String(80), nullable=True)
     version: Mapped[int] = mapped_column(Integer)
 
 
@@ -297,6 +310,18 @@ class OrmStorage:
                 )
                 for row in session.query(CategoryRecord).all()
             }
+            service.credit_cards.profiles = {
+                row.account_id: CreditCardProfile(
+                    account_id=row.account_id,
+                    credit_limit=Decimal(row.credit_limit) if row.credit_limit is not None else None,
+                    available_credit=Decimal(row.available_credit) if row.available_credit is not None else None,
+                    statement_day=row.statement_day,
+                    due_day=row.due_day,
+                    annual_fee=Decimal(row.annual_fee) if row.annual_fee is not None else None,
+                    version=row.version,
+                )
+                for row in session.query(CreditCardProfileRecord).all()
+            }
             service.attachments.attachments = {
                 row.attachment_id: Attachment(
                     attachment_id=row.attachment_id,
@@ -360,6 +385,18 @@ class OrmStorage:
                 for category in service.categories.categories.values()
             )
             session.add_all(
+                CreditCardProfileRecord(
+                    account_id=profile.account_id,
+                    credit_limit=str(profile.credit_limit) if profile.credit_limit is not None else None,
+                    available_credit=str(profile.available_credit) if profile.available_credit is not None else None,
+                    statement_day=profile.statement_day,
+                    due_day=profile.due_day,
+                    annual_fee=str(profile.annual_fee) if profile.annual_fee is not None else None,
+                    version=profile.version,
+                )
+                for profile in service.credit_cards.profiles.values()
+            )
+            session.add_all(
                 AttachmentRecord(
                     attachment_id=attachment.attachment_id,
                     storage_key=attachment.storage_key,
@@ -395,6 +432,7 @@ class OrmStorage:
             AuditEventRecord,
             CredentialRecord,
             AttachmentRecord,
+            CreditCardProfileRecord,
             CategoryRecord,
             InvestmentEventRecord,
             FundRecord,

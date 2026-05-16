@@ -27,6 +27,13 @@
     "/api/v1/credentials/revoke": [
       "post"
     ],
+    "/api/v1/credit-cards": [
+      "get"
+    ],
+    "/api/v1/credit-cards/{account_id}": [
+      "get",
+      "patch"
+    ],
     "/api/v1/drafts/capture": [
       "post"
     ],

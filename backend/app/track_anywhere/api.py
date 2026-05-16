@@ -311,6 +311,33 @@ if FastAPI is not None:
         except (TrackAnywhereError, PydanticValidationError) as exc:
             _raise_command_error(exc, "category.get")
 
+    @app.get("/api/v1/credit-cards", dependencies=[Depends(session_guard)])
+    async def list_credit_cards(token: str = Depends(token_from_header)):
+        try:
+            return {"credit_cards": _serialize(service.list_credit_cards(token))}
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "credit_card.list")
+
+    @app.get("/api/v1/credit-cards/{account_id}", dependencies=[Depends(session_guard)])
+    async def get_credit_card(account_id: str, token: str = Depends(token_from_header)):
+        try:
+            return {"credit_card": _serialize(service.get_credit_card(token, account_id))}
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "credit_card.get")
+
+    @app.patch("/api/v1/credit-cards/{account_id}", dependencies=[Depends(session_guard)])
+    async def update_credit_card_profile(
+        account_id: str,
+        payload: dict[str, Any],
+        token: str = Depends(token_from_header),
+        key: str = Depends(idempotency_key),
+    ):
+        try:
+            credit_card, replay = service.update_credit_card_profile(token, account_id, payload, idempotency_key=key)
+            return {"credit_card": _serialize(credit_card), "idempotent_replay": replay}
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "credit_card.profile.update")
+
     @app.post("/api/v1/drafts/capture", dependencies=[Depends(session_guard)])
     async def capture_draft(payload: dict[str, Any], token: str = Depends(token_from_header), key: str = Depends(idempotency_key)):
         try:

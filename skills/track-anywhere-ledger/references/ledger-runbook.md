@@ -19,6 +19,7 @@ ta account find --name <text> --currency CNY --json
 ta account show <account_id> --json
 ta account balance <account_id> --json
 ta category list --kind expense --json
+ta credit-card list --json
 ta tx list --account-id <account_id> --limit 10 --json
 ta tx show <transaction_id> --json
 ta summary accounts --group-by institution --currency CNY --json
@@ -108,6 +109,26 @@ ta account create "<name>" \
 ```
 
 For credit cards, use `--type liability --subtype credit_card`.
+
+## Credit Card Profiles
+
+Credit-card account balances are liabilities and represent current amount owed. Do not encode credit limits or billing dates in the account name. Use the credit-card profile API/CLI for non-ledger metadata:
+
+```bash
+ta credit-card update <credit_card_account_id> \
+  --credit-limit <limit> \
+  --available-credit <available> \
+  --statement-day <1-31> \
+  --due-day <1-31> \
+  --annual-fee <fee> \
+  --idempotency-key credit-card-profile-<account-id> \
+  --json
+
+ta credit-card show <credit_card_account_id> --json
+ta credit-card list --json
+```
+
+Profile updates do not change balances. The overview reports current liability balance, recorded limit, recorded available credit, derived available credit, and utilization rate.
 
 ## Balance Snapshot
 
