@@ -114,6 +114,27 @@ Choose `institution_type` from provider category:
 
 Use lowercase `subtype` slugs such as `debit_card`, `credit_card`, `checking`, `ewallet_cash`, `ewallet_money_market`, `money_market`, `wealth_management`, `fund`, `multicurrency_wallet`, `payroll_balance`, `crypto_token`, or `fee`.
 
+## Income and Expense Categories
+
+Income and expense categories are explicit user-created records. Do not seed or invent defaults. Create a category only when the user provides a real first-level label and optional second-level label:
+
+```bash
+ta category create \
+  --kind expense \
+  --primary "餐饮" \
+  --secondary "外卖" \
+  --idempotency-key category-expense-food-delivery \
+  --json
+```
+
+For day-to-day spending and income, prefer the category-aware helpers:
+
+```bash
+ta expense record --amount <amount> --from-account-id <source> --category-id <category_id> --purpose "<description>" --idempotency-key <key> --json
+ta income record --amount <amount> --to-account-id <target> --category-id <category_id> --purpose "<description>" --idempotency-key <key> --json
+ta summary categories --kind expense --currency CNY --json
+```
+
 ## Investment Events
 
 For bank wealth-management, money-market, and fund accounts, use account balances for current value and `ta investment event` for dated cash flows. This preserves holding time, additional purchases, redemptions, and income so `ta investment performance` can compute holding days and money-weighted annualized return.

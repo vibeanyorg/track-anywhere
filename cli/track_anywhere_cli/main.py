@@ -163,6 +163,10 @@ def build_parser() -> argparse.ArgumentParser:
     summary_accounts.add_argument("--institution-type")
     summary_accounts.add_argument("--include-system", action="store_true")
     summary_accounts.add_argument("--json", action="store_true")
+    summary_categories = summary_sub.add_parser("categories")
+    summary_categories.add_argument("--kind", choices=("income", "expense"))
+    summary_categories.add_argument("--currency")
+    summary_categories.add_argument("--json", action="store_true")
 
     investment = sub.add_parser("investment")
     investment_sub = investment.add_subparsers(dest="investment_command", required=True)
@@ -191,6 +195,28 @@ def build_parser() -> argparse.ArgumentParser:
     user_create.add_argument("--json", action="store_true")
     user_list = user_sub.add_parser("list")
     user_list.add_argument("--json", action="store_true")
+
+    category_group = sub.add_parser("category")
+    category_sub = category_group.add_subparsers(dest="category_command", required=True)
+    category_create = category_sub.add_parser("create")
+    category_create.add_argument("--kind", choices=("income", "expense"), required=True)
+    category_create.add_argument("--primary", required=True)
+    category_create.add_argument("--secondary")
+    category_create.add_argument("--idempotency-key")
+    category_create.add_argument("--json", action="store_true")
+    category_list = category_sub.add_parser("list")
+    category_list.add_argument("--kind", choices=("income", "expense"))
+    category_list.add_argument("--primary")
+    category_list.add_argument("--secondary")
+    category_list.add_argument("--json", action="store_true")
+    category_find = category_sub.add_parser("find")
+    category_find.add_argument("--kind", choices=("income", "expense"), required=True)
+    category_find.add_argument("--primary", required=True)
+    category_find.add_argument("--secondary")
+    category_find.add_argument("--json", action="store_true")
+    category_show = category_sub.add_parser("show")
+    category_show.add_argument("category_id")
+    category_show.add_argument("--json", action="store_true")
 
     account_group = sub.add_parser("account")
     account_sub = account_group.add_subparsers(dest="account_command", required=True)
@@ -279,10 +305,12 @@ def build_parser() -> argparse.ArgumentParser:
     tx_record.add_argument("--purpose", required=True)
     tx_record.add_argument("--occurred-at")
     tx_record.add_argument("--currency", default="CNY")
+    tx_record.add_argument("--category-id")
     tx_record.add_argument("--idempotency-key")
     tx_record.add_argument("--json", action="store_true")
     tx_list = tx_sub.add_parser("list")
     tx_list.add_argument("--account-id")
+    tx_list.add_argument("--category-id")
     tx_list.add_argument("--limit", type=int, default=20)
     tx_list.add_argument("--json", action="store_true")
     tx_show = tx_sub.add_parser("show")
@@ -296,8 +324,33 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--purpose", required=True)
     record.add_argument("--occurred-at")
     record.add_argument("--currency", default="CNY")
+    record.add_argument("--category-id")
     record.add_argument("--idempotency-key")
     record.add_argument("--json", action="store_true")
+
+    expense = sub.add_parser("expense")
+    expense_sub = expense.add_subparsers(dest="expense_command", required=True)
+    expense_record = expense_sub.add_parser("record")
+    expense_record.add_argument("--amount", required=True)
+    expense_record.add_argument("--from-account-id", "--from", dest="from_account_id", required=True)
+    expense_record.add_argument("--category-id", required=True)
+    expense_record.add_argument("--purpose", required=True)
+    expense_record.add_argument("--occurred-at")
+    expense_record.add_argument("--currency", default="CNY")
+    expense_record.add_argument("--idempotency-key")
+    expense_record.add_argument("--json", action="store_true")
+
+    income = sub.add_parser("income")
+    income_sub = income.add_subparsers(dest="income_command", required=True)
+    income_record = income_sub.add_parser("record")
+    income_record.add_argument("--amount", required=True)
+    income_record.add_argument("--to-account-id", "--to", dest="to_account_id", required=True)
+    income_record.add_argument("--category-id", required=True)
+    income_record.add_argument("--purpose", required=True)
+    income_record.add_argument("--occurred-at")
+    income_record.add_argument("--currency", default="CNY")
+    income_record.add_argument("--idempotency-key")
+    income_record.add_argument("--json", action="store_true")
 
     balance_adjust = sub.add_parser("balance-adjust")
     balance_adjust.add_argument("account_id")
@@ -434,6 +487,38 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif args.command == "user" and args.user_command == "list":
         status, data = request_json(config, "GET", "/api/v1/users")
+    elif args.command == "category" and args.category_command == "create":
+        payload = {
+            key: value
+            for key, value in {
+                "kind": args.kind,
+                "primary": args.primary,
+                "secondary": args.secondary,
+            }.items()
+            if value is not None
+        }
+        status, data = request_json(
+            config,
+            "POST",
+            "/api/v1/categories",
+            payload,
+            key=command_idempotency_key(args, "category-create"),
+        )
+    elif args.command == "category" and args.category_command in {"list", "find"}:
+        status, data = request_json(
+            config,
+            "GET",
+            with_query(
+                "/api/v1/categories",
+                {
+                    "kind": args.kind,
+                    "primary": args.primary,
+                    "secondary": args.secondary,
+                },
+            ),
+        )
+    elif args.command == "category" and args.category_command == "show":
+        status, data = request_json(config, "GET", f"/api/v1/categories/{urllib.parse.quote(args.category_id)}")
     elif args.command == "summary" and args.summary_command == "accounts":
         status, data = request_json(
             config,
@@ -445,6 +530,18 @@ def main(argv: list[str] | None = None) -> int:
                     "currency": args.currency,
                     "institution_type": args.institution_type,
                     "include_system": "true" if args.include_system else None,
+                },
+            ),
+        )
+    elif args.command == "summary" and args.summary_command == "categories":
+        status, data = request_json(
+            config,
+            "GET",
+            with_query(
+                "/api/v1/summary/categories",
+                {
+                    "kind": args.kind,
+                    "currency": args.currency,
                 },
             ),
         )
@@ -581,6 +678,8 @@ def main(argv: list[str] | None = None) -> int:
         }
         if args.occurred_at:
             payload["occurred_at"] = args.occurred_at
+        if args.category_id:
+            payload["category_id"] = args.category_id
         status, data = request_json(
             config,
             "POST",
@@ -588,11 +687,48 @@ def main(argv: list[str] | None = None) -> int:
             payload,
             key=command_idempotency_key(args, "tx-record"),
         )
+    elif args.command == "expense" and args.expense_command == "record":
+        payload = {
+            "amount": args.amount,
+            "currency": args.currency,
+            "from_account_id": args.from_account_id,
+            "category_id": args.category_id,
+            "purpose": args.purpose,
+        }
+        if args.occurred_at:
+            payload["occurred_at"] = args.occurred_at
+        status, data = request_json(
+            config,
+            "POST",
+            "/api/v1/expenses",
+            payload,
+            key=command_idempotency_key(args, "expense-record"),
+        )
+    elif args.command == "income" and args.income_command == "record":
+        payload = {
+            "amount": args.amount,
+            "currency": args.currency,
+            "to_account_id": args.to_account_id,
+            "category_id": args.category_id,
+            "purpose": args.purpose,
+        }
+        if args.occurred_at:
+            payload["occurred_at"] = args.occurred_at
+        status, data = request_json(
+            config,
+            "POST",
+            "/api/v1/incomes",
+            payload,
+            key=command_idempotency_key(args, "income-record"),
+        )
     elif args.command == "tx" and args.tx_command == "list":
         status, data = request_json(
             config,
             "GET",
-            with_query("/api/v1/ledger/transactions", {"account_id": args.account_id, "limit": args.limit}),
+            with_query(
+                "/api/v1/ledger/transactions",
+                {"account_id": args.account_id, "category_id": args.category_id, "limit": args.limit},
+            ),
         )
     elif args.command == "tx" and args.tx_command == "show":
         status, data = request_json(config, "GET", f"/api/v1/ledger/transactions/{urllib.parse.quote(args.transaction_id)}")

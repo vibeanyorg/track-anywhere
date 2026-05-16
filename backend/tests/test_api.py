@@ -174,6 +174,77 @@ def test_api_account_and_transaction_read_side():
     assert tx_get.json()["transaction"]["postings"][0]["account_id"] == cash_id
 
 
+def test_api_categories_expense_income_and_summary_flow():
+    assert app is not None
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {service.owner_token}"}
+
+    cash_resp = client.post(
+        "/api/v1/accounts",
+        json={"name": "Category API Cash", "type": "asset", "currency": "CNY", "opening_balance": "500"},
+        headers={**headers, "X-Idempotency-Key": "api-category-cash"},
+    )
+    assert cash_resp.status_code == 200
+    cash_id = cash_resp.json()["account"]["account_id"]
+
+    expense_category_resp = client.post(
+        "/api/v1/categories",
+        json={"kind": "expense", "primary": "餐饮", "secondary": "外卖"},
+        headers={**headers, "X-Idempotency-Key": "api-category-expense"},
+    )
+    income_category_resp = client.post(
+        "/api/v1/categories",
+        json={"kind": "income", "primary": "工资", "secondary": "主业"},
+        headers={**headers, "X-Idempotency-Key": "api-category-income"},
+    )
+    assert expense_category_resp.status_code == 200
+    assert income_category_resp.status_code == 200
+    expense_category_id = expense_category_resp.json()["category"]["category_id"]
+    income_category_id = income_category_resp.json()["category"]["category_id"]
+
+    category_list = client.get("/api/v1/categories?kind=expense&primary=%E9%A4%90%E9%A5%AE", headers=headers)
+    assert category_list.status_code == 200
+    assert any(item["category_id"] == expense_category_id for item in category_list.json()["categories"])
+
+    expense_resp = client.post(
+        "/api/v1/expenses",
+        json={
+            "amount": "42",
+            "currency": "CNY",
+            "from_account_id": cash_id,
+            "category_id": expense_category_id,
+            "purpose": "delivery",
+        },
+        headers={**headers, "X-Idempotency-Key": "api-expense-delivery"},
+    )
+    income_resp = client.post(
+        "/api/v1/incomes",
+        json={
+            "amount": "100",
+            "currency": "CNY",
+            "to_account_id": cash_id,
+            "category_id": income_category_id,
+            "purpose": "salary",
+        },
+        headers={**headers, "X-Idempotency-Key": "api-income-salary"},
+    )
+    assert expense_resp.status_code == 200
+    assert income_resp.status_code == 200
+    assert expense_resp.json()["transaction"]["category_id"] == expense_category_id
+    assert income_resp.json()["transaction"]["category_id"] == income_category_id
+
+    expense_summary = client.get("/api/v1/summary/categories?kind=expense&currency=CNY", headers=headers)
+    assert expense_summary.status_code == 200
+    assert any(
+        item["category_id"] == expense_category_id and item["amount"] == "42"
+        for item in expense_summary.json()["groups"]
+    )
+
+    tx_list = client.get(f"/api/v1/ledger/transactions?category_id={expense_category_id}", headers=headers)
+    assert tx_list.status_code == 200
+    assert tx_list.json()["transactions"][0]["category_id"] == expense_category_id
+
+
 def test_api_account_metadata_create_filter_and_update():
     assert app is not None
     client = TestClient(app)

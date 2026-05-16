@@ -34,6 +34,7 @@ class Transaction:
     occurred_at: datetime
     purpose: str
     postings: list[Posting]
+    category_id: str | None = None
     reversed_by: str | None = None
     version: int = 1
 
@@ -78,6 +79,7 @@ class Ledger:
         *,
         occurred_at: datetime | None = None,
         purpose: str | None = None,
+        category_id: str | None = None,
     ) -> Transaction:
         if len(postings) < 2:
             raise ValidationError("confirmed transaction requires at least two postings")
@@ -94,6 +96,7 @@ class Ledger:
             occurred_at=occurred_at or datetime.now(timezone.utc),
             purpose=purpose or memo,
             postings=postings,
+            category_id=category_id,
         )
         self.transactions[transaction.transaction_id] = transaction
         return transaction

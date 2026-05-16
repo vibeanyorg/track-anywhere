@@ -9,16 +9,20 @@ from typing import Any
 from .audit import AuditLog
 from .attachments import AttachmentIntake
 from .budgets import BudgetBook
+from .categories import Category, CategoryBook
 from .commands import (
     BalanceAdjustmentCommand,
     CaptureDraftCommand,
     ConfirmDraftCommand,
     CreateAccountCommand,
+    CreateCategoryCommand,
     CreateFundCommand,
     CreateUserCommand,
     FundAllocationCommand,
     FundSpendCommand,
     IssueCredentialCommand,
+    RecordExpenseCommand,
+    RecordIncomeCommand,
     ReconciliationActionCommand,
     RecordInvestmentEventCommand,
     RecordTransactionCommand,
@@ -41,6 +45,8 @@ from .users import AppUser, UserDirectory
 OWNER_SCOPES = {
     "account:read",
     "account:write",
+    "category:read",
+    "category:write",
     "capture:draft",
     "ledger:confirm",
     "ledger:read",
@@ -70,6 +76,7 @@ class FinanceService:
         self.drafts = DraftBook()
         self.budgets = BudgetBook()
         self.investments = InvestmentBook()
+        self.categories = CategoryBook()
         self.attachments = AttachmentIntake(self.config)
         self.users = UserDirectory()
         self.reconciliation_actions: list[dict[str, Any]] = []
@@ -281,6 +288,71 @@ class FinanceService:
             ],
         }
 
+    def category_summary(
+        self,
+        token: str,
+        *,
+        kind: str | None = None,
+        currency: str | None = None,
+    ) -> dict[str, Any]:
+        self.actor_from_token(token, "ledger:read")
+        if kind is not None and kind not in {"income", "expense"}:
+            raise ValidationError("category kind must be income or expense")
+
+        groups: dict[tuple[str, str], dict[str, Any]] = {}
+        for transaction in self.ledger.transactions.values():
+            if transaction.reversed_by is not None or transaction.category_id is None:
+                continue
+            category = self.categories.get(transaction.category_id)
+            if kind is not None and category.kind != kind:
+                continue
+            amounts = self._category_amounts_for_transaction(transaction, category)
+            for transaction_currency, amount in amounts.items():
+                if currency is not None and transaction_currency != currency:
+                    continue
+                group = groups.setdefault(
+                    (category.category_id, transaction_currency),
+                    {
+                        "category_id": category.category_id,
+                        "kind": category.kind,
+                        "primary": category.primary,
+                        "secondary": category.secondary,
+                        "currency": transaction_currency,
+                        "amount": Decimal("0"),
+                        "transaction_count": 0,
+                        "transaction_ids": [],
+                    },
+                )
+                group["amount"] += amount
+                group["transaction_count"] += 1
+                group["transaction_ids"].append(transaction.transaction_id)
+
+        return {
+            "kind": kind,
+            "currency": currency,
+            "groups": [
+                {
+                    "category_id": group["category_id"],
+                    "kind": group["kind"],
+                    "primary": group["primary"],
+                    "secondary": group["secondary"],
+                    "currency": group["currency"],
+                    "amount": str(group["amount"]),
+                    "transaction_count": group["transaction_count"],
+                    "transaction_ids": sorted(group["transaction_ids"]),
+                }
+                for group in sorted(
+                    groups.values(),
+                    key=lambda item: (
+                        item["kind"],
+                        item["primary"],
+                        item["secondary"] or "",
+                        item["currency"],
+                    ),
+                )
+            ],
+        }
+
     def update_account_metadata(self, token: str, account_id: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[Account, bool]:
         actor = self.actor_from_token(token, "account:write")
         command = UpdateAccountMetadataCommand.model_validate(payload)
@@ -344,6 +416,52 @@ class FinanceService:
         self.actor_from_token(token, "user:read")
         return self.users.list()
 
+    def create_category(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[Category, bool]:
+        actor = self.actor_from_token(token, "category:write")
+        command = CreateCategoryCommand.model_validate(payload)
+        request_hash = self._hash_command(command)
+
+        def run():
+            category = self.categories.create(
+                kind=command.kind,
+                primary=command.primary,
+                secondary=command.secondary,
+            )
+            self.audit.record(
+                operation="category.create",
+                actor=actor,
+                entity_ref=category.category_id,
+                details=command.model_dump(mode="json", exclude_none=True),
+            )
+            return category
+
+        result = self.idempotency.run(
+            key=idempotency_key,
+            actor=actor,
+            operation="category.create",
+            request_hash=request_hash,
+            fn=run,
+        )
+        self._persist()
+        return result
+
+    def list_categories(
+        self,
+        token: str,
+        *,
+        kind: str | None = None,
+        primary: str | None = None,
+        secondary: str | None = None,
+    ) -> list[Category]:
+        self.actor_from_token(token, "category:read")
+        if kind is not None and kind not in {"income", "expense"}:
+            raise ValidationError("category kind must be income or expense")
+        return self.categories.list(kind=kind, primary=primary, secondary=secondary)
+
+    def get_category(self, token: str, category_id: str) -> Category:
+        self.actor_from_token(token, "category:read")
+        return self.categories.get(category_id)
+
     def capture_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[Any, bool]:
         actor = self.actor_from_token(token, "capture:draft")
         command = CaptureDraftCommand.model_validate(payload)
@@ -372,6 +490,13 @@ class FinanceService:
     def record_transaction(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         actor = self.actor_from_token(token, "ledger:confirm")
         command = RecordTransactionCommand.model_validate(payload)
+        if command.category_id is not None:
+            category = self.categories.get(command.category_id)
+            self._validate_transaction_category(
+                category,
+                from_account_id=command.from_account_id,
+                to_account_id=command.to_account_id,
+            )
         request_hash = self._hash_command(command)
 
         def run():
@@ -379,6 +504,7 @@ class FinanceService:
                 memo=command.purpose,
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
+                category_id=command.category_id,
                 postings=[
                     Posting(command.from_account_id, -command.amount, command.currency),
                     Posting(command.to_account_id, command.amount, command.currency),
@@ -402,16 +528,107 @@ class FinanceService:
         self._persist()
         return result
 
+    def record_expense(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
+        actor = self.actor_from_token(token, "ledger:confirm")
+        command = RecordExpenseCommand.model_validate(payload)
+        source = self.ledger.get_account(command.from_account_id)
+        if source.currency != command.currency:
+            raise ValidationError("expense currency must match source account currency")
+        category = self.categories.get(command.category_id)
+        if category.kind != "expense":
+            raise ValidationError("expense record requires an expense category")
+        request_hash = self._hash_command(command)
+
+        def run():
+            expense_account_id = self._system_category_account_id("expense", command.currency)
+            transaction = self.ledger.create_transaction(
+                memo=command.purpose,
+                occurred_at=command.occurred_at,
+                purpose=command.purpose,
+                category_id=command.category_id,
+                postings=[
+                    Posting(command.from_account_id, -command.amount, command.currency),
+                    Posting(expense_account_id, command.amount, command.currency),
+                ],
+            )
+            self.audit.record(
+                operation="expense.record",
+                actor=actor,
+                entity_ref=transaction.transaction_id,
+                details={
+                    **command.model_dump(mode="json"),
+                    "expense_account_id": expense_account_id,
+                },
+            )
+            return transaction
+
+        result = self.idempotency.run(
+            key=idempotency_key,
+            actor=actor,
+            operation="expense.record",
+            request_hash=request_hash,
+            fn=run,
+        )
+        self._persist()
+        return result
+
+    def record_income(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
+        actor = self.actor_from_token(token, "ledger:confirm")
+        command = RecordIncomeCommand.model_validate(payload)
+        target = self.ledger.get_account(command.to_account_id)
+        if target.currency != command.currency:
+            raise ValidationError("income currency must match target account currency")
+        category = self.categories.get(command.category_id)
+        if category.kind != "income":
+            raise ValidationError("income record requires an income category")
+        request_hash = self._hash_command(command)
+
+        def run():
+            income_account_id = self._system_category_account_id("income", command.currency)
+            transaction = self.ledger.create_transaction(
+                memo=command.purpose,
+                occurred_at=command.occurred_at,
+                purpose=command.purpose,
+                category_id=command.category_id,
+                postings=[
+                    Posting(income_account_id, -command.amount, command.currency),
+                    Posting(command.to_account_id, command.amount, command.currency),
+                ],
+            )
+            self.audit.record(
+                operation="income.record",
+                actor=actor,
+                entity_ref=transaction.transaction_id,
+                details={
+                    **command.model_dump(mode="json"),
+                    "income_account_id": income_account_id,
+                },
+            )
+            return transaction
+
+        result = self.idempotency.run(
+            key=idempotency_key,
+            actor=actor,
+            operation="income.record",
+            request_hash=request_hash,
+            fn=run,
+        )
+        self._persist()
+        return result
+
     def list_transactions(
         self,
         token: str,
         *,
         account_id: str | None = None,
+        category_id: str | None = None,
         limit: int = 20,
     ) -> list[Transaction]:
         self.actor_from_token(token, "ledger:read")
         if account_id:
             self.ledger.get_account(account_id)
+        if category_id:
+            self.categories.get(category_id)
         transactions = list(self.ledger.transactions.values())
         if account_id:
             transactions = [
@@ -419,6 +636,8 @@ class FinanceService:
                 for transaction in transactions
                 if any(posting.account_id == account_id for posting in transaction.postings)
             ]
+        if category_id:
+            transactions = [transaction for transaction in transactions if transaction.category_id == category_id]
         transactions.sort(key=lambda transaction: (transaction.occurred_at, transaction.transaction_id), reverse=True)
         return transactions[: max(0, min(limit, 200))]
 
@@ -933,6 +1152,47 @@ class FinanceService:
         )
         self.adjustment_account_ids[currency] = account.account_id
         return account.account_id
+
+    def _system_category_account_id(self, kind: str, currency: str) -> str:
+        subtype = f"{kind}_clearing"
+        for account in self.ledger.accounts.values():
+            if (
+                account.type == kind
+                and account.currency == currency
+                and account.institution_type == "system"
+                and account.subtype == subtype
+                and account.institution == "track-anywhere"
+            ):
+                return account.account_id
+        account = self.ledger.create_account(
+            f"System {kind} {currency}",
+            kind,
+            currency,
+            institution_type="system",
+            subtype=subtype,
+            institution="track-anywhere",
+        )
+        return account.account_id
+
+    def _validate_transaction_category(self, category: Category, *, from_account_id: str, to_account_id: str) -> None:
+        from_account = self.ledger.get_account(from_account_id)
+        to_account = self.ledger.get_account(to_account_id)
+        if category.kind == "expense" and to_account.type != "expense":
+            raise ValidationError("expense category requires an expense to-account")
+        if category.kind == "income" and from_account.type != "income":
+            raise ValidationError("income category requires an income from-account")
+
+    def _category_amounts_for_transaction(self, transaction: Transaction, category: Category) -> dict[str, Decimal]:
+        amounts: dict[str, Decimal] = {}
+        for posting in transaction.postings:
+            account = self.ledger.accounts.get(posting.account_id)
+            if account is None:
+                continue
+            if category.kind == "expense" and account.type == "expense" and posting.amount > Decimal("0"):
+                amounts[posting.currency] = amounts.get(posting.currency, Decimal("0")) + posting.amount
+            elif category.kind == "income" and account.type == "income" and posting.amount < Decimal("0"):
+                amounts[posting.currency] = amounts.get(posting.currency, Decimal("0")) - posting.amount
+        return amounts
 
     def _draft_from_capture_command(self, command: CaptureDraftCommand, *, actor: Actor):
         proposed: list[Posting] = []

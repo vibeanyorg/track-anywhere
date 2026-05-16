@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 from .attachments import Attachment
 from .audit import AuditEvent
 from .budgets import BudgetFund
+from .categories import Category
 from .drafts import DraftTransaction
 from .idempotency import CommandReceipt
 from .investments import InvestmentEvent
@@ -68,6 +69,7 @@ class TransactionRecord(Base):
     memo: Mapped[str] = mapped_column(String(256))
     occurred_at: Mapped[str] = mapped_column(String(80))
     purpose: Mapped[str] = mapped_column(String(256))
+    category_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     reversed_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
     version: Mapped[int] = mapped_column(Integer)
 
@@ -132,6 +134,16 @@ class InvestmentEventRecord(Base):
     memo: Mapped[str] = mapped_column(String(256))
     units: Mapped[str | None] = mapped_column(String(80), nullable=True)
     nav: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    version: Mapped[int] = mapped_column(Integer)
+
+
+class CategoryRecord(Base):
+    __tablename__ = "categories"
+
+    category_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    primary: Mapped[str] = mapped_column(String(80))
+    secondary: Mapped[str | None] = mapped_column(String(80), nullable=True)
     version: Mapped[int] = mapped_column(Integer)
 
 
@@ -230,16 +242,22 @@ class OrmStorage:
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False, future=True)
 
     def _migrate_schema(self) -> None:
-        existing_columns = {column["name"] for column in inspect(self.engine).get_columns("accounts")}
-        missing_columns = {
+        inspector = inspect(self.engine)
+        account_columns = {column["name"] for column in inspector.get_columns("accounts")}
+        account_missing_columns = {
             "institution_type": "VARCHAR(40)",
             "subtype": "VARCHAR(64)",
             "institution": "VARCHAR(120)",
         }.items()
+        transaction_columns = {column["name"] for column in inspector.get_columns("transactions")}
+        transaction_missing_columns = {"category_id": "VARCHAR(80)"}.items()
         with self.engine.begin() as connection:
-            for column_name, column_type in missing_columns:
-                if column_name not in existing_columns:
+            for column_name, column_type in account_missing_columns:
+                if column_name not in account_columns:
                     connection.execute(text(f"ALTER TABLE accounts ADD COLUMN {column_name} {column_type}"))
+            for column_name, column_type in transaction_missing_columns:
+                if column_name not in transaction_columns:
+                    connection.execute(text(f"ALTER TABLE transactions ADD COLUMN {column_name} {column_type}"))
 
     def load_into(self, service: Any) -> None:
         with self.session_factory() as session:
@@ -269,6 +287,16 @@ class OrmStorage:
             service.drafts.drafts = self._load_drafts(session)
             service.budgets.funds = self._load_funds(session)
             service.investments.events = self._load_investment_events(session)
+            service.categories.categories = {
+                row.category_id: Category(
+                    category_id=row.category_id,
+                    kind=row.kind,
+                    primary=row.primary,
+                    secondary=row.secondary,
+                    version=row.version,
+                )
+                for row in session.query(CategoryRecord).all()
+            }
             service.attachments.attachments = {
                 row.attachment_id: Attachment(
                     attachment_id=row.attachment_id,
@@ -322,6 +350,16 @@ class OrmStorage:
             self._save_funds(session, service.budgets.funds.values())
             self._save_investment_events(session, service.investments.events.values())
             session.add_all(
+                CategoryRecord(
+                    category_id=category.category_id,
+                    kind=category.kind,
+                    primary=category.primary,
+                    secondary=category.secondary,
+                    version=category.version,
+                )
+                for category in service.categories.categories.values()
+            )
+            session.add_all(
                 AttachmentRecord(
                     attachment_id=attachment.attachment_id,
                     storage_key=attachment.storage_key,
@@ -357,6 +395,7 @@ class OrmStorage:
             AuditEventRecord,
             CredentialRecord,
             AttachmentRecord,
+            CategoryRecord,
             InvestmentEventRecord,
             FundRecord,
             DraftRecord,
@@ -380,6 +419,7 @@ class OrmStorage:
                 occurred_at=datetime.fromisoformat(row.occurred_at),
                 purpose=row.purpose,
                 postings=postings_by_transaction.get(row.transaction_id, []),
+                category_id=row.category_id,
                 reversed_by=row.reversed_by,
                 version=row.version,
             )
@@ -394,6 +434,7 @@ class OrmStorage:
                     memo=transaction.memo,
                     occurred_at=transaction.occurred_at.isoformat(),
                     purpose=transaction.purpose,
+                    category_id=transaction.category_id,
                     reversed_by=transaction.reversed_by,
                     version=transaction.version,
                 )

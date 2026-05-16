@@ -125,14 +125,19 @@ Read the ledger:
 uv run ta account list --json
 uv run ta account find --name <text> --currency CNY --json
 uv run ta account show <account_id> --json
+uv run ta category list --kind expense --json
 uv run ta tx list --account-id <account_id> --limit 10 --json
 uv run ta summary accounts --group-by institution --currency CNY --json
+uv run ta summary categories --kind expense --currency CNY --json
 ```
 
 Write to the ledger:
 
 ```bash
 uv run ta account create "<name>" --type asset --currency CNY --idempotency-key <key> --json
+uv run ta category create --kind expense --primary "<level-1>" --secondary "<level-2>" --idempotency-key <key> --json
+uv run ta expense record --amount <amount> --currency CNY --from-account-id <source> --category-id <category_id> --purpose "<why>" --idempotency-key <key> --json
+uv run ta income record --amount <amount> --currency CNY --to-account-id <target> --category-id <category_id> --purpose "<why>" --idempotency-key <key> --json
 uv run ta account adjust <account_id> --amount <delta> --currency CNY --purpose "<why>" --idempotency-key <key> --json
 uv run ta tx record --amount <amount> --currency CNY --from-account-id <source> --to-account-id <target> --purpose "<why>" --idempotency-key <key> --json
 uv run ta investment event <investment_account_id> --type buy --amount <principal> --occurred-at <iso-date> --idempotency-key <key> --json
@@ -149,6 +154,38 @@ Agent workflows: pass `--json`, supply a stable `--idempotency-key`, back up bef
 - `institution`: human provider name
 
 Liabilities are stored as positive amounts owed. Summary rows expose `asset_amount`, `liability_amount`, and `net_amount` so reports do not confuse gross totals with net worth.
+
+## Income and expense categories
+
+Categories are explicit user data. Track Anywhere does not seed preset categories; create them one at a time as real transactions need them.
+
+Each category has:
+
+- `kind`: `expense` or `income`
+- `primary`: first-level label, such as `餐饮`
+- `secondary`: optional second-level label, such as `外卖`
+
+```bash
+uv run ta category create \
+  --kind expense \
+  --primary "餐饮" \
+  --secondary "外卖" \
+  --idempotency-key category-expense-food-delivery \
+  --json
+
+uv run ta expense record \
+  --amount 38 \
+  --currency CNY \
+  --from-account-id <payment_account_id> \
+  --category-id <category_id> \
+  --purpose "lunch delivery" \
+  --idempotency-key expense-lunch-delivery-20260516 \
+  --json
+
+uv run ta summary categories --kind expense --currency CNY --json
+```
+
+`expense record` and `income record` use internal system clearing accounts, so day-to-day classification is not tied to one expense account per category. Lower-level `ta tx record` still accepts `--category-id` when the from/to accounts already represent an income or expense flow.
 
 ## Investment performance
 

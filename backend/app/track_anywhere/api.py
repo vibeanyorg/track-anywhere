@@ -245,6 +245,17 @@ if FastAPI is not None:
         except (TrackAnywhereError, PydanticValidationError) as exc:
             _raise_command_error(exc, "summary.accounts")
 
+    @app.get("/api/v1/summary/categories", dependencies=[Depends(session_guard)])
+    async def category_summary(
+        kind: str | None = None,
+        currency: str | None = None,
+        token: str = Depends(token_from_header),
+    ):
+        try:
+            return service.category_summary(token, kind=kind, currency=currency)
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "summary.categories")
+
     @app.patch("/api/v1/accounts/{account_id}", dependencies=[Depends(session_guard)])
     async def update_account_metadata(
         account_id: str,
@@ -273,6 +284,33 @@ if FastAPI is not None:
         except (TrackAnywhereError, PydanticValidationError) as exc:
             _raise_command_error(exc, "user.create")
 
+    @app.get("/api/v1/categories", dependencies=[Depends(session_guard)])
+    async def list_categories(
+        kind: str | None = None,
+        primary: str | None = None,
+        secondary: str | None = None,
+        token: str = Depends(token_from_header),
+    ):
+        try:
+            return {"categories": _serialize(service.list_categories(token, kind=kind, primary=primary, secondary=secondary))}
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "category.list")
+
+    @app.post("/api/v1/categories", dependencies=[Depends(session_guard)])
+    async def create_category(payload: dict[str, Any], token: str = Depends(token_from_header), key: str = Depends(idempotency_key)):
+        try:
+            category, replay = service.create_category(token, payload, idempotency_key=key)
+            return {"category": _serialize(category), "idempotent_replay": replay}
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "category.create")
+
+    @app.get("/api/v1/categories/{category_id}", dependencies=[Depends(session_guard)])
+    async def get_category(category_id: str, token: str = Depends(token_from_header)):
+        try:
+            return {"category": _serialize(service.get_category(token, category_id))}
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "category.get")
+
     @app.post("/api/v1/drafts/capture", dependencies=[Depends(session_guard)])
     async def capture_draft(payload: dict[str, Any], token: str = Depends(token_from_header), key: str = Depends(idempotency_key)):
         try:
@@ -284,11 +322,12 @@ if FastAPI is not None:
     @app.get("/api/v1/ledger/transactions", dependencies=[Depends(session_guard)])
     async def list_transactions(
         account_id: str | None = None,
+        category_id: str | None = None,
         limit: int = 20,
         token: str = Depends(token_from_header),
     ):
         try:
-            return {"transactions": _serialize(service.list_transactions(token, account_id=account_id, limit=limit))}
+            return {"transactions": _serialize(service.list_transactions(token, account_id=account_id, category_id=category_id, limit=limit))}
         except (TrackAnywhereError, PydanticValidationError) as exc:
             _raise_command_error(exc, "ledger.transaction.list")
 
@@ -299,6 +338,22 @@ if FastAPI is not None:
             return {"transaction": _serialize(transaction), "idempotent_replay": replay}
         except (TrackAnywhereError, PydanticValidationError) as exc:
             _raise_command_error(exc, "ledger.transaction.record")
+
+    @app.post("/api/v1/expenses", dependencies=[Depends(session_guard)])
+    async def record_expense(payload: dict[str, Any], token: str = Depends(token_from_header), key: str = Depends(idempotency_key)):
+        try:
+            transaction, replay = service.record_expense(token, payload, idempotency_key=key)
+            return {"transaction": _serialize(transaction), "idempotent_replay": replay}
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "expense.record")
+
+    @app.post("/api/v1/incomes", dependencies=[Depends(session_guard)])
+    async def record_income(payload: dict[str, Any], token: str = Depends(token_from_header), key: str = Depends(idempotency_key)):
+        try:
+            transaction, replay = service.record_income(token, payload, idempotency_key=key)
+            return {"transaction": _serialize(transaction), "idempotent_replay": replay}
+        except (TrackAnywhereError, PydanticValidationError) as exc:
+            _raise_command_error(exc, "income.record")
 
     @app.get("/api/v1/ledger/transactions/{transaction_id}", dependencies=[Depends(session_guard)])
     async def get_transaction(transaction_id: str, token: str = Depends(token_from_header)):

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ASSET_CODE_PATTERN = r"^[A-Z][A-Z0-9]{1,15}$"
 INSTITUTION_TYPES = Literal["bank", "e_wallet", "fintech", "brokerage", "cash", "crypto_wallet", "system", "other"]
+CATEGORY_KINDS = Literal["income", "expense"]
 
 
 class StrictCommand(BaseModel):
@@ -82,6 +83,41 @@ class RecordTransactionCommand(StrictCommand):
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
     from_account_id: str
     to_account_id: str
+    purpose: str = Field(min_length=1, max_length=256)
+    category_id: str | None = None
+
+
+class CreateCategoryCommand(StrictCommand):
+    kind: CATEGORY_KINDS
+    primary: str = Field(min_length=1, max_length=80)
+    secondary: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @field_validator("primary", "secondary")
+    @classmethod
+    def normalize_category_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = " ".join(value.strip().split())
+        if not stripped:
+            raise ValueError("category label must not be blank")
+        return stripped
+
+
+class RecordExpenseCommand(StrictCommand):
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
+    from_account_id: str
+    category_id: str
+    purpose: str = Field(min_length=1, max_length=256)
+
+
+class RecordIncomeCommand(StrictCommand):
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
+    to_account_id: str
+    category_id: str
     purpose: str = Field(min_length=1, max_length=256)
 
 

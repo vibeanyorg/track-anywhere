@@ -18,9 +18,11 @@ ta account list --json
 ta account find --name <text> --currency CNY --json
 ta account show <account_id> --json
 ta account balance <account_id> --json
+ta category list --kind expense --json
 ta tx list --account-id <account_id> --limit 10 --json
 ta tx show <transaction_id> --json
 ta summary accounts --group-by institution --currency CNY --json
+ta summary categories --kind expense --currency CNY --json
 ```
 
 Use SQL only when no CLI read covers the question. SQL must be read-only. Always report that SQL was used and why.
@@ -148,6 +150,62 @@ ta tx record \
 ```
 
 For explicit fees, create or reuse an `expense` account such as `费用-手续费` with `institution_type=other` and `subtype=fee`.
+
+## Income and Expense Categories
+
+Categories are not preset. Create them only when the user provides a real category need. A category has `kind` (`expense` or `income`), a first-level `primary` label, and an optional second-level `secondary` label.
+
+```bash
+ta category create \
+  --kind expense \
+  --primary "餐饮" \
+  --secondary "外卖" \
+  --idempotency-key category-expense-food-delivery \
+  --json
+
+ta category find \
+  --kind expense \
+  --primary "餐饮" \
+  --secondary "外卖" \
+  --json
+```
+
+For normal spending, prefer `expense record` over creating one expense account per category:
+
+```bash
+ta expense record \
+  --amount <amount> \
+  --currency CNY \
+  --from-account-id <payment_account_id> \
+  --category-id <expense_category_id> \
+  --purpose "<description>" \
+  --occurred-at <iso8601> \
+  --idempotency-key <key> \
+  --json
+```
+
+For income:
+
+```bash
+ta income record \
+  --amount <amount> \
+  --currency CNY \
+  --to-account-id <receiving_account_id> \
+  --category-id <income_category_id> \
+  --purpose "<description>" \
+  --occurred-at <iso8601> \
+  --idempotency-key <key> \
+  --json
+```
+
+Read classified totals with:
+
+```bash
+ta summary categories --kind expense --currency CNY --json
+ta summary categories --kind income --currency CNY --json
+```
+
+If the category is unknown, do not invent it. Ask the user or record a draft/snapshot instead.
 
 ## Credit Card Repayment With Fee
 

@@ -130,6 +130,164 @@ def test_tx_record_posts_agent_friendly_payload(monkeypatch, capsys):
     assert json.loads(capsys.readouterr().out)["transaction"]["purpose"] == "lunch"
 
 
+def test_category_commands_and_category_summary_use_api(monkeypatch):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key})
+        if method == "POST":
+            return 200, {"category": {"category_id": "cat_1", **payload}}
+        return 200, {"categories": [], "groups": []}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "category",
+                "create",
+                "--kind",
+                "expense",
+                "--primary",
+                "餐饮",
+                "--secondary",
+                "外卖",
+                "--idempotency-key",
+                "cat-food-delivery",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "category",
+                "find",
+                "--kind",
+                "expense",
+                "--primary",
+                "餐饮",
+                "--secondary",
+                "外卖",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert main(["--token", "token-1", "summary", "categories", "--kind", "expense", "--currency", "CNY", "--json"]) == 0
+
+    assert calls == [
+        {
+            "method": "POST",
+            "path": "/api/v1/categories",
+            "payload": {"kind": "expense", "primary": "餐饮", "secondary": "外卖"},
+            "key": "cat-food-delivery",
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/categories?kind=expense&primary=%E9%A4%90%E9%A5%AE&secondary=%E5%A4%96%E5%8D%96",
+            "payload": None,
+            "key": None,
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/summary/categories?kind=expense&currency=CNY",
+            "payload": None,
+            "key": None,
+        },
+    ]
+
+
+def test_expense_and_income_record_commands_post_category_transactions(monkeypatch):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key})
+        return 200, {"transaction": {"transaction_id": "txn_1", "category_id": payload["category_id"]}}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "expense",
+                "record",
+                "--amount",
+                "38",
+                "--from",
+                "acc_cash",
+                "--category-id",
+                "cat_food",
+                "--purpose",
+                "lunch",
+                "--occurred-at",
+                "2026-05-16T12:30:00+08:00",
+                "--idempotency-key",
+                "expense-lunch",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "income",
+                "record",
+                "--amount",
+                "100",
+                "--to",
+                "acc_cash",
+                "--category-id",
+                "cat_salary",
+                "--purpose",
+                "salary",
+                "--idempotency-key",
+                "income-salary",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    assert calls == [
+        {
+            "method": "POST",
+            "path": "/api/v1/expenses",
+            "payload": {
+                "amount": "38",
+                "currency": "CNY",
+                "from_account_id": "acc_cash",
+                "category_id": "cat_food",
+                "purpose": "lunch",
+                "occurred_at": "2026-05-16T12:30:00+08:00",
+            },
+            "key": "expense-lunch",
+        },
+        {
+            "method": "POST",
+            "path": "/api/v1/incomes",
+            "payload": {
+                "amount": "100",
+                "currency": "CNY",
+                "to_account_id": "acc_cash",
+                "category_id": "cat_salary",
+                "purpose": "salary",
+            },
+            "key": "income-salary",
+        },
+    ]
+
+
 def test_user_create_posts_payload(monkeypatch, capsys):
     calls = []
 
