@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 from uuid import uuid4
 
 from .errors import NotFound, StaleVersion, ValidationError
@@ -19,6 +20,8 @@ class DraftTransaction:
     confidence: float
     version: int = 1
     attachment_id: str | None = None
+    category_id: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class DraftBook:
@@ -34,6 +37,8 @@ class DraftBook:
         source: str,
         confidence: float,
         attachment_id: str | None = None,
+        category_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> DraftTransaction:
         state = "ready_to_confirm" if not missing_fields and proposed_postings else "needs_review"
         draft = DraftTransaction(
@@ -45,6 +50,8 @@ class DraftBook:
             source=source,
             confidence=confidence,
             attachment_id=attachment_id,
+            category_id=category_id,
+            metadata=metadata or {},
         )
         self.drafts[draft.draft_id] = draft
         return draft

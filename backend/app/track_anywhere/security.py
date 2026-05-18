@@ -27,6 +27,7 @@ SENSITIVE_KEYS = {
     "refresh_token",
     "request_body",
     "secret",
+    "target_token",
     "token",
 }
 

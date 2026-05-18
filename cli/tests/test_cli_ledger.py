@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+import json
+
+import track_anywhere_cli.main as cli_main
+from track_anywhere_cli.main import main
+
+
+def test_tx_record_posts_agent_friendly_payload(monkeypatch, capsys):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key, "token": config.token})
+        return 200, {"transaction": {"transaction_id": "txn_1", "purpose": payload["purpose"]}}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    exit_code = main(
+        [
+            "--token",
+            "token-1",
+            "tx",
+            "record",
+            "--amount",
+            "38",
+            "--from",
+            "acc_cash",
+            "--to",
+            "acc_food",
+            "--purpose",
+            "lunch",
+            "--occurred-at",
+            "2026-05-16T12:30:00+08:00",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls == [
+        {
+            "method": "POST",
+            "path": "/api/v1/ledger/transactions",
+            "payload": {
+                "amount": "38",
+                "currency": "CNY",
+                "from_account_id": "acc_cash",
+                "to_account_id": "acc_food",
+                "purpose": "lunch",
+                "occurred_at": "2026-05-16T12:30:00+08:00",
+            },
+            "key": calls[0]["key"],
+            "token": "token-1",
+        }
+    ]
+    assert calls[0]["key"].startswith("tx-record-")
+    assert json.loads(capsys.readouterr().out)["transaction"]["purpose"] == "lunch"
+
+
+def test_expense_and_income_record_commands_post_category_transactions(monkeypatch):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key})
+        return 200, {"transaction": {"transaction_id": "txn_1", "category_id": payload["category_id"]}}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "expense",
+                "record",
+                "--amount",
+                "38",
+                "--from",
+                "acc_cash",
+                "--category-id",
+                "cat_food",
+                "--purpose",
+                "lunch",
+                "--occurred-at",
+                "2026-05-16T12:30:00+08:00",
+                "--idempotency-key",
+                "expense-lunch",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "income",
+                "record",
+                "--amount",
+                "100",
+                "--to",
+                "acc_cash",
+                "--category-id",
+                "cat_salary",
+                "--purpose",
+                "salary",
+                "--idempotency-key",
+                "income-salary",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    assert calls == [
+        {
+            "method": "POST",
+            "path": "/api/v1/expenses",
+            "payload": {
+                "amount": "38",
+                "currency": "CNY",
+                "from_account_id": "acc_cash",
+                "category_id": "cat_food",
+                "purpose": "lunch",
+                "occurred_at": "2026-05-16T12:30:00+08:00",
+            },
+            "key": "expense-lunch",
+        },
+        {
+            "method": "POST",
+            "path": "/api/v1/incomes",
+            "payload": {
+                "amount": "100",
+                "currency": "CNY",
+                "to_account_id": "acc_cash",
+                "category_id": "cat_salary",
+                "purpose": "salary",
+            },
+            "key": "income-salary",
+        },
+    ]
+
+
+def test_transaction_read_commands_use_query_api(monkeypatch):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key})
+        return 200, {"transactions": []}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert main(["--token", "token-1", "tx", "list", "--account-id", "acc_1", "--limit", "5", "--json"]) == 0
+    assert main(["--token", "token-1", "tx", "show", "txn_1", "--json"]) == 0
+
+    assert calls == [
+        {"method": "GET", "path": "/api/v1/ledger/transactions?account_id=acc_1&limit=5", "payload": None, "key": None},
+        {"method": "GET", "path": "/api/v1/ledger/transactions/txn_1", "payload": None, "key": None},
+    ]
+
+
+def test_account_adjust_posts_balance_delta(monkeypatch):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key})
+        return 200, {"transaction": {"transaction_id": "txn_adjust"}}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "account",
+                "adjust",
+                "acc_cash",
+                "--amount",
+                "-10",
+                "--purpose",
+                "cash correction",
+                "--idempotency-key",
+                "adj-1",
+            ]
+        )
+        == 0
+    )
+
+    assert calls == [
+        {
+            "method": "POST",
+            "path": "/api/v1/ledger/adjustments",
+            "payload": {
+                "account_id": "acc_cash",
+                "amount": "-10",
+                "currency": "CNY",
+                "purpose": "cash correction",
+            },
+            "key": "adj-1",
+        }
+    ]

@@ -89,6 +89,20 @@
     "/api/v1/reconciliation/actions": [
       "post"
     ],
+    "/api/v1/recurring/drafts": [
+      "post"
+    ],
+    "/api/v1/recurring/items": [
+      "get",
+      "post"
+    ],
+    "/api/v1/recurring/items/{recurring_id}": [
+      "get",
+      "patch"
+    ],
+    "/api/v1/recurring/reminders": [
+      "get"
+    ],
     "/api/v1/session/dev-local": [
       "post"
     ],

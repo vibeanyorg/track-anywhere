@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
@@ -15,6 +15,19 @@ CATEGORY_KINDS = Literal["income", "expense"]
 class StrictCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: Literal["v1"] = "v1"
+
+
+class MonthlyRecurrenceCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["monthly_day"]
+    day: int = Field(ge=1, le=31)
+
+
+class YearlyRecurrenceCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal["yearly_date"]
+    month: int = Field(ge=1, le=12)
+    day: int = Field(ge=1, le=31)
 
 
 class CreateAccountCommand(StrictCommand):
@@ -101,6 +114,62 @@ class CreateCategoryCommand(StrictCommand):
         if not stripped:
             raise ValueError("category label must not be blank")
         return stripped
+
+
+class CreateRecurringItemCommand(StrictCommand):
+    name: str = Field(min_length=1, max_length=120)
+    kind: Literal["paid", "reminder_only"]
+    amount: Decimal | None = Field(default=None, gt=0)
+    currency: str | None = Field(default=None, pattern=ASSET_CODE_PATTERN)
+    provider: str | None = Field(default=None, min_length=1, max_length=120)
+    reference: str | None = Field(default=None, min_length=1, max_length=120)
+    recurrence: MonthlyRecurrenceCommand | YearlyRecurrenceCommand
+    reminder_days: list[int] = Field(min_length=1, max_length=30)
+    anchor_date: date
+    source_account_id: str | None = None
+    category_id: str | None = None
+
+    @field_validator("reminder_days")
+    @classmethod
+    def normalize_reminder_days(cls, value: list[int]) -> list[int]:
+        if len(value) != len(set(value)):
+            raise ValueError("reminder days must be unique")
+        if any(day < 1 or day > 365 for day in value):
+            raise ValueError("reminder days must be between 1 and 365")
+        return sorted(value, reverse=True)
+
+
+class UpdateRecurringItemCommand(StrictCommand):
+    status: Literal["active", "paused", "cancelled"] | None = None
+    amount: Decimal | None = Field(default=None, gt=0)
+    currency: str | None = Field(default=None, pattern=ASSET_CODE_PATTERN)
+    provider: str | None = Field(default=None, min_length=1, max_length=120)
+    reference: str | None = Field(default=None, min_length=1, max_length=120)
+    recurrence: MonthlyRecurrenceCommand | YearlyRecurrenceCommand | None = None
+    reminder_days: list[int] | None = Field(default=None, min_length=1, max_length=30)
+    anchor_date: date | None = None
+    source_account_id: str | None = None
+    category_id: str | None = None
+
+    @field_validator("reminder_days")
+    @classmethod
+    def normalize_optional_reminder_days(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        if len(value) != len(set(value)):
+            raise ValueError("reminder days must be unique")
+        if any(day < 1 or day > 365 for day in value):
+            raise ValueError("reminder days must be between 1 and 365")
+        return sorted(value, reverse=True)
+
+
+class CheckRecurringCommand(StrictCommand):
+    as_of: date = Field(default_factory=date.today)
+    window_days: int = Field(default=0, ge=0, le=365)
+
+
+class GenerateRecurringDraftsCommand(StrictCommand):
+    as_of: date = Field(default_factory=date.today)
 
 
 class RecordExpenseCommand(StrictCommand):

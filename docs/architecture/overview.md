@@ -53,4 +53,8 @@ Security is a prerequisite for high-authority Agent/OCR flows, not a final harde
 
 Local development uses SQLite at `.local/track-anywhere.sqlite3` by default. Override storage with `TRACK_ANYWHERE_DATABASE_URL`; for Postgres use a SQLAlchemy URL such as `postgresql+psycopg://user:password@localhost:5432/track_anywhere` and install the `postgres` extra.
 
+Database schema changes are applied through Alembic migrations in `alembic/versions`. Service startup runs `alembic upgrade head` programmatically before the ORM snapshot layer loads data, and Alembic records the active revision in `alembic_version`.
+
+For schema changes, update the SQLAlchemy models, generate a revision with `uv run alembic revision --autogenerate -m "<change>"`, inspect the generated migration, then verify with `uv run alembic upgrade head` and `uv run alembic check`.
+
 The first persistence slice keeps the domain model in memory during a request and writes an ORM snapshot after mutations. It persists accounts, transactions, postings, drafts, funds, attachments, credentials, idempotency receipts, audit events, reconciliation actions, and local owner token state. This keeps the current domain code small while leaving room to replace the snapshot layer with per-aggregate repositories later.
