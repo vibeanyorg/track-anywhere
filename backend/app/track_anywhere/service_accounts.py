@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+from .books import DEFAULT_BOOK_ID
 from .commands import CreateAccountCommand, UpdateAccountMetadataCommand
 from .errors import ValidationError
 from .ledger import Account, Posting
@@ -10,8 +11,9 @@ from .ledger import Account, Posting
 
 class AccountUseCases:
     def create_account(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[Account, bool]:
-        actor = self.actor_from_token(token, "account:write")
         command = CreateAccountCommand.model_validate(payload)
+        book_id = command.book_id or DEFAULT_BOOK_ID
+        actor = self.actor_for_book(token, book_id, "account:write")
         request_hash = self._hash_command(command)
 
         def run():
@@ -22,6 +24,7 @@ class AccountUseCases:
                 institution_type=command.institution_type,
                 subtype=command.subtype,
                 institution=command.institution,
+                book_id=book_id,
             )
             if command.opening_balance:
                 equity = self.ledger.create_account(
@@ -31,6 +34,7 @@ class AccountUseCases:
                     institution_type="system",
                     subtype="opening_equity",
                     institution="track-anywhere",
+                    book_id=book_id,
                 )
                 self.ledger.create_transaction(
                     memo=f"Opening balance: {command.name}",
@@ -38,6 +42,7 @@ class AccountUseCases:
                         Posting(account.account_id, command.opening_balance, command.currency),
                         Posting(equity.account_id, -command.opening_balance, command.currency),
                     ],
+                    book_id=book_id,
                 )
             self.audit.record(
                 operation="account.create",
@@ -67,9 +72,15 @@ class AccountUseCases:
         institution_type: str | None = None,
         subtype: str | None = None,
         institution: str | None = None,
+        book_id: str | None = DEFAULT_BOOK_ID,
     ) -> list[Account]:
-        self.actor_from_token(token, "account:read")
+        if book_id is not None:
+            self.actor_for_book(token, book_id, "account:read")
+        else:
+            self.actor_from_token(token, "account:read")
         accounts = list(self.ledger.accounts.values())
+        if book_id is not None:
+            accounts = [account for account in accounts if account.book_id == book_id]
         if name:
             lowered = name.lower()
             accounts = [account for account in accounts if lowered in account.name.lower()]
@@ -96,8 +107,9 @@ class AccountUseCases:
         )
 
     def get_account(self, token: str, account_id: str) -> Account:
-        self.actor_from_token(token, "account:read")
-        return self.ledger.get_account(account_id)
+        account = self.ledger.get_account(account_id)
+        self.actor_for_book(token, account.book_id, "account:read")
+        return account
 
     def account_summary(
         self,
@@ -108,13 +120,15 @@ class AccountUseCases:
         institution_type: str | None = None,
         include_system: bool = False,
     ) -> dict[str, Any]:
-        self.actor_from_token(token, "account:read")
+        self.actor_for_book(token, DEFAULT_BOOK_ID, "account:read")
         allowed_groupings = {"type", "institution_type", "subtype", "institution", "currency"}
         if group_by not in allowed_groupings:
             raise ValidationError(f"group_by must be one of {sorted(allowed_groupings)}")
 
         groups: dict[tuple[str, str], dict[str, Any]] = {}
         for account in self.ledger.accounts.values():
+            if account.book_id != DEFAULT_BOOK_ID:
+                continue
             if not include_system and account.type not in {"asset", "liability", "fund"}:
                 continue
             if currency and account.currency != currency:
@@ -170,14 +184,14 @@ class AccountUseCases:
         }
 
     def update_account_metadata(self, token: str, account_id: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[Account, bool]:
-        actor = self.actor_from_token(token, "account:write")
         command = UpdateAccountMetadataCommand.model_validate(payload)
         if command.institution_type is None and command.subtype is None and command.institution is None:
             raise ValidationError("at least one account metadata field is required")
+        account = self.ledger.get_account(account_id)
+        actor = self.actor_for_book(token, account.book_id, "account:write")
         request_hash = self._hash_command_payload(command, {"account_id": account_id})
 
         def run():
-            account = self.ledger.get_account(account_id)
             if command.institution_type is not None:
                 account.institution_type = command.institution_type
             if command.subtype is not None:

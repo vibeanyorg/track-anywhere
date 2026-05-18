@@ -6,6 +6,7 @@ from typing import Any
 
 from .audit import AuditLog
 from .attachments import AttachmentIntake
+from .books import DEFAULT_BOOK_ID, BookDirectory
 from .budgets import BudgetBook
 from .categories import CategoryBook
 from .credit_cards import CreditCardBook
@@ -17,6 +18,7 @@ from .recurring import RecurringBook
 from .security import Actor, CredentialStore, DeploymentSecurityConfig, validate_startup_security
 from .service_auth import OWNER_SCOPES
 from .service_balances import BalanceUseCases
+from .service_books import BookUseCases
 from .service_catalog import CatalogUseCases
 from .service_credentials import CredentialUseCases
 from .service_drafts import DraftUseCases
@@ -28,6 +30,7 @@ from .users import UserDirectory
 
 
 class FinanceService(
+    BookUseCases,
     CatalogUseCases,
     FinancialUseCases,
     CredentialUseCases,
@@ -43,6 +46,7 @@ class FinanceService(
         self.credentials = CredentialStore()
         self.audit = AuditLog()
         self.idempotency = IdempotencyStore()
+        self.books = BookDirectory()
         self.ledger = Ledger()
         self.drafts = DraftBook()
         self.recurring = RecurringBook()
@@ -56,11 +60,17 @@ class FinanceService(
         self.adjustment_account_ids: dict[str, str] = {}
         self.owner_token = new_owner_token()
         self.storage.load_into(self)
+        self._ensure_domain_foundations()
         self._ensure_owner_credential()
         self._persist()
 
     def actor_from_token(self, token: str, required_scope: str | None = None) -> Actor:
         return self.credentials.verify(token, required_scope=required_scope)
+
+    def actor_for_book(self, token: str, book_id: str | None, required_scope: str | None = None) -> Actor:
+        actor = self.actor_from_token(token, required_scope=required_scope)
+        self.books.require_access(book_id, actor, required_scope)
+        return actor
 
     def _ensure_owner_credential(self) -> None:
         try:
@@ -79,6 +89,43 @@ class FinanceService(
 
     def _persist(self) -> None:
         self.storage.save(self)
+
+    def _ensure_domain_foundations(self) -> None:
+        self.books.ensure_default()
+        for account in self.ledger.accounts.values():
+            account.book_id = account.book_id or DEFAULT_BOOK_ID
+        for category in list(self.categories.categories.values()):
+            category.book_id = category.book_id or DEFAULT_BOOK_ID
+            if category.secondary is not None and category.parent_id is None:
+                parent = self.categories.find(kind=category.kind, primary=category.primary, book_id=category.book_id)
+                if parent is None:
+                    parent = self.categories.create(kind=category.kind, primary=category.primary, book_id=category.book_id)
+                category.parent_id = parent.category_id
+                category.name = category.secondary
+                self.categories._sync_legacy_fields(category)
+            if not any(version.category_id == category.category_id for version in self.categories.versions.values()):
+                self.categories._record_version(category, "migration")
+        for transaction in self.ledger.transactions.values():
+            transaction.book_id = transaction.book_id or self._book_id_for_transaction(transaction)
+            if transaction.lines is None:
+                transaction.lines = []
+            if transaction.category_id is not None and not transaction.lines:
+                self._add_category_line_for_transaction(transaction, self.categories.get(transaction.category_id))
+        for draft in self.drafts.drafts.values():
+            draft.book_id = draft.book_id or self._book_id_for_postings(draft.proposed_postings)
+        for item in self.recurring.items.values():
+            if not item.book_id and item.source_account_id is not None:
+                item.book_id = self.ledger.get_account(item.source_account_id).book_id
+
+    def _book_id_for_transaction(self, transaction) -> str:
+        return self._book_id_for_postings(transaction.postings)
+
+    def _book_id_for_postings(self, postings) -> str:
+        for posting in postings:
+            account = self.ledger.accounts.get(posting.account_id)
+            if account is not None:
+                return account.book_id
+        return DEFAULT_BOOK_ID
 
     @staticmethod
     def _hash_command(command) -> str:

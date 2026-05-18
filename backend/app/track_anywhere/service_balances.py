@@ -11,15 +11,15 @@ from .ledger import Posting
 
 class BalanceUseCases:
     def adjust_balance(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
-        actor = self.actor_from_token(token, "ledger:confirm")
         command = BalanceAdjustmentCommand.model_validate(payload)
+        account = self.ledger.get_account(command.account_id)
+        actor = self.actor_for_book(token, account.book_id, "ledger:confirm")
         request_hash = self._hash_command(command)
 
         def run():
-            account = self.ledger.get_account(command.account_id)
             if account.currency != command.currency:
                 raise ValidationError("balance adjustment currency must match account currency")
-            adjustment_account_id = self._system_adjustment_account_id(command.currency)
+            adjustment_account_id = self._system_adjustment_account_id(command.currency, book_id=account.book_id)
             transaction = self.ledger.create_transaction(
                 memo=command.purpose,
                 occurred_at=command.occurred_at,
@@ -52,10 +52,11 @@ class BalanceUseCases:
         return result
 
     def account_balance(self, token: str, account_id: str, *, include_drafts: bool = False) -> dict[str, Any]:
-        self.actor_from_token(token, "account:read")
+        account = self.ledger.get_account(account_id)
+        self.actor_for_book(token, account.book_id, "account:read")
         official = self.ledger.balance(account_id)
         pending = self.drafts.projected_impact(account_id) if include_drafts else {}
-        currency = self.ledger.get_account(account_id).currency
+        currency = account.currency
         official_amount = official.get(currency, Decimal("0"))
         pending_amount = pending.get(currency, Decimal("0"))
         result = {
@@ -85,8 +86,10 @@ class BalanceUseCases:
             }
         return result
 
-    def _system_adjustment_account_id(self, currency: str) -> str:
-        account_id = self.adjustment_account_ids.get(currency)
+    def _system_adjustment_account_id(self, currency: str, *, book_id: str | None = None) -> str:
+        book_id = book_id or self.books.ensure_default().book_id
+        key = f"{book_id}:{currency}"
+        account_id = self.adjustment_account_ids.get(key) or self.adjustment_account_ids.get(currency)
         if account_id is not None:
             return account_id
         account = self.ledger.create_account(
@@ -96,16 +99,19 @@ class BalanceUseCases:
             institution_type="system",
             subtype="system_adjustment",
             institution="track-anywhere",
+            book_id=book_id,
         )
-        self.adjustment_account_ids[currency] = account.account_id
+        self.adjustment_account_ids[key] = account.account_id
         return account.account_id
 
-    def _system_category_account_id(self, kind: str, currency: str) -> str:
+    def _system_category_account_id(self, kind: str, currency: str, *, book_id: str | None = None) -> str:
+        book_id = book_id or self.books.ensure_default().book_id
         subtype = f"{kind}_clearing"
         for account in self.ledger.accounts.values():
             if (
                 account.type == kind
                 and account.currency == currency
+                and account.book_id == book_id
                 and account.institution_type == "system"
                 and account.subtype == subtype
                 and account.institution == "track-anywhere"
@@ -118,6 +124,7 @@ class BalanceUseCases:
             institution_type="system",
             subtype=subtype,
             institution="track-anywhere",
+            book_id=book_id,
         )
         return account.account_id
 

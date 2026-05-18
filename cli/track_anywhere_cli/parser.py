@@ -211,6 +211,11 @@ def build_parser() -> argparse.ArgumentParser:
     tx_show = tx_sub.add_parser("show")
     tx_show.add_argument("transaction_id")
     tx_show.add_argument("--json", action="store_true")
+    tx_reverse = tx_sub.add_parser("reverse")
+    tx_reverse.add_argument("transaction_id")
+    tx_reverse.add_argument("--memo", required=True)
+    tx_reverse.add_argument("--idempotency-key")
+    tx_reverse.add_argument("--json", action="store_true")
 
     record = sub.add_parser("record")
     record.add_argument("--amount", required=True)

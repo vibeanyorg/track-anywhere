@@ -6,6 +6,7 @@ from decimal import Decimal
 from hashlib import sha256
 from typing import Any
 
+from .books import DEFAULT_BOOK_ID
 from .commands import (
     CreateFundCommand,
     FundAllocationCommand,
@@ -20,9 +21,9 @@ from .ledger import Posting
 
 class FinancialUseCases:
     def record_investment_event(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[InvestmentEvent, bool]:
-        actor = self.actor_from_token(token, "investment:write")
         command = RecordInvestmentEventCommand.model_validate(payload)
         account = self.ledger.get_account(command.account_id)
+        actor = self.actor_for_book(token, account.book_id, "investment:write")
         if account.type != "asset":
             raise ValidationError("investment events can only be recorded against asset accounts")
         if account.currency != command.currency:
@@ -59,14 +60,21 @@ class FinancialUseCases:
         return result
 
     def list_investment_events(self, token: str, account_id: str | None = None) -> list[InvestmentEvent]:
-        self.actor_from_token(token, "investment:read")
         if account_id is not None:
-            self.ledger.get_account(account_id)
-        return self.investments.list(account_id)
+            account = self.ledger.get_account(account_id)
+            self.actor_for_book(token, account.book_id, "investment:read")
+            return self.investments.list(account_id)
+        self.actor_for_book(token, DEFAULT_BOOK_ID, "investment:read")
+        return [
+            event
+            for event in self.investments.list(account_id)
+            if self.ledger.accounts.get(event.account_id) is not None
+            and self.ledger.accounts[event.account_id].book_id == DEFAULT_BOOK_ID
+        ]
 
     def investment_performance(self, token: str, account_id: str, *, as_of: str | None = None):
-        self.actor_from_token(token, "investment:read")
         account = self.ledger.get_account(account_id)
+        self.actor_for_book(token, account.book_id, "investment:read")
         try:
             as_of_datetime = datetime.fromisoformat(as_of) if as_of is not None else None
         except ValueError as exc:
@@ -93,11 +101,12 @@ class FinancialUseCases:
         )
 
     def create_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
-        actor = self.actor_from_token(token, "budget:write")
+        actor = self.actor_for_book(token, DEFAULT_BOOK_ID, "budget:write")
         command = CreateFundCommand.model_validate(payload)
         request_hash = self._hash_command(command)
 
         def run():
+            book_id = self.books.ensure_default().book_id
             account = self.ledger.create_account(
                 command.name,
                 "fund",
@@ -105,8 +114,9 @@ class FinancialUseCases:
                 institution_type="system",
                 subtype="fund",
                 institution="track-anywhere",
+                book_id=book_id,
             )
-            fund = self.budgets.create(name=command.name, account_id=account.account_id, currency=command.currency)
+            fund = self.budgets.create(name=command.name, account_id=account.account_id, currency=command.currency, book_id=book_id)
             self.audit.record(operation="fund.create", actor=actor, entity_ref=fund.fund_id, details=command.model_dump())
             return fund
 
@@ -121,12 +131,15 @@ class FinancialUseCases:
         return result
 
     def allocate_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
-        actor = self.actor_from_token(token, "budget:write")
         command = FundAllocationCommand.model_validate(payload)
+        fund = self.budgets.require_current(command.fund_id, command.expected_version)
+        actor = self.actor_for_book(token, fund.book_id, "budget:write")
         request_hash = self._hash_command(command)
 
         def run():
-            fund = self.budgets.require_current(command.fund_id, command.expected_version)
+            source = self.ledger.get_account(command.source_account_id)
+            if source.book_id != fund.book_id:
+                raise ValidationError("fund allocation account must belong to the fund book")
             transaction = self.ledger.create_transaction(
                 command.memo or f"Allocate to {fund.name}",
                 [
@@ -154,12 +167,15 @@ class FinancialUseCases:
         return result
 
     def spend_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
-        actor = self.actor_from_token(token, "budget:write")
         command = FundSpendCommand.model_validate(payload)
+        fund = self.budgets.require_current(command.fund_id, command.expected_version)
+        actor = self.actor_for_book(token, fund.book_id, "budget:write")
         request_hash = self._hash_command(command)
 
         def run():
-            fund = self.budgets.require_current(command.fund_id, command.expected_version)
+            expense = self.ledger.get_account(command.expense_account_id)
+            if expense.book_id != fund.book_id:
+                raise ValidationError("fund spend account must belong to the fund book")
             transaction = self.ledger.create_transaction(
                 command.memo or f"Spend from {fund.name}",
                 [

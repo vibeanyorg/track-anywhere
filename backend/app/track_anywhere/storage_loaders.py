@@ -10,7 +10,7 @@ from .budgets import BudgetFund
 from .drafts import DraftTransaction
 from .idempotency import CommandReceipt
 from .investments import InvestmentEvent
-from .ledger import Posting, Transaction
+from .ledger import Posting, Transaction, TransactionLine
 from .recurring import Recurrence, RecurringItem
 from .security import Actor, Credential
 from .storage_models import (
@@ -25,6 +25,7 @@ from .storage_models import (
     RecurringItemRecord,
     TransactionRecord,
 )
+from .domain_storage_models import TransactionLineRecord
 
 
 class StorageLoaders:
@@ -34,14 +35,38 @@ class StorageLoaders:
             postings_by_transaction.setdefault(posting.transaction_id, []).append(
                 Posting(posting.account_id, Decimal(posting.amount), posting.currency)
             )
+        lines_by_transaction: dict[str, list[TransactionLine]] = {}
+        for line in session.query(TransactionLineRecord).order_by(TransactionLineRecord.position).all():
+            lines_by_transaction.setdefault(line.transaction_id, []).append(
+                TransactionLine(
+                    line_id=line.line_id,
+                    transaction_id=line.transaction_id,
+                    position=line.position,
+                    line_type=line.line_type,
+                    amount=Decimal(line.amount),
+                    currency=line.currency,
+                    book_id=line.book_id,
+                    category_id=line.category_id,
+                    category_version_id=line.category_version_id,
+                    category_path_snapshot=line.category_path_snapshot,
+                    merchant_id=line.merchant_id,
+                    project_id=line.project_id,
+                    necessity=line.necessity,
+                    reimbursement_status=line.reimbursement_status,
+                    memo=line.memo,
+                    version=line.version,
+                )
+            )
         return {
             row.transaction_id: Transaction(
                 transaction_id=row.transaction_id,
+                book_id=row.book_id,
                 memo=row.memo,
                 occurred_at=datetime.fromisoformat(row.occurred_at),
                 purpose=row.purpose,
                 postings=postings_by_transaction.get(row.transaction_id, []),
                 category_id=row.category_id,
+                lines=lines_by_transaction.get(row.transaction_id, []),
                 reversed_by=row.reversed_by,
                 version=row.version,
             )
@@ -63,6 +88,7 @@ class StorageLoaders:
                 missing_fields=list(row.missing_fields),
                 source=row.source,
                 confidence=row.confidence,
+                book_id=row.book_id,
                 version=row.version,
                 attachment_id=row.attachment_id,
                 category_id=row.category_id,
@@ -78,6 +104,7 @@ class StorageLoaders:
                 name=row.name,
                 kind=row.kind,
                 status=row.status,
+                book_id=row.book_id,
                 amount=Decimal(row.amount) if row.amount is not None else None,
                 currency=row.currency,
                 provider=row.provider,
@@ -100,6 +127,7 @@ class StorageLoaders:
         return {
             row.fund_id: BudgetFund(
                 fund_id=row.fund_id,
+                book_id=row.book_id,
                 account_id=row.account_id,
                 name=row.name,
                 currency=row.currency,

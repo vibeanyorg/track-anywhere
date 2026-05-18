@@ -5,6 +5,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
+from .books import DEFAULT_BOOK_ID
 from .errors import NotFound, ValidationError
 
 
@@ -24,6 +25,7 @@ class RecurringItem:
     recurrence: Recurrence
     reminder_days: list[int]
     anchor_date: date
+    book_id: str = DEFAULT_BOOK_ID
     amount: Decimal | None = None
     currency: str | None = None
     provider: str | None = None
@@ -53,6 +55,7 @@ class RecurringBook:
         reference: str | None = None,
         source_account_id: str | None = None,
         category_id: str | None = None,
+        book_id: str = DEFAULT_BOOK_ID,
     ) -> RecurringItem:
         item = RecurringItem(
             recurring_id=f"rec_{uuid4().hex}",
@@ -66,6 +69,7 @@ class RecurringBook:
             recurrence=recurrence,
             reminder_days=validate_reminder_days(reminder_days),
             anchor_date=anchor_date,
+            book_id=book_id,
             source_account_id=source_account_id,
             category_id=category_id,
         )
@@ -79,8 +83,16 @@ class RecurringBook:
         except KeyError as exc:
             raise NotFound(f"recurring item not found: {recurring_id}") from exc
 
-    def list(self, *, status: str | None = None, kind: str | None = None) -> list[RecurringItem]:
+    def list(
+        self,
+        *,
+        status: str | None = None,
+        kind: str | None = None,
+        book_id: str | None = None,
+    ) -> list[RecurringItem]:
         items = list(self.items.values())
+        if book_id is not None:
+            items = [item for item in items if item.book_id == book_id]
         if status is not None:
             items = [item for item in items if item.status == status]
         if kind is not None:

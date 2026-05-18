@@ -35,14 +35,14 @@ class DraftUseCases:
         return result
 
     def confirm_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[Transaction, bool]:
-        actor = self.actor_from_token(token, "ledger:confirm")
         command = ConfirmDraftCommand.model_validate(payload)
+        draft = self.drafts.get(command.draft_id)
+        if draft is None:
+            raise NotFound(f"draft not found: {command.draft_id}")
+        actor = self.actor_for_book(token, draft.book_id, "ledger:confirm")
         request_hash = self._hash_command(command)
 
         def run():
-            draft = self.drafts.get(command.draft_id)
-            if draft is None:
-                raise NotFound(f"draft not found: {command.draft_id}")
             if draft.version != command.expected_version:
                 raise StaleVersion("draft version conflict")
             if draft.state != "ready_to_confirm":
@@ -51,7 +51,10 @@ class DraftUseCases:
                 draft.memo,
                 draft.proposed_postings,
                 category_id=draft.category_id,
+                book_id=draft.book_id,
             )
+            if draft.category_id is not None:
+                self._add_category_line_for_transaction(transaction, self.categories.get(draft.category_id))
             draft.state = "confirmed"
             draft.version += 1
             self.audit.record(
@@ -73,19 +76,22 @@ class DraftUseCases:
         return result
 
     def reject_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
-        actor = self.actor_from_token(token, "ledger:confirm")
         command = RejectDraftCommand.model_validate(payload)
+        draft = self.drafts.get(command.draft_id)
+        if draft is None:
+            raise NotFound(f"draft not found: {command.draft_id}")
+        actor = self.actor_for_book(token, draft.book_id, "ledger:confirm")
         request_hash = self._hash_command(command)
 
         def run():
-            draft = self.drafts.reject(command.draft_id, command.expected_version)
+            rejected = self.drafts.reject(command.draft_id, command.expected_version)
             self.audit.record(
                 operation="draft.reject",
                 actor=actor,
-                entity_ref=draft.draft_id,
-                details={"reason": command.reason, "state": draft.state, "version": draft.version},
+                entity_ref=rejected.draft_id,
+                details={"reason": command.reason, "state": rejected.state, "version": rejected.version},
             )
-            return draft
+            return rejected
 
         result = self.idempotency.run(
             key=idempotency_key,
@@ -100,6 +106,10 @@ class DraftUseCases:
     def supersede_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         actor = self.actor_from_token(token, "capture:draft")
         command = SupersedeDraftCommand.model_validate(payload)
+        current = self.drafts.get(command.draft_id)
+        if current is None:
+            raise NotFound(f"draft not found: {command.draft_id}")
+        self.books.require_access(current.book_id, actor, "capture:draft")
         request_hash = self._hash_command(command)
 
         def run():
@@ -126,6 +136,7 @@ class DraftUseCases:
     def _draft_from_capture_command(self, command: CaptureDraftCommand, *, actor: Actor):
         proposed: list[Posting] = []
         missing: list[str] = []
+        book_id = self.books.ensure_default().book_id
         for field in ("amount", "source_account_id", "expense_account_id"):
             if getattr(command, field) in (None, ""):
                 missing.append(field)
@@ -135,6 +146,11 @@ class DraftUseCases:
             expense_account_id = command.expense_account_id
             if amount is None or source_account_id is None or expense_account_id is None:
                 raise ValidationError("complete draft command lost required posting fields")
+            source = self.ledger.get_account(source_account_id)
+            expense = self.ledger.get_account(expense_account_id)
+            if source.book_id != expense.book_id:
+                raise ValidationError("draft postings must belong to one book")
+            book_id = source.book_id
             proposed.extend(
                 [
                     Posting(source_account_id, -amount, command.currency),
@@ -147,4 +163,5 @@ class DraftUseCases:
             missing_fields=missing,
             source=actor.actor_type,
             confidence=command.confidence,
+            book_id=book_id,
         )

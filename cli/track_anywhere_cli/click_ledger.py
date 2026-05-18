@@ -86,6 +86,25 @@ def _transactions(root: click.Group) -> None:
         args = common_args(state, json_mode, no_color, command="tx", tx_command="show", transaction_id=transaction_id)
         return run_api(args, state=state, command_path="tx.show")
 
+    @tx.command("reverse")
+    @click.argument("transaction_id")
+    @click.option("--memo", required=True)
+    @click.option("--idempotency-key")
+    @output_options
+    @pass_state
+    def reverse_tx(state, json_mode, no_color, transaction_id, memo, idempotency_key):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="tx",
+            tx_command="reverse",
+            transaction_id=transaction_id,
+            memo=memo,
+            idempotency_key=idempotency_key,
+        )
+        return run_api(args, state=state, command_path="tx.reverse")
+
     _record_command(root, name="record", command="record")
 
 

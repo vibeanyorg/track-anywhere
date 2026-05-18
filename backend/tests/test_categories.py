@@ -23,7 +23,14 @@ def test_categories_start_empty_and_support_two_levels(tmp_path):
     assert category.primary == "餐饮"
     assert category.secondary == "外卖"
     assert service.get_category(service.owner_token, category.category_id) == category
-    assert service.list_categories(service.owner_token, kind="expense", primary="餐饮") == [category]
+    category_tree = service.list_categories(service.owner_token, kind="expense", primary="餐饮")
+    parent = next(item for item in category_tree if item.secondary is None)
+
+    assert category_tree == [parent, category]
+    assert parent.level == 1
+    assert category.level == 2
+    assert category.parent_id == parent.category_id
+    assert category.path_cache == "餐饮 / 外卖"
 
 
 def test_duplicate_categories_are_rejected(tmp_path):
@@ -80,6 +87,8 @@ def test_record_expense_and_income_with_categories_and_summary(tmp_path):
 
     assert expense_tx.category_id == expense_category.category_id
     assert income_tx.category_id == income_category.category_id
+    assert expense_tx.lines[0].category_id == expense_category.category_id
+    assert expense_tx.lines[0].category_path_snapshot["path"] == "餐饮 / 午餐"
     assert service.account_balance(service.owner_token, cash.account_id)["official_balance"]["amount"] == "1062"
 
     expense_summary = service.category_summary(service.owner_token, kind="expense", currency="CNY")
@@ -164,3 +173,4 @@ def test_categories_and_transaction_links_persist(tmp_path):
 
     assert second.get_category(token, category.category_id).secondary == "打车"
     assert second.ledger.transactions[transaction.transaction_id].category_id == category.category_id
+    assert second.ledger.transactions[transaction.transaction_id].lines[0].category_id == category.category_id

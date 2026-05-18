@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from .books import DEFAULT_BOOK_ID
 from .commands import (
     CheckRecurringCommand,
     CreateRecurringItemCommand,
@@ -16,10 +17,11 @@ from .recurring import Recurrence, RecurringItem, due_reminders, last_renewal_da
 
 class RecurringUseCases:
     def create_recurring_item(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[RecurringItem, bool]:
-        actor = self.actor_from_token(token, "recurring:write")
         command = CreateRecurringItemCommand.model_validate(payload)
-        self._validate_recurring_references(command)
-        request_hash = self._hash_command(command)
+        book_id = command.book_id or DEFAULT_BOOK_ID
+        actor = self.actor_for_book(token, book_id, "recurring:write")
+        self._validate_recurring_references(command, book_id)
+        request_hash = self._hash_command_payload(command, {"book_id": book_id})
 
         def run():
             item = self.recurring.create(
@@ -32,6 +34,7 @@ class RecurringUseCases:
                 recurrence=Recurrence(**command.recurrence.model_dump()),
                 reminder_days=command.reminder_days,
                 anchor_date=command.anchor_date,
+                book_id=book_id,
                 source_account_id=command.source_account_id,
                 category_id=command.category_id,
             )
@@ -61,14 +64,14 @@ class RecurringUseCases:
         *,
         idempotency_key: str,
     ) -> tuple[RecurringItem, bool]:
-        actor = self.actor_from_token(token, "recurring:write")
         command = UpdateRecurringItemCommand.model_validate(payload)
         if not command.model_dump(exclude_none=True, exclude={"schema_version"}):
             raise ValidationError("at least one recurring item field is required")
+        item = self.recurring.get(recurring_id)
+        actor = self.actor_for_book(token, item.book_id, "recurring:write")
         request_hash = self._hash_command_payload(command, {"recurring_id": recurring_id})
 
         def run():
-            item = self.recurring.get(recurring_id)
             candidate = replace(
                 item,
                 recurrence=replace(item.recurrence),
@@ -97,41 +100,63 @@ class RecurringUseCases:
         self._persist()
         return result
 
-    def list_recurring_items(self, token: str, *, status: str | None = None, kind: str | None = None) -> list[RecurringItem]:
-        self.actor_from_token(token, "recurring:read")
+    def list_recurring_items(
+        self,
+        token: str,
+        *,
+        status: str | None = None,
+        kind: str | None = None,
+        book_id: str = DEFAULT_BOOK_ID,
+    ) -> list[RecurringItem]:
+        self.actor_for_book(token, book_id, "recurring:read")
         if status is not None and status not in {"active", "paused", "cancelled"}:
             raise ValidationError("status must be active, paused, or cancelled")
         if kind is not None and kind not in {"paid", "reminder_only"}:
             raise ValidationError("kind must be paid or reminder_only")
-        return self.recurring.list(status=status, kind=kind)
+        return self.recurring.list(status=status, kind=kind, book_id=book_id)
 
     def get_recurring_item(self, token: str, recurring_id: str) -> RecurringItem:
-        self.actor_from_token(token, "recurring:read")
-        return self.recurring.get(recurring_id)
+        item = self.recurring.get(recurring_id)
+        self.actor_for_book(token, item.book_id, "recurring:read")
+        return item
 
-    def check_recurring_reminders(self, token: str, *, as_of: str | None = None, window_days: int = 0) -> dict[str, Any]:
-        self.actor_from_token(token, "recurring:read")
+    def check_recurring_reminders(
+        self,
+        token: str,
+        *,
+        as_of: str | None = None,
+        window_days: int = 0,
+        book_id: str = DEFAULT_BOOK_ID,
+    ) -> dict[str, Any]:
+        self.actor_for_book(token, book_id, "recurring:read")
         payload = {"window_days": window_days}
         if as_of is not None:
             payload["as_of"] = as_of
         command = CheckRecurringCommand.model_validate(payload)
         reminders = []
-        for item in self.recurring.list(status="active"):
+        for item in self.recurring.list(status="active", book_id=book_id):
             for reminder in due_reminders(item, command.as_of, command.window_days):
                 reminders.append(self._recurring_reminder_payload(item, reminder))
         reminders.sort(key=lambda item: (item["reminder_date"], item["renewal_date"], item["name"]))
         return {"as_of": command.as_of.isoformat(), "window_days": command.window_days, "reminders": reminders}
 
-    def generate_recurring_drafts(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[dict[str, Any], bool]:
-        actor = self.actor_from_token(token, "recurring:write")
+    def generate_recurring_drafts(
+        self,
+        token: str,
+        payload: dict[str, Any],
+        *,
+        idempotency_key: str,
+        book_id: str = DEFAULT_BOOK_ID,
+    ) -> tuple[dict[str, Any], bool]:
+        actor = self.actor_for_book(token, book_id, "recurring:write")
         if "capture:draft" not in actor.scopes:
             raise PolicyDenied("credential lacks required scope: capture:draft")
         command = GenerateRecurringDraftsCommand.model_validate(payload)
-        request_hash = self._hash_command(command)
+        request_hash = self._hash_command_payload(command, {"book_id": book_id})
 
         def run():
             result = {"as_of": command.as_of.isoformat(), "created": [], "skipped": []}
-            for item in self.recurring.list(status="active"):
+            for item in self.recurring.list(status="active", book_id=book_id):
                 renewal_date = last_renewal_date(item, command.as_of)
                 if renewal_date is None:
                     result["skipped"].append(self._recurring_skip(item, "not_due", None))
@@ -162,15 +187,19 @@ class RecurringUseCases:
         self._persist()
         return result
 
-    def _validate_recurring_references(self, command: CreateRecurringItemCommand) -> None:
+    def _validate_recurring_references(self, command: CreateRecurringItemCommand, book_id: str) -> None:
         if command.kind != "paid":
             return
         if command.currency is None or command.source_account_id is None or command.category_id is None:
             return
         source = self.ledger.get_account(command.source_account_id)
+        if source.book_id != book_id:
+            raise ValidationError("recurring source account must belong to the recurring book")
         if source.currency != command.currency:
             raise ValidationError("recurring currency must match source account currency")
         category = self.categories.get(command.category_id)
+        if category.book_id != book_id:
+            raise ValidationError("recurring category must belong to the recurring book")
         if category.kind != "expense":
             raise ValidationError("paid recurring item requires an expense category")
 
@@ -180,9 +209,13 @@ class RecurringUseCases:
         if item.currency is None or item.source_account_id is None or item.category_id is None:
             return
         source = self.ledger.get_account(item.source_account_id)
+        if source.book_id != item.book_id:
+            raise ValidationError("recurring source account must belong to the recurring book")
         if source.currency != item.currency:
             raise ValidationError("recurring currency must match source account currency")
         category = self.categories.get(item.category_id)
+        if category.book_id != item.book_id:
+            raise ValidationError("recurring category must belong to the recurring book")
         if category.kind != "expense":
             raise ValidationError("paid recurring item requires an expense category")
 
@@ -197,7 +230,7 @@ class RecurringUseCases:
     def _create_recurring_draft(self, item: RecurringItem, renewal_date):
         if item.amount is None or item.currency is None or item.source_account_id is None or item.category_id is None:
             raise ValidationError("paid recurring item lost required draft fields")
-        expense_account_id = self._system_category_account_id("expense", item.currency)
+        expense_account_id = self._system_category_account_id("expense", item.currency, book_id=item.book_id)
         draft = self.drafts.create(
             memo=f"Recurring renewal: {item.name} ({renewal_date.isoformat()})",
             proposed_postings=[
@@ -208,6 +241,7 @@ class RecurringUseCases:
             source="recurring",
             confidence=1.0,
             category_id=item.category_id,
+            book_id=item.book_id,
             metadata={
                 "recurring_id": item.recurring_id,
                 "renewal_date": renewal_date.isoformat(),

@@ -20,6 +20,7 @@ from .storage_models import (
     RecurringItemRecord,
     TransactionRecord,
 )
+from .domain_storage_models import TransactionLineRecord
 
 
 class StorageWriters:
@@ -33,6 +34,30 @@ class StorageWriters:
                     account_id=posting.account_id,
                     amount=str(posting.amount),
                     currency=posting.currency,
+                )
+            )
+
+    def _replace_transaction_lines(self, session: Session, transaction: Transaction) -> None:
+        session.execute(delete(TransactionLineRecord).where(TransactionLineRecord.transaction_id == transaction.transaction_id))
+        for line in transaction.lines:
+            session.add(
+                TransactionLineRecord(
+                    line_id=line.line_id,
+                    transaction_id=line.transaction_id,
+                    position=line.position,
+                    line_type=line.line_type,
+                    amount=str(line.amount),
+                    currency=line.currency,
+                    book_id=line.book_id,
+                    category_id=line.category_id,
+                    category_version_id=line.category_version_id,
+                    category_path_snapshot=to_jsonable(line.category_path_snapshot),
+                    merchant_id=line.merchant_id,
+                    project_id=line.project_id,
+                    necessity=line.necessity,
+                    reimbursement_status=line.reimbursement_status,
+                    memo=line.memo,
+                    version=line.version,
                 )
             )
 
@@ -54,6 +79,7 @@ class StorageWriters:
             session.merge(
                 TransactionRecord(
                     transaction_id=transaction.transaction_id,
+                    book_id=transaction.book_id,
                     memo=transaction.memo,
                     occurred_at=transaction.occurred_at.isoformat(),
                     purpose=transaction.purpose,
@@ -63,6 +89,7 @@ class StorageWriters:
                 )
             )
             self._replace_transaction_postings(session, transaction)
+            self._replace_transaction_lines(session, transaction)
 
     def _save_drafts(self, session: Session, drafts) -> None:
         for draft in drafts:
@@ -71,6 +98,7 @@ class StorageWriters:
                     draft_id=draft.draft_id,
                     memo=draft.memo,
                     state=draft.state,
+                    book_id=draft.book_id,
                     missing_fields=list(draft.missing_fields),
                     source=draft.source,
                     confidence=draft.confidence,
@@ -93,6 +121,7 @@ class StorageWriters:
                     name=item.name,
                     kind=item.kind,
                     status=item.status,
+                    book_id=item.book_id,
                     amount=str(item.amount) if item.amount is not None else None,
                     currency=item.currency,
                     provider=item.provider,
@@ -115,6 +144,7 @@ class StorageWriters:
             session.merge(
                 FundRecord(
                     fund_id=fund.fund_id,
+                    book_id=fund.book_id,
                     account_id=fund.account_id,
                     name=fund.name,
                     currency=fund.currency,

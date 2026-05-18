@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import Any
 
 from .commands import IssueCredentialCommand, RevokeCredentialCommand
+from .books import BookMember
 from .errors import ValidationError
 from .service_auth import AGENT_ALLOWED_SCOPES, SYSTEM_ACTOR
 
@@ -21,6 +22,13 @@ class CredentialUseCases:
             actor_type="agent",
             scopes=scopes,
             ttl=timedelta(minutes=ttl_minutes),
+        )
+        default_book = self.books.ensure_default()
+        self.books.members[(default_book.book_id, "agent")] = BookMember(
+            book_id=default_book.book_id,
+            user_id="agent",
+            role="editor",
+            scopes=sorted(scopes),
         )
         self.audit.record(
             operation="credential.issue",

@@ -159,6 +159,43 @@ def test_transaction_read_commands_use_query_api(monkeypatch):
     ]
 
 
+def test_tx_reverse_posts_reversal_command(monkeypatch):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key})
+        return 200, {"transaction": {"transaction_id": "txn_reversal"}}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "tx",
+                "reverse",
+                "txn_1",
+                "--memo",
+                "duplicate transaction",
+                "--idempotency-key",
+                "reverse-1",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    assert calls == [
+        {
+            "method": "POST",
+            "path": "/api/v1/ledger/reverse",
+            "payload": {"transaction_id": "txn_1", "memo": "duplicate transaction"},
+            "key": "reverse-1",
+        }
+    ]
+
+
 def test_account_adjust_posts_balance_delta(monkeypatch):
     calls = []
 

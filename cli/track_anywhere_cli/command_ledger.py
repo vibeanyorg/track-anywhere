@@ -90,6 +90,15 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
         return requester(config, "GET", path)
     if args.command == "tx" and args.tx_command == "show":
         return requester(config, "GET", f"/api/v1/ledger/transactions/{urllib.parse.quote(args.transaction_id)}")
+    if args.command == "tx" and args.tx_command == "reverse":
+        payload = {"transaction_id": args.transaction_id, "memo": args.memo}
+        return requester(
+            config,
+            "POST",
+            "/api/v1/ledger/reverse",
+            payload,
+            key=command_idempotency_key(args, "tx-reverse"),
+        )
     if args.command == "balance-adjust" or (args.command == "account" and args.account_command == "adjust"):
         payload = {
             "account_id": args.account_id,

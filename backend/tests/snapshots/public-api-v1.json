@@ -8,7 +8,68 @@
       "get",
       "patch"
     ],
+    "/api/v1/attachments": [
+      "post"
+    ],
     "/api/v1/auth/dev-token": [
+      "post"
+    ],
+    "/api/v1/books": [
+      "get",
+      "post"
+    ],
+    "/api/v1/books/{book_id}": [
+      "get"
+    ],
+    "/api/v1/books/{book_id}/accounts": [
+      "get",
+      "post"
+    ],
+    "/api/v1/books/{book_id}/budgets": [
+      "get",
+      "post"
+    ],
+    "/api/v1/books/{book_id}/budgets/{budget_id}/execution": [
+      "get"
+    ],
+    "/api/v1/books/{book_id}/budgets/{budget_id}/targets": [
+      "get",
+      "post"
+    ],
+    "/api/v1/books/{book_id}/categories": [
+      "get",
+      "post"
+    ],
+    "/api/v1/books/{book_id}/categories/{category_id}": [
+      "patch"
+    ],
+    "/api/v1/books/{book_id}/categories/{category_id}/aliases": [
+      "post"
+    ],
+    "/api/v1/books/{book_id}/categories/{category_id}/merge": [
+      "post"
+    ],
+    "/api/v1/books/{book_id}/classification-events": [
+      "get"
+    ],
+    "/api/v1/books/{book_id}/recurring/drafts": [
+      "post"
+    ],
+    "/api/v1/books/{book_id}/recurring/items": [
+      "get",
+      "post"
+    ],
+    "/api/v1/books/{book_id}/recurring/reminders": [
+      "get"
+    ],
+    "/api/v1/books/{book_id}/reports/spending": [
+      "get"
+    ],
+    "/api/v1/books/{book_id}/transactions": [
+      "get",
+      "post"
+    ],
+    "/api/v1/books/{book_id}/transactions/{transaction_id}/reverse": [
       "post"
     ],
     "/api/v1/categories": [
@@ -17,9 +78,6 @@
     ],
     "/api/v1/categories/{category_id}": [
       "get"
-    ],
-    "/api/v1/attachments": [
-      "post"
     ],
     "/api/v1/credentials/agent": [
       "post"
@@ -46,6 +104,9 @@
     "/api/v1/drafts/supersede": [
       "post"
     ],
+    "/api/v1/expenses": [
+      "post"
+    ],
     "/api/v1/funds": [
       "post"
     ],
@@ -53,9 +114,6 @@
       "post"
     ],
     "/api/v1/funds/spend": [
-      "post"
-    ],
-    "/api/v1/expenses": [
       "post"
     ],
     "/api/v1/health": [

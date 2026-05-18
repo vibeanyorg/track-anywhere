@@ -35,6 +35,7 @@ class CreateAccountCommand(StrictCommand):
     type: Literal["asset", "liability", "income", "expense", "equity", "fund", "system"]
     currency: str = Field(pattern=ASSET_CODE_PATTERN)
     opening_balance: Decimal = Decimal("0")
+    book_id: str | None = None
     institution_type: INSTITUTION_TYPES | None = None
     subtype: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
     institution: str | None = Field(default=None, min_length=1, max_length=120)
@@ -119,6 +120,7 @@ class CreateCategoryCommand(StrictCommand):
 class CreateRecurringItemCommand(StrictCommand):
     name: str = Field(min_length=1, max_length=120)
     kind: Literal["paid", "reminder_only"]
+    book_id: str | None = None
     amount: Decimal | None = Field(default=None, gt=0)
     currency: str | None = Field(default=None, pattern=ASSET_CODE_PATTERN)
     provider: str | None = Field(default=None, min_length=1, max_length=120)

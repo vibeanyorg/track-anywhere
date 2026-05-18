@@ -4,6 +4,8 @@ Track Anywhere is a personal accounting system with a strict confirmed ledger an
 
 The key boundary is the command governance layer. Web, CLI, Agent, and OCR-assisted inputs all become strict versioned command objects before they can mutate domain state. Mutating commands pass through transport/session checks, authentication, actor derivation, schema validation, policy, idempotency, optimistic concurrency, and redacted audit logging.
 
+The target domain redesign is documented in [Domain Redesign: Books, Classification, and Reporting](domain-redesign.md). That design introduces ledger books as the primary namespace, replaces first/second-level category strings with two managed two-level category trees for income and expense, and separates transaction postings from reporting dimensions such as category, tag, project, merchant, and budget target. It also treats category maintenance as auditable classification events so reports can choose between recorded and current taxonomy.
+
 ## First Slice
 
 The current implementation establishes a minimum secure vertical slice:

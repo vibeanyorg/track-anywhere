@@ -16,12 +16,40 @@ ALEMBIC_DIR = PROJECT_ROOT / "alembic"
 
 LEGACY_SQLITE_COLUMNS = {
     "accounts": {
+        "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
         "institution_type": "VARCHAR(40)",
         "subtype": "VARCHAR(64)",
         "institution": "VARCHAR(120)",
     },
     "transactions": {
+        "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
         "category_id": "VARCHAR(80)",
+    },
+    "drafts": {
+        "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
+        "category_id": "VARCHAR(80)",
+        "metadata": "JSON NOT NULL DEFAULT '{}'",
+    },
+    "funds": {
+        "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
+    },
+    "recurring_items": {
+        "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
+    },
+    "investment_events": {
+        "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
+    },
+    "categories": {
+        "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
+        "parent_id": "VARCHAR(80)",
+        "name": "VARCHAR(80) NOT NULL DEFAULT ''",
+        "normalized_name": "VARCHAR(80) NOT NULL DEFAULT ''",
+        "level": "INTEGER NOT NULL DEFAULT 1",
+        "path_cache": "VARCHAR(180) NOT NULL DEFAULT ''",
+        "icon": "VARCHAR(80)",
+        "color": "VARCHAR(32)",
+        "sort_order": "INTEGER NOT NULL DEFAULT 0",
+        "status": "VARCHAR(40) NOT NULL DEFAULT 'active'",
     },
 }
 

@@ -10,6 +10,8 @@ from .attachments import Attachment
 from .categories import Category
 from .credit_cards import CreditCardProfile
 from .db_migrations import run_migrations
+from .domain_storage_loaders import DomainStorageLoaders
+from .domain_storage_writers import DomainStorageWriters
 from .ledger import Account
 from .storage_engine import create_database_engine, database_url_from_env
 from .storage_json import new_owner_token, to_jsonable
@@ -29,7 +31,7 @@ from .storage_writers import StorageWriters
 from .users import AppUser
 
 
-class OrmStorage(StorageLoaders, StorageWriters):
+class OrmStorage(DomainStorageLoaders, StorageLoaders, DomainStorageWriters, StorageWriters):
     def __init__(self, database_url: str | None = None) -> None:
         self.database_url = database_url or database_url_from_env()
         self.engine = create_database_engine(self.database_url)
@@ -38,9 +40,11 @@ class OrmStorage(StorageLoaders, StorageWriters):
 
     def load_into(self, service: Any) -> None:
         with self.session_factory() as session:
+            service.books.books, service.books.members = self._load_books(session)
             service.ledger.accounts = {
                 row.account_id: Account(
                     account_id=row.account_id,
+                    book_id=row.book_id,
                     name=row.name,
                     type=row.type,
                     currency=row.currency,
@@ -64,17 +68,33 @@ class OrmStorage(StorageLoaders, StorageWriters):
             service.drafts.drafts = self._load_drafts(session)
             service.recurring.items = self._load_recurring_items(session)
             service.budgets.funds = self._load_funds(session)
+            service.budgets.budgets, service.budgets.targets = self._load_budgets(session)
             service.investments.events = self._load_investment_events(session)
             service.categories.categories = {
                 row.category_id: Category(
                     category_id=row.category_id,
+                    book_id=row.book_id,
                     kind=row.kind,
                     primary=row.primary,
                     secondary=row.secondary,
+                    parent_id=row.parent_id,
+                    name=row.name,
+                    normalized_name=row.normalized_name,
+                    level=row.level,
+                    path_cache=row.path_cache,
+                    icon=row.icon,
+                    color=row.color,
+                    sort_order=row.sort_order,
+                    status=row.status,
                     version=row.version,
                 )
                 for row in session.query(CategoryRecord).all()
             }
+            (
+                service.categories.aliases,
+                service.categories.versions,
+                service.categories.events,
+            ) = self._load_category_history(session)
             service.credit_cards.profiles = {
                 row.account_id: CreditCardProfile(
                     account_id=row.account_id,
@@ -112,10 +132,12 @@ class OrmStorage(StorageLoaders, StorageWriters):
     def save(self, service: Any) -> None:
         with self.session_factory.begin() as session:
             session.execute(delete(AppStateRecord).where(AppStateRecord.key == "owner_token"))
+            self._save_books(session, service.books)
             for account in service.ledger.accounts.values():
                 session.merge(
                     AccountRecord(
                         account_id=account.account_id,
+                        book_id=account.book_id,
                         name=account.name,
                         type=account.type,
                         currency=account.currency,
@@ -138,17 +160,29 @@ class OrmStorage(StorageLoaders, StorageWriters):
             self._save_drafts(session, service.drafts.drafts.values())
             self._save_recurring_items(session, service.recurring.items.values())
             self._save_funds(session, service.budgets.funds.values())
+            self._save_budgets(session, service.budgets)
             self._save_investment_events(session, service.investments.events.values())
             for category in service.categories.categories.values():
                 session.merge(
                     CategoryRecord(
                         category_id=category.category_id,
+                        book_id=category.book_id,
                         kind=category.kind,
                         primary=category.primary,
                         secondary=category.secondary,
+                        parent_id=category.parent_id,
+                        name=category.name,
+                        normalized_name=category.normalized_name,
+                        level=category.level,
+                        path_cache=category.path_cache,
+                        icon=category.icon,
+                        color=category.color,
+                        sort_order=category.sort_order,
+                        status=category.status,
                         version=category.version,
                     )
                 )
+            self._save_category_history(session, service.categories)
             for profile in service.credit_cards.profiles.values():
                 session.merge(
                     CreditCardProfileRecord(

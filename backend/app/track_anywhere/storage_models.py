@@ -24,6 +24,7 @@ class AccountRecord(Base):
     __tablename__ = "accounts"
 
     account_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    book_id: Mapped[str] = mapped_column(String(80), default="book_default")
     name: Mapped[str] = mapped_column(String(120))
     type: Mapped[str] = mapped_column(String(32))
     currency: Mapped[str] = mapped_column(String(ASSET_CODE_LENGTH))
@@ -46,6 +47,7 @@ class TransactionRecord(Base):
     __tablename__ = "transactions"
 
     transaction_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    book_id: Mapped[str] = mapped_column(String(80), default="book_default")
     memo: Mapped[str] = mapped_column(String(256))
     occurred_at: Mapped[str] = mapped_column(String(80))
     purpose: Mapped[str] = mapped_column(String(256))
@@ -69,6 +71,7 @@ class DraftRecord(Base):
     __tablename__ = "drafts"
 
     draft_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    book_id: Mapped[str] = mapped_column(String(80), default="book_default")
     memo: Mapped[str] = mapped_column(String(256))
     state: Mapped[str] = mapped_column(String(40))
     missing_fields: Mapped[list[str]] = mapped_column(JSON)
@@ -95,6 +98,7 @@ class FundRecord(Base):
     __tablename__ = "funds"
 
     fund_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    book_id: Mapped[str] = mapped_column(String(80), default="book_default")
     account_id: Mapped[str] = mapped_column(String(80))
     name: Mapped[str] = mapped_column(String(120))
     currency: Mapped[str] = mapped_column(String(ASSET_CODE_LENGTH))
@@ -108,6 +112,7 @@ class RecurringItemRecord(Base):
     __tablename__ = "recurring_items"
 
     recurring_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    book_id: Mapped[str] = mapped_column(String(80), default="book_default")
     name: Mapped[str] = mapped_column(String(120))
     kind: Mapped[str] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(40))
@@ -129,6 +134,7 @@ class InvestmentEventRecord(Base):
     __tablename__ = "investment_events"
 
     event_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    book_id: Mapped[str] = mapped_column(String(80), default="book_default")
     account_id: Mapped[str] = mapped_column(String(80))
     event_type: Mapped[str] = mapped_column(String(40))
     amount: Mapped[str] = mapped_column(String(80))
@@ -144,9 +150,19 @@ class CategoryRecord(Base):
     __tablename__ = "categories"
 
     category_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    book_id: Mapped[str] = mapped_column(String(80), default="book_default")
     kind: Mapped[str] = mapped_column(String(20))
     primary: Mapped[str] = mapped_column(String(80))
     secondary: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    parent_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    name: Mapped[str] = mapped_column(String(80), default="")
+    normalized_name: Mapped[str] = mapped_column(String(80), default="")
+    level: Mapped[int] = mapped_column(Integer, default=1)
+    path_cache: Mapped[str] = mapped_column(String(180), default="")
+    icon: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(40), default="active")
     version: Mapped[int] = mapped_column(Integer)
 
 
