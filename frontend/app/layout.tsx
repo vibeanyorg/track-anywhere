@@ -3,14 +3,13 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Track Anywhere",
-  description: "Personal accounting with draft-first capture and strict ledger confirmation"
+  description: "Personal accounting with draft-first capture, strict ledger confirmation, and agent-ready workflows"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" data-scroll-behavior="smooth">
       <body>{children}</body>
     </html>
   );
 }
-
