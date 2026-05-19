@@ -16,11 +16,18 @@ def emit_outcome(outcome: CliOutcome, *, json_mode: bool, no_color: bool) -> Non
     console.print(renderable)
 
 
-def emit_result(data: Any, *, json_mode: bool, no_color: bool, command_path: str = "") -> None:
+def emit_result(
+    data: Any,
+    *,
+    json_mode: bool,
+    no_color: bool,
+    command_path: str = "",
+    status: int = 200,
+) -> None:
     from .runtime import build_outcome
 
     emit_outcome(
-        build_outcome(command_path, 200, data),
+        build_outcome(command_path, status, data),
         json_mode=json_mode,
         no_color=no_color,
     )

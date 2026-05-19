@@ -97,5 +97,24 @@ def test_render_json_writes_one_envelope(capsys):
     emit_outcome(outcome, json_mode=True, no_color=True)
 
     payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["status"] == 200
+    assert payload["diagnostics"] == []
     assert payload["command"] == "account.list"
     assert payload["data"] == {"accounts": []}
+
+
+def test_diagnostics_for_known_error_statuses():
+    cases = [
+        (400, "security_precondition", "Validation failed"),
+        (401, "auth_required", "Missing credentials"),
+        (403, "policy_denied", "Access denied"),
+        (409, "conflict", "Conflict"),
+        (503, "request_failed", "Server unavailable"),
+    ]
+
+    for status, code, detail in cases:
+        outcome = build_outcome("account.show", status, {"detail": detail})
+        assert outcome.diagnostics, f"expected diagnostics for status {status}"
+        assert outcome.diagnostics[0].code == code
+        assert str(detail) in outcome.diagnostics[0].message

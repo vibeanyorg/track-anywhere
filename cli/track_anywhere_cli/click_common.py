@@ -74,7 +74,13 @@ def run_api(args: Namespace, *, state: ClickState, command_path: str) -> int:
         click.echo("unknown command", err=True)
         return EXIT_VALIDATION
     status, data = result
-    emit_result(data, json_mode=args.json, no_color=args.no_color, command_path=command_path)
+    emit_result(
+        data,
+        json_mode=args.json,
+        no_color=args.no_color,
+        command_path=command_path,
+        status=status,
+    )
     return exit_for_status(status, data)
 
 
