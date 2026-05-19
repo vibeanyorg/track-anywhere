@@ -56,7 +56,9 @@ def test_investment_event_cli_posts_dated_cash_flow(monkeypatch, capsys):
             "key": "inv-buy",
         }
     ]
-    assert json.loads(capsys.readouterr().out)["event"]["event_type"] == "buy"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "investment.event"
+    assert payload["data"]["event"]["event_type"] == "buy"
 
 
 def test_investment_performance_cli_uses_query_api(monkeypatch):

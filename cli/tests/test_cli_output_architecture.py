@@ -92,6 +92,7 @@ def test_render_human_known_generic_paths_avoid_missing_presenter_panel():
     ):
         renderable = _render_human({"status": "ok"}, command_path)
 
-        assert isinstance(renderable, Panel)
+        assert hasattr(renderable, "__rich_console__")
+        assert not (isinstance(renderable, Panel) and renderable.title == command_path)
         assert renderable.title != "No human presenter registered."
         assert not isinstance(renderable, dict)

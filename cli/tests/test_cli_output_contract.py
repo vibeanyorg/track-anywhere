@@ -93,8 +93,26 @@ def test_account_list_has_explicit_presenter():
     assert not isinstance(renderable, dict)
 
 
-def test_catalog_and_account_commands_have_presenters():
+def test_public_command_paths_have_presenters():
     for command_path in (
+        "capture",
+        "draft.confirm",
+        "tx.record",
+        "tx.list",
+        "tx.show",
+        "tx.reverse",
+        "expense.record",
+        "income.record",
+        "balance.adjust",
+        "balance",
+        "investment.event",
+        "investment.performance",
+        "recurring.create",
+        "recurring.list",
+        "recurring.show",
+        "recurring.update",
+        "recurring.reminders",
+        "recurring.draft_due",
         "summary.accounts",
         "summary.categories",
         "user.create",
@@ -119,7 +137,7 @@ def test_catalog_and_account_commands_have_presenters():
         assert not isinstance(renderable, dict)
 
 
-def test_catalog_and_account_presenters_render_real_payload_fields():
+def test_public_presenters_render_real_payload_fields():
     cases = [
         (
             "summary.accounts",
@@ -135,6 +153,78 @@ def test_catalog_and_account_presenters_render_real_payload_fields():
             "user.create",
             {"user": {"user_id": "user_1", "username": "xyy", "display_name": "XYY"}},
             ("User", "user_1", "xyy"),
+        ),
+        (
+            "tx.record",
+            {
+                "transaction": {
+                    "transaction_id": "txn_1",
+                    "memo": "Lunch",
+                    "purpose": "Lunch expense",
+                    "occurred_at": "2026-05-16T12:30:00+08:00",
+                    "postings": [
+                        {"amount": "-38", "currency": "CNY"},
+                        {"amount": "38", "currency": "CNY"},
+                    ],
+                }
+            },
+            ("Transaction recorded", "txn_1", "Lunch", "Lunch expense", "38 CNY"),
+        ),
+        (
+            "tx.list",
+            {
+                "transactions": [
+                    {
+                        "transaction_id": "txn_2",
+                        "memo": "Coffee",
+                        "purpose": "Morning coffee",
+                        "lines": [{"amount": "6", "currency": "USD"}],
+                    }
+                ]
+            },
+            ("Transactions", "txn_2", "Coffee", "6 USD"),
+        ),
+        (
+            "draft.confirm",
+            {"transaction": {"transaction_id": "txn_3", "memo": "Confirmed draft"}, "idempotent_replay": False},
+            ("Draft confirm", "txn_3", "Confirmed draft", "False"),
+        ),
+        (
+            "tx.reverse",
+            {"transaction": {"transaction_id": "txn_4", "memo": "Reversal", "postings": [{"amount": "-10", "currency": "USD"}]}},
+            ("Reversed transaction", "txn_4", "Reversal", "-10 USD"),
+        ),
+        (
+            "balance.adjust",
+            {"transaction": {"transaction_id": "txn_5", "purpose": "Cash correction", "lines": [{"amount": "10", "currency": "USD"}]}},
+            ("Account adjustment", "txn_5", "Cash correction", "10 USD"),
+        ),
+        (
+            "investment.performance",
+            {
+                "account_id": "acc_wealth",
+                "currency": "CNY",
+                "holding_days": 21,
+                "total_return": "120",
+            },
+            ("Investment performance", "acc_wealth", "21", "120"),
+        ),
+        (
+            "recurring.create",
+            {
+                "recurring_item": {
+                    "recurring_id": "rec_1",
+                    "name": "ChatGPT",
+                    "kind": "paid",
+                    "recurrence": {"type": "monthly_day", "day": 15},
+                }
+            },
+            ("Recurring item created", "rec_1", "ChatGPT", "monthly day 15"),
+        ),
+        (
+            "recurring.update",
+            {"recurring_item": {"recurring_id": "rec_2", "name": "Netflix", "status": "paused"}},
+            ("Recurring item updated", "rec_2", "Netflix", "paused"),
         ),
     ]
 

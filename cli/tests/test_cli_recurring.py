@@ -74,7 +74,9 @@ def test_recurring_create_posts_paid_monthly_item(monkeypatch, capsys):
             "token": "token-1",
         }
     ]
-    assert json.loads(capsys.readouterr().out)["recurring_item"]["recurring_id"] == "rec_1"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "recurring.create"
+    assert payload["data"]["recurring_item"]["recurring_id"] == "rec_1"
 
 
 def test_recurring_reminders_and_draft_generation_routes(monkeypatch):

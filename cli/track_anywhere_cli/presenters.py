@@ -281,6 +281,188 @@ def account_adjust_summary(data: Any) -> Table:
     return object_summary("Account adjustment", fields)
 
 
+def _money_amounts(rows: Any) -> str:
+    if not isinstance(rows, list):
+        return ""
+    parts: list[str] = []
+    for item in rows:
+        row = _as_dict(item)
+        if not row:
+            continue
+        amount = row.get("amount")
+        currency = row.get("currency")
+        if amount is None and currency is None:
+            continue
+        if amount is None:
+            parts.append(_stringify(currency))
+        elif currency is None:
+            parts.append(_stringify(amount))
+        else:
+            parts.append(f"{amount} {currency}")
+    return ", ".join(parts)
+
+
+def transaction_summary(data: Any, *, title: str) -> Table:
+    transaction = _as_dict(_as_dict(data).get("transaction"))
+    if not transaction:
+        transaction = _as_dict(data)
+    amount_rows = transaction.get("postings") or transaction.get("lines")
+    amount_row_count = len(amount_rows) if isinstance(amount_rows, list) else 0
+    fields = [
+        ("Transaction ID", transaction.get("transaction_id")),
+        ("Memo", transaction.get("memo")),
+        ("Purpose", transaction.get("purpose")),
+        ("Occurred at", transaction.get("occurred_at")),
+        ("Category", transaction.get("category_id")),
+        ("Version", transaction.get("version")),
+        ("Reversed by", transaction.get("reversed_by")),
+        ("Amount row count", amount_row_count),
+        ("Amounts", _money_amounts(amount_rows)),
+    ]
+    if isinstance(data, dict) and "idempotent_replay" in data:
+        fields.append(("Idempotent replay", data.get("idempotent_replay")))
+    return object_summary(title, fields)
+
+
+def transaction_list_summary(data: Any) -> Table | Panel:
+    transactions = _as_dict(data).get("transactions", [])
+    if not transactions:
+        return empty_panel("Transactions", "No transactions found.")
+    table = Table(title="Transactions")
+    table.add_column("Transaction ID")
+    table.add_column("Memo")
+    table.add_column("Purpose")
+    table.add_column("Occurred at")
+    table.add_column("Category")
+    table.add_column("Postings", overflow="fold")
+    table.add_column("Version", justify="right")
+    for tx in transactions:
+        if not isinstance(tx, dict):
+            continue
+        table.add_row(
+            _stringify(tx.get("transaction_id")),
+            _stringify(tx.get("memo")),
+            _stringify(tx.get("purpose")),
+            _stringify(tx.get("occurred_at")),
+            _stringify(tx.get("category_id")),
+            _money_amounts(tx.get("postings") or tx.get("lines")),
+            _stringify(tx.get("version")),
+        )
+    return table
+
+
+def capture_summary(data: Any) -> Table:
+    payload = _as_dict(data)
+    if "draft" in payload and isinstance(payload.get("draft"), dict):
+        draft = payload["draft"]
+        return object_summary(
+            "Capture confirmed",
+            [
+                ("Dry run", payload.get("dry_run", False)),
+                ("Draft ID", draft.get("draft_id")),
+                ("State", draft.get("state")),
+                ("Source", draft.get("source")),
+                ("Memo", draft.get("memo")),
+                ("Confidence", draft.get("confidence")),
+                ("Missing fields", _stringify(draft.get("missing_fields"))),
+                ("Source account", draft.get("source_account_id")),
+                ("Expense account", draft.get("expense_account_id")),
+            ],
+        )
+
+    request_payload = _as_dict(payload.get("payload"))
+    return object_summary(
+        "Capture response",
+        [
+            ("Dry run", payload.get("dry_run")),
+            ("Policy decision", payload.get("policy_decision")),
+            ("Source account", request_payload.get("source_account_id")),
+            ("Expense account", request_payload.get("expense_account_id")),
+            ("Amount", request_payload.get("amount")),
+            ("Currency", request_payload.get("currency")),
+            ("Memo", request_payload.get("memo")),
+        ],
+    )
+
+
+def recurring_item_summary(data: Any, *, title: str) -> Table:
+    item = _as_dict(_as_dict(data).get("recurring_item"))
+    if not item:
+        item = _as_dict(data)
+    recurrence = _as_dict(item.get("recurrence"))
+    recurrence_desc = ""
+    if recurrence:
+        recurrence_type = recurrence.get("type")
+        if recurrence_type == "monthly_day":
+            recurrence_desc = f"monthly day {recurrence.get('day')}"
+        elif recurrence_type == "yearly_date":
+            recurrence_desc = f"yearly {recurrence.get('month')}-{recurrence.get('day')}"
+        else:
+            recurrence_desc = _stringify(recurrence_type)
+    fields = [
+        ("Recurring ID", item.get("recurring_id")),
+        ("Name", item.get("name")),
+        ("Status", item.get("status")),
+        ("Kind", item.get("kind")),
+        ("Provider", item.get("provider")),
+        ("Reference", item.get("reference")),
+        ("Anchor date", item.get("anchor_date")),
+        ("Recurrence", recurrence_desc),
+        ("Amount", item.get("amount")),
+        ("Currency", item.get("currency")),
+        ("Source account", item.get("source_account_id")),
+        ("Category", item.get("category_id")),
+        ("Reminder days", item.get("reminder_days")),
+        ("Version", item.get("version")),
+    ]
+    if isinstance(data, dict) and "idempotent_replay" in data:
+        fields.append(("Idempotent replay", data.get("idempotent_replay")))
+    return object_summary(title, fields)
+
+
+def investment_event_summary(data: Any) -> Table:
+    event = _as_dict(_as_dict(data).get("event"))
+    if not event:
+        event = _as_dict(data)
+    fields = [
+        ("Event ID", event.get("event_id")),
+        ("Account ID", event.get("account_id")),
+        ("Type", event.get("event_type")),
+        ("Amount", event.get("amount")),
+        ("Currency", event.get("currency")),
+        ("Occurred at", event.get("occurred_at")),
+        ("Memo", event.get("memo")),
+        ("Units", event.get("units")),
+        ("NAV", event.get("nav")),
+        ("Version", event.get("version")),
+    ]
+    if isinstance(data, dict) and "idempotent_replay" in data:
+        fields.append(("Idempotent replay", data.get("idempotent_replay")))
+    return object_summary("Investment event", fields)
+
+
+def investment_performance_summary(data: Any) -> Table:
+    payload = _as_dict(data)
+    fields = [
+        ("Account ID", payload.get("account_id")),
+        ("Currency", payload.get("currency")),
+        ("As-of", payload.get("as_of")),
+        ("Current value", payload.get("current_value")),
+        ("Contributions", payload.get("contributions")),
+        ("Withdrawals", payload.get("withdrawals")),
+        ("Income", payload.get("income")),
+        ("Net contributed", payload.get("net_contributed")),
+        ("Total return", payload.get("total_return")),
+        ("First invested at", payload.get("first_invested_at")),
+        ("Holding days", payload.get("holding_days")),
+        ("Event count", payload.get("event_count")),
+        ("Money weighted annualized return", payload.get("money_weighted_annualized_return")),
+        ("Money weighted annualized return (%)", payload.get("money_weighted_annualized_return_percent")),
+        ("Method", payload.get("method")),
+    ]
+    return object_summary("Investment performance", fields)
+
+
 def success_panel(title: str) -> Presenter:
     def present(data: Any) -> Panel:
         return Panel(str(data), title=title)
@@ -305,6 +487,8 @@ def recurring_reminders_table(data: Any) -> Table:
     table.add_column("Lead", justify="right")
     table.add_column("Amount", justify="right")
     for item in reminders:
+        if not isinstance(item, dict):
+            continue
         amount = ""
         if item.get("amount") is not None:
             amount = f"{item['amount']} {item.get('currency') or ''}".strip()
@@ -328,6 +512,8 @@ def recurring_items_table(data: Any) -> Table:
     table.add_column("Provider")
     table.add_column("Amount", justify="right")
     for item in items:
+        if not isinstance(item, dict):
+            continue
         amount = ""
         if item.get("amount") is not None:
             amount = f"{item['amount']} {item.get('currency') or ''}".strip()
@@ -342,13 +528,15 @@ def recurring_items_table(data: Any) -> Table:
 
 
 def recurring_drafts_table(data: Any) -> Table:
-    result = data.get("result", data) if isinstance(data, dict) else {}
+    result = _as_dict(_as_dict(data).get("result", data))
     table = Table(title=f"Recurring draft run {result.get('as_of', '')}".strip())
     table.add_column("Action")
     table.add_column("Name")
     table.add_column("Renewal")
     table.add_column("Draft")
     for item in result.get("created", []):
+        if not isinstance(item, dict):
+            continue
         table.add_row(
             "created",
             str(item.get("recurring_id") or ""),
@@ -356,6 +544,8 @@ def recurring_drafts_table(data: Any) -> Table:
             str(item.get("draft_id") or ""),
         )
     for item in result.get("skipped", []):
+        if not isinstance(item, dict):
+            continue
         table.add_row(
             str(item.get("reason") or "skipped"),
             str(item.get("name") or ""),
@@ -372,22 +562,22 @@ def _generic_title(command_path: str) -> str:
 PRESENTERS: dict[str, Presenter] = {
     "account.list": account_list,
     "account.find": account_list,
-    "tx.record": success_panel("Transaction recorded"),
+    "capture": capture_summary,
+    "draft.confirm": lambda data: transaction_summary(data, title="Draft confirm"),
+    "tx.record": lambda data: transaction_summary(data, title="Transaction recorded"),
     "recurring.reminders": recurring_reminders_table,
     "recurring.list": recurring_items_table,
     "recurring.draft_due": recurring_drafts_table,
-    "capture": generic_payload_panel("Capture response"),
-    "draft.confirm": generic_payload_panel("Draft confirm response"),
-    "tx.list": generic_payload_panel(_generic_title("tx.list")),
-    "tx.show": generic_payload_panel(_generic_title("tx.show")),
-    "tx.reverse": generic_payload_panel(_generic_title("tx.reverse")),
-    "balance.adjust": generic_payload_panel(_generic_title("balance.adjust")),
-    "balance": generic_payload_panel(_generic_title("balance")),
-    "expense.record": generic_payload_panel(_generic_title("expense.record")),
-    "income.record": generic_payload_panel(_generic_title("income.record")),
-    "recurring.create": generic_payload_panel(_generic_title("recurring.create")),
-    "recurring.show": generic_payload_panel(_generic_title("recurring.show")),
-    "recurring.update": generic_payload_panel(_generic_title("recurring.update")),
+    "tx.list": transaction_list_summary,
+    "tx.show": lambda data: transaction_summary(data, title="Transaction"),
+    "tx.reverse": lambda data: transaction_summary(data, title="Reversed transaction"),
+    "balance.adjust": lambda data: transaction_summary(data, title="Account adjustment"),
+    "balance": account_balance_summary,
+    "expense.record": lambda data: transaction_summary(data, title="Expense recorded"),
+    "income.record": lambda data: transaction_summary(data, title="Income recorded"),
+    "recurring.create": lambda data: recurring_item_summary(data, title="Recurring item created"),
+    "recurring.show": lambda data: recurring_item_summary(data, title="Recurring item"),
+    "recurring.update": lambda data: recurring_item_summary(data, title="Recurring item updated"),
     "summary.accounts": summary_accounts,
     "summary.categories": summary_categories,
     "user.create": user_summary,
@@ -404,8 +594,8 @@ PRESENTERS: dict[str, Presenter] = {
     "account.update": account_entity_summary,
     "account.balance": account_balance_summary,
     "account.adjust": account_adjust_summary,
-    "investment.event": generic_payload_panel(_generic_title("investment.event")),
-    "investment.performance": generic_payload_panel(_generic_title("investment.performance")),
+    "investment.event": investment_event_summary,
+    "investment.performance": investment_performance_summary,
     "auth.dev_token": generic_payload_panel(_generic_title("auth.dev_token")),
     "auth.status": generic_payload_panel(_generic_title("auth.status")),
     "data.backup": generic_payload_panel(_generic_title("data.backup")),
