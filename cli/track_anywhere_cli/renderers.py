@@ -1,19 +1,29 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from rich.console import Console
 from rich.table import Table
+from .output import CliOutcome, outcome_to_json_document
+
+
+def emit_outcome(outcome: CliOutcome, *, json_mode: bool, no_color: bool) -> None:
+    if json_mode:
+        print(outcome_to_json_document(outcome))
+        return
+    console = Console(no_color=no_color)
+    renderable = _render_human(outcome.data, outcome.command_path)
+    console.print(renderable)
 
 
 def emit_result(data: Any, *, json_mode: bool, no_color: bool, command_path: str = "") -> None:
-    if json_mode:
-        print(json.dumps(data, indent=2, sort_keys=True))
-        return
-    console = Console(no_color=no_color)
-    renderable = _render_human(data, command_path)
-    console.print(renderable)
+    from .runtime import build_outcome
+
+    emit_outcome(
+        build_outcome(command_path, 200, data),
+        json_mode=json_mode,
+        no_color=no_color,
+    )
 
 
 def _render_human(data: Any, command_path: str):

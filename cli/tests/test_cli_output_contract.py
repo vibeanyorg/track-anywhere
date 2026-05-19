@@ -4,6 +4,7 @@ import json
 
 from track_anywhere_cli.output import CliDiagnostic, CliOutcome, outcome_to_json_document
 from track_anywhere_cli.exit_codes import EXIT_SUCCESS, EXIT_AUTH
+from track_anywhere_cli.runtime import build_outcome
 
 
 def test_success_outcome_json_envelope():
@@ -71,3 +72,30 @@ def test_diagnostic_to_json_includes_optional_fields_when_set():
         "code": "rate_limit_warning",
         "detail": {"retry_after": 30},
     }
+
+
+def test_build_outcome_maps_status_to_exit_code():
+    outcome = build_outcome("account.show", 404, {"detail": "missing"})
+
+    assert outcome.command_path == "account.show"
+    assert outcome.status == 404
+    assert outcome.exit_code == 8
+    assert outcome.ok is False
+
+
+def test_render_json_writes_one_envelope(capsys):
+    from track_anywhere_cli.renderers import emit_outcome
+
+    outcome = CliOutcome(
+        command_path="account.list",
+        status=200,
+        data={"accounts": []},
+        diagnostics=[],
+        exit_code=0,
+    )
+
+    emit_outcome(outcome, json_mode=True, no_color=True)
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "account.list"
+    assert payload["data"] == {"accounts": []}
