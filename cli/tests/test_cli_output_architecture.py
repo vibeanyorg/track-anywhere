@@ -17,6 +17,12 @@ def test_no_dead_recurring_human_helpers_in_renderer():
     assert "_recurring_drafts_table" not in text
 
 
+def test_no_raw_human_dict_fallback_in_renderer():
+    text = Path("cli/track_anywhere_cli/renderers.py").read_text()
+
+    assert "return data" not in text
+
+
 def test_render_human_recurring_reminders_still_renders_table():
     renderable = _render_human(
         {"reminders": [{"name": "ChatGPT", "provider": "OpenAI", "renewal_date": "2026-06-15", "reminder_date": "2026-06-12", "lead_days": 3, "amount": "20", "currency": "USD"}]},

@@ -36,7 +36,8 @@ def emit_result(
 
 def _render_human(data: Any, command_path: str):
     if isinstance(data, str):
-        return data
+        renderable = data
+        return renderable
     try:
         return presenter_for(command_path)(data)
     except KeyError:
