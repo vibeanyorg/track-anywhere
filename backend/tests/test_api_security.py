@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
@@ -7,7 +9,9 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient
 
+from track_anywhere.auth_identities import OAuthIdentity
 from track_anywhere.api import app, service
+from track_anywhere.api_runtime import browser_sessions
 from track_anywhere.security import DeploymentSecurityConfig
 
 
@@ -50,6 +54,130 @@ def test_server_issued_session_csrf_allows_same_origin_mutation():
     )
 
     assert response.status_code == 200
+
+
+def test_server_issued_session_can_authenticate_without_bearer_header():
+    assert app is not None
+    client = TestClient(app)
+    session_response = client.post("/api/v1/session/dev-local")
+    csrf_token = session_response.json()["csrf_token"]
+
+    create_response = client.post(
+        "/api/v1/accounts",
+        json={"name": "Session Only Cash", "type": "asset", "currency": "CNY"},
+        headers={
+            "X-Idempotency-Key": "api-session-only-cash",
+            "X-CSRF-Token": csrf_token,
+            "Origin": "http://localhost:3000",
+        },
+    )
+
+    assert create_response.status_code == 200
+    account_id = create_response.json()["account"]["account_id"]
+    balance_response = client.get(f"/api/v1/query/accounts/{account_id}/balance")
+    assert balance_response.status_code == 200
+
+
+def test_api_key_header_can_authenticate_requests():
+    assert app is not None
+    client = TestClient(app)
+
+    response = client.get("/api/v1/accounts", headers={"X-API-Key": service.owner_token})
+
+    assert response.status_code == 200
+    assert "accounts" in response.json()
+
+
+def test_api_key_can_create_browser_session():
+    assert app is not None
+    client = TestClient(app)
+
+    login = client.post("/api/v1/auth/session/api-key", json={"api_key": service.owner_token})
+    csrf_token = login.json()["csrf_token"]
+    create_response = client.post(
+        "/api/v1/accounts",
+        json={"name": "API Key Session Cash", "type": "asset", "currency": "CNY"},
+        headers={
+            "X-Idempotency-Key": "api-key-session-cash",
+            "X-CSRF-Token": csrf_token,
+            "Origin": "http://localhost:3000",
+        },
+    )
+
+    assert login.status_code == 200
+    assert client.get("/api/v1/auth/session").json()["authenticated"] is True
+    assert create_response.status_code == 200
+
+
+def test_password_signup_and_login_issue_server_session():
+    assert app is not None
+    client = TestClient(app)
+    email = f"fastapi-password-{uuid4().hex}@example.com"
+    password = "correct-password-123"
+
+    signup = client.post(
+        "/api/v1/auth/password/signup",
+        json={"email": email, "password": password, "display_name": "FastAPI Password User"},
+    )
+    logout = client.post("/api/v1/auth/logout")
+    login = client.post("/api/v1/auth/password/login", json={"email": email, "password": password})
+    session = client.get("/api/v1/auth/session")
+
+    assert signup.status_code == 200
+    assert signup.json()["authenticated"] is True
+    assert "ta_session" in client.cookies
+    assert logout.status_code == 200
+    assert login.status_code == 200
+    assert session.json()["authenticated"] is True
+
+
+def test_logout_revokes_server_issued_session_and_clears_cookies():
+    assert app is not None
+    client = TestClient(app)
+    session_response = client.post("/api/v1/session/dev-local")
+    assert session_response.status_code == 200
+    assert client.get("/api/v1/auth/session").json()["authenticated"] is True
+
+    logout_response = client.post("/api/v1/auth/logout")
+
+    assert logout_response.status_code == 200
+    assert logout_response.json() == {"authenticated": False}
+    assert client.get("/api/v1/auth/session").json() == {"authenticated": False, "identity": None}
+
+
+def test_viewer_session_can_read_but_not_mutate():
+    assert app is not None
+    client = TestClient(app)
+    login = service.login_oauth_identity(
+        OAuthIdentity(
+            provider="google",
+            subject="api-viewer",
+            email="api-viewer@example.com",
+            email_verified=True,
+            name="API Viewer",
+            picture=None,
+        ),
+        role="viewer",
+    )
+    session_id, csrf_token = browser_sessions.issue(
+        credential_token=login["credential_token"],
+        identity={**login["identity"], "role": login["membership"]["role"]},
+    )
+    client.cookies.set("ta_session", session_id)
+
+    read_response = client.get("/api/v1/accounts")
+    write_response = client.post(
+        "/api/v1/accounts",
+        json={"name": "Viewer Blocked Cash", "type": "asset", "currency": "CNY"},
+        headers={
+            "X-Idempotency-Key": "api-viewer-blocked-cash",
+            "X-CSRF-Token": csrf_token,
+            "Origin": "http://localhost:3000",
+        },
+    )
+
+    assert read_response.status_code == 200
+    assert write_response.status_code == 403
 
 
 def test_security_rejections_are_audited_and_bearer_origin_is_gated():
@@ -106,3 +234,17 @@ def test_session_cookie_secure_flag_tracks_deployment_mode(monkeypatch):
 
     assert response.status_code == 200
     assert "secure" in response.headers["set-cookie"].lower()
+
+
+def test_auth_routes_are_safe_when_oauth_is_not_configured():
+    assert app is not None
+    client = TestClient(app)
+
+    providers = client.get("/api/v1/auth/oauth/providers")
+    authorize = client.get("/api/v1/auth/oauth/google/authorize", follow_redirects=False)
+    session = client.get("/api/v1/auth/session")
+
+    assert providers.status_code == 200
+    assert providers.json() == {"providers": []}
+    assert authorize.status_code == 404
+    assert session.json() == {"authenticated": False, "identity": None}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Response
 
+from ..api_sessions import set_browser_session_cookies
 from ..api_runtime import browser_sessions, service
 
 
@@ -15,16 +16,16 @@ def health():
 
 @router.post("/session/dev-local")
 def create_local_session(response: Response):
-    session_id, csrf_token = browser_sessions.issue()
-    secure_cookie = service.config.mode != "local"
-    response.set_cookie(
-        "ta_session",
-        session_id,
-        httponly=True,
-        secure=secure_cookie,
-        samesite="strict",
+    session_id, csrf_token = browser_sessions.issue(
+        credential_token=service.owner_token,
+        identity={"provider": "local", "subject": "owner", "email": None, "name": "Local Owner"},
     )
-    return {"csrf_token": csrf_token, "cookie": {"http_only": True, "secure": secure_cookie, "same_site": "strict"}}
+    secure_cookie = service.config.mode != "local"
+    set_browser_session_cookies(response, session_id=session_id, csrf_token=csrf_token, secure=secure_cookie)
+    return {
+        "csrf_token": csrf_token,
+        "cookie": {"http_only": True, "secure": secure_cookie, "same_site": "strict"},
+    }
 
 
 @router.post("/auth/dev-token")

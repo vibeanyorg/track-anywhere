@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.pool import StaticPool
 
@@ -34,4 +34,11 @@ def create_database_engine(database_url: str) -> Engine:
     kwargs: dict[str, Any] = {"connect_args": connect_args, "future": True}
     if is_sqlite and url.database == ":memory:":
         kwargs["poolclass"] = StaticPool
-    return create_engine(database_url, **kwargs)
+    engine = create_engine(database_url, **kwargs)
+    if is_sqlite:
+        event.listen(engine, "connect", _enable_sqlite_secure_delete)
+    return engine
+
+
+def _enable_sqlite_secure_delete(dbapi_connection: Any, _connection_record: Any) -> None:
+    dbapi_connection.execute("PRAGMA secure_delete=ON")

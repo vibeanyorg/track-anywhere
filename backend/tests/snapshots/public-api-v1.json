@@ -14,6 +14,30 @@
     "/api/v1/auth/dev-token": [
       "post"
     ],
+    "/api/v1/auth/logout": [
+      "post"
+    ],
+    "/api/v1/auth/oauth/providers": [
+      "get"
+    ],
+    "/api/v1/auth/oauth/{provider}/authorize": [
+      "get"
+    ],
+    "/api/v1/auth/oauth/{provider}/callback": [
+      "get"
+    ],
+    "/api/v1/auth/password/login": [
+      "post"
+    ],
+    "/api/v1/auth/password/signup": [
+      "post"
+    ],
+    "/api/v1/auth/session": [
+      "get"
+    ],
+    "/api/v1/auth/session/api-key": [
+      "post"
+    ],
     "/api/v1/books": [
       "get",
       "post"
@@ -79,10 +103,16 @@
     "/api/v1/categories/{category_id}": [
       "get"
     ],
+    "/api/v1/credentials": [
+      "get"
+    ],
     "/api/v1/credentials/agent": [
       "post"
     ],
     "/api/v1/credentials/revoke": [
+      "post"
+    ],
+    "/api/v1/credentials/{credential_id}/revoke": [
       "post"
     ],
     "/api/v1/credit-cards": [
@@ -140,6 +170,27 @@
     ],
     "/api/v1/ledger/transactions/{transaction_id}": [
       "get"
+    ],
+    "/api/v1/oauth/authorization-server": [
+      "get"
+    ],
+    "/api/v1/oauth/authorize": [
+      "post"
+    ],
+    "/api/v1/oauth/clients": [
+      "get"
+    ],
+    "/api/v1/oauth/protected-resource": [
+      "get"
+    ],
+    "/api/v1/oauth/register": [
+      "post"
+    ],
+    "/api/v1/oauth/revoke": [
+      "post"
+    ],
+    "/api/v1/oauth/token": [
+      "post"
     ],
     "/api/v1/query/accounts/{account_id}/balance": [
       "get"

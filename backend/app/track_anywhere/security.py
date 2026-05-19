@@ -61,6 +61,11 @@ class Actor:
     scopes: frozenset[str]
 
 
+@dataclass(frozen=True)
+class CredentialReference:
+    token_hash: str
+
+
 @dataclass
 class Credential:
     token_hash: str
@@ -99,18 +104,32 @@ class CredentialStore:
         )
         return token
 
-    def verify(self, token: str, required_scope: str | None = None) -> Actor:
-        credential = self._credentials.get(hash_secret(token))
+    def verify(self, token: str | CredentialReference, required_scope: str | None = None) -> Actor:
+        token_hash = token.token_hash if isinstance(token, CredentialReference) else hash_secret(token)
+        credential = self._credentials.get(token_hash)
         if credential is None or not credential.active:
             raise PolicyDenied("credential is missing, expired, or revoked")
         if required_scope is not None and required_scope not in credential.actor.scopes:
             raise PolicyDenied(f"credential lacks required scope: {required_scope}")
         return credential.actor
 
+    def list(self) -> list[Credential]:
+        return sorted(self._credentials.values(), key=lambda credential: (credential.issued_at, credential.jti), reverse=True)
+
+    def get_by_jti(self, jti: str) -> Credential | None:
+        return next((credential for credential in self._credentials.values() if credential.jti == jti), None)
+
     def revoke(self, token: str) -> None:
         credential = self._credentials.get(hash_secret(token))
         if credential is not None:
             credential.revoked_at = utcnow()
+
+    def revoke_by_jti(self, jti: str) -> bool:
+        credential = self.get_by_jti(jti)
+        if credential is None:
+            return False
+        credential.revoked_at = utcnow()
+        return True
 
 
 @dataclass
@@ -119,6 +138,8 @@ class BrowserSession:
     csrf_token_hash: str
     issued_at: datetime
     expires_at: datetime
+    credential_hash: str | None = None
+    identity: dict[str, Any] | None = None
     revoked_at: datetime | None = None
 
     @property
@@ -130,7 +151,16 @@ class BrowserSessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, BrowserSession] = {}
 
-    def issue(self, *, ttl: timedelta = timedelta(hours=8)) -> tuple[str, str]:
+    def issue(
+        self,
+        *,
+        ttl: timedelta = timedelta(hours=8),
+        credential_token: str | None = None,
+        credential_hash: str | None = None,
+        identity: dict[str, Any] | None = None,
+    ) -> tuple[str, str]:
+        if credential_token and credential_hash:
+            raise ValueError("pass either credential_token or credential_hash, not both")
         session_id = f"sess_{uuid4().hex}"
         csrf_token = f"csrf_{uuid4().hex}"
         self._sessions[session_id] = BrowserSession(
@@ -138,18 +168,50 @@ class BrowserSessionStore:
             csrf_token_hash=hash_secret(csrf_token),
             issued_at=utcnow(),
             expires_at=utcnow() + ttl,
+            credential_hash=credential_hash or (hash_secret(credential_token) if credential_token else None),
+            identity=dict(identity) if identity is not None else None,
         )
         return session_id, csrf_token
 
-    def rotate(self, session_id: str) -> tuple[str, str]:
+    def rotate(
+        self,
+        session_id: str,
+        *,
+        credential_token: str | None = None,
+        credential_hash: str | None = None,
+        identity: dict[str, Any] | None = None,
+    ) -> tuple[str, str]:
         session = self._sessions.get(session_id)
         if session is not None:
             session.revoked_at = utcnow()
-        return self.issue()
+        return self.issue(credential_token=credential_token, credential_hash=credential_hash, identity=identity)
 
     def verify_csrf(self, session_id: str, csrf_token: str | None) -> bool:
         session = self._sessions.get(session_id)
         return bool(session and session.active and csrf_token and session.csrf_token_hash == hash_secret(csrf_token))
+
+    def credential_for(self, session_id: str | None) -> CredentialReference | None:
+        if session_id is None:
+            return None
+        session = self._sessions.get(session_id)
+        if session is None or not session.active or session.credential_hash is None:
+            return None
+        return CredentialReference(session.credential_hash)
+
+    def revoke(self, session_id: str | None) -> None:
+        if session_id is None:
+            return
+        session = self._sessions.get(session_id)
+        if session is not None:
+            session.revoked_at = utcnow()
+
+    def identity_for(self, session_id: str | None) -> dict[str, Any] | None:
+        if session_id is None:
+            return None
+        session = self._sessions.get(session_id)
+        if session is None or not session.active or session.identity is None:
+            return None
+        return dict(session.identity)
 
 
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}

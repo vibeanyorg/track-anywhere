@@ -281,5 +281,9 @@ class RevokeCredentialCommand(StrictCommand):
     reason: str = Field(default="", max_length=240)
 
 
+class RevokeCredentialByIdCommand(StrictCommand):
+    reason: str = Field(default="", max_length=240)
+
+
 class ReconciliationActionCommand(StrictCommand):
     summary: str = Field(min_length=1, max_length=500)

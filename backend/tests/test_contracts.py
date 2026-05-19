@@ -30,7 +30,7 @@ def test_public_mutation_routes_expose_request_schemas():
 
     schema_refs = {}
     for path, details in openapi["paths"].items():
-        if path in {"/api/v1/attachments", "/api/v1/auth/dev-token", "/api/v1/session/dev-local"}:
+        if path in {"/api/v1/attachments", "/api/v1/auth/dev-token", "/api/v1/auth/logout", "/api/v1/session/dev-local"}:
             continue
         for method in ("post", "patch"):
             if method in details:

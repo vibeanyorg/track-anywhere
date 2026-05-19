@@ -7,6 +7,7 @@ from sqlalchemy import delete
 from sqlalchemy.orm import sessionmaker
 
 from .attachments import Attachment
+from .auth_identities import LinkedAuthIdentity
 from .categories import Category
 from .credit_cards import CreditCardProfile
 from .db_migrations import run_migrations
@@ -20,6 +21,7 @@ from .storage_models import (
     AdjustmentAccountRecord,
     AppStateRecord,
     AttachmentRecord,
+    AuthIdentityRecord,
     Base,
     CategoryRecord,
     CreditCardProfileRecord,
@@ -63,6 +65,21 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, DomainStorageWriters, Sto
                     version=row.version,
                 )
                 for row in session.query(UserRecord).all()
+            }
+            service.auth_identities.identities = {
+                row.identity_id: LinkedAuthIdentity(
+                    identity_id=row.identity_id,
+                    provider=row.provider,
+                    subject=row.subject,
+                    user_id=row.user_id,
+                    email=row.email,
+                    email_verified=row.email_verified,
+                    display_name=row.display_name,
+                    picture_url=row.picture_url,
+                    status=row.status,
+                    version=row.version,
+                )
+                for row in session.query(AuthIdentityRecord).all()
             }
             service.ledger.transactions = self._load_transactions(session)
             service.drafts.drafts = self._load_drafts(session)
@@ -154,6 +171,21 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, DomainStorageWriters, Sto
                         username=user.username,
                         display_name=user.display_name,
                         version=user.version,
+                    )
+                )
+            for identity in service.auth_identities.identities.values():
+                session.merge(
+                    AuthIdentityRecord(
+                        identity_id=identity.identity_id,
+                        provider=identity.provider,
+                        subject=identity.subject,
+                        user_id=identity.user_id,
+                        email=identity.email,
+                        email_verified=identity.email_verified,
+                        display_name=identity.display_name,
+                        picture_url=identity.picture_url,
+                        status=identity.status,
+                        version=identity.version,
                     )
                 )
             self._save_transactions(session, service.ledger.transactions.values())

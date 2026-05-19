@@ -1,3 +1,3 @@
 from __future__ import annotations
 
-__all__ = ["catalog", "credentials", "finance", "ledger", "recurring", "system"]
+__all__ = ["auth", "books", "catalog", "credentials", "finance", "ledger", "oauth", "recurring", "system"]

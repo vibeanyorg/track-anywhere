@@ -4,19 +4,27 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.sessions import SessionMiddleware
 
 from .api_routes import router
-from .api_runtime import ALLOWED_ORIGINS, _deployment_config_from_env, service
+from .api_runtime import ALLOWED_ORIGINS, _deployment_config_from_env, auth_settings, service
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Track Anywhere API", version="0.1.0")
+    if auth_settings.session_secret:
+        app.add_middleware(
+            SessionMiddleware,
+            secret_key=auth_settings.session_secret,
+            same_site="strict",
+            https_only=service.config.mode != "local",
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=sorted(ALLOWED_ORIGINS),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "X-Idempotency-Key", "X-CSRF-Token"],
+        allow_headers=["Authorization", "Content-Type", "X-API-Key", "X-Idempotency-Key", "X-CSRF-Token"],
     )
     app.include_router(router)
 

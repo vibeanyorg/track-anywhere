@@ -6,6 +6,7 @@ from typing import Any
 
 from .audit import AuditLog
 from .attachments import AttachmentIntake
+from .auth_identities import AuthIdentityDirectory
 from .books import DEFAULT_BOOK_ID, BookDirectory
 from .budgets import BudgetBook
 from .categories import CategoryBook
@@ -23,6 +24,7 @@ from .service_catalog import CatalogUseCases
 from .service_credentials import CredentialUseCases
 from .service_drafts import DraftUseCases
 from .service_finance import FinancialUseCases
+from .service_identity import IdentityUseCases
 from .service_ledger import LedgerUseCases
 from .service_recurring import RecurringUseCases
 from .storage import OrmStorage, new_owner_token
@@ -30,6 +32,7 @@ from .users import UserDirectory
 
 
 class FinanceService(
+    IdentityUseCases,
     BookUseCases,
     CatalogUseCases,
     FinancialUseCases,
@@ -56,6 +59,7 @@ class FinanceService(
         self.credit_cards = CreditCardBook()
         self.attachments = AttachmentIntake(self.config)
         self.users = UserDirectory()
+        self.auth_identities = AuthIdentityDirectory()
         self.reconciliation_actions: list[dict[str, Any]] = []
         self.adjustment_account_ids: dict[str, str] = {}
         self.owner_token = new_owner_token()

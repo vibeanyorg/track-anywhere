@@ -6,11 +6,19 @@ from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
 from ..api_runtime import service
 from ..api_serialization import serialize
-from ..commands import IssueCredentialCommand, RevokeCredentialCommand
+from ..commands import IssueCredentialCommand, RevokeCredentialByIdCommand, RevokeCredentialCommand
 from .common import COMMAND_ERRORS, command_payload, protected
 
 
 router = APIRouter()
+
+
+@router.get("/credentials", dependencies=protected)
+def list_credentials(token: AuthToken):
+    try:
+        return {"credentials": service.list_agent_credentials(token)}
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "credential.list")
 
 
 @router.post("/credentials/agent", dependencies=protected)
@@ -29,3 +37,12 @@ def revoke_credential(payload: RevokeCredentialCommand, token: AuthToken, key: I
         return {"credential": serialize(result), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "credential.revoke")
+
+
+@router.post("/credentials/{credential_id}/revoke", dependencies=protected)
+def revoke_credential_by_id(credential_id: str, payload: RevokeCredentialByIdCommand, token: AuthToken, key: IdempotencyKey):
+    try:
+        result, replay = service.revoke_credential_by_id_command(token, credential_id, command_payload(payload), idempotency_key=key)
+        return {"credential": serialize(result), "idempotent_replay": replay}
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "credential.revoke_by_id")

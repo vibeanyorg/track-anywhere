@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Float, ForeignKey, Integer, JSON, String
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -40,6 +40,22 @@ class UserRecord(Base):
     user_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True)
     display_name: Mapped[str] = mapped_column(String(120))
+    version: Mapped[int] = mapped_column(Integer)
+
+
+class AuthIdentityRecord(Base):
+    __tablename__ = "auth_identities"
+    __table_args__ = (UniqueConstraint("provider", "subject", name="uq_auth_identity_provider_subject"),)
+
+    identity_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(40))
+    subject: Mapped[str] = mapped_column(String(160))
+    user_id: Mapped[str] = mapped_column(String(80))
+    email: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean)
+    display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    picture_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[str] = mapped_column(String(40))
     version: Mapped[int] = mapped_column(Integer)
 
 
