@@ -4,7 +4,6 @@ from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from .output import CliOutcome, outcome_to_json_document
 from .presenters import presenter_for
 
@@ -37,66 +36,8 @@ def emit_result(
 
 def _render_human(data: Any, command_path: str):
     if isinstance(data, str):
-        renderable = data
-        return renderable
+        return data
     try:
         return presenter_for(command_path)(data)
     except KeyError:
         return Panel("No human presenter registered.", title=command_path or "Command")
-
-
-def _recurring_reminders_table(reminders: list[dict[str, Any]]) -> Table:
-    table = Table(title="Recurring reminders")
-    table.add_column("Name")
-    table.add_column("Provider")
-    table.add_column("Renewal")
-    table.add_column("Reminder")
-    table.add_column("Lead", justify="right")
-    table.add_column("Amount", justify="right")
-    for item in reminders:
-        amount = ""
-        if item.get("amount") is not None:
-            amount = f"{item['amount']} {item.get('currency') or ''}".strip()
-        table.add_row(
-            str(item.get("name") or ""),
-            str(item.get("provider") or ""),
-            str(item.get("renewal_date") or ""),
-            str(item.get("reminder_date") or ""),
-            str(item.get("lead_days") or ""),
-            amount,
-        )
-    return table
-
-
-def _recurring_items_table(items: list[dict[str, Any]]) -> Table:
-    table = Table(title="Recurring items")
-    table.add_column("Name")
-    table.add_column("Status")
-    table.add_column("Kind")
-    table.add_column("Provider")
-    table.add_column("Amount", justify="right")
-    for item in items:
-        amount = ""
-        if item.get("amount") is not None:
-            amount = f"{item['amount']} {item.get('currency') or ''}".strip()
-        table.add_row(
-            str(item.get("name") or ""),
-            str(item.get("status") or ""),
-            str(item.get("kind") or ""),
-            str(item.get("provider") or ""),
-            amount,
-        )
-    return table
-
-
-def _recurring_drafts_table(result: dict[str, Any]) -> Table:
-    table = Table(title=f"Recurring draft run {result.get('as_of', '')}".strip())
-    table.add_column("Action")
-    table.add_column("Name")
-    table.add_column("Renewal")
-    table.add_column("Draft")
-    for item in result.get("created", []):
-        table.add_row("created", str(item.get("recurring_id") or ""), str(item.get("renewal_date") or ""), str(item.get("draft_id") or ""))
-    for item in result.get("skipped", []):
-        table.add_row(str(item.get("reason") or "skipped"), str(item.get("name") or ""), str(item.get("renewal_date") or ""), str(item.get("last_draft_id") or ""))
-    return table

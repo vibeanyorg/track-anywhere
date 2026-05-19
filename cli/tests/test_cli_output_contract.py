@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 
-from rich.table import Table
-
 from track_anywhere_cli.output import CliDiagnostic, CliOutcome, outcome_to_json_document
 from track_anywhere_cli.exit_codes import EXIT_SUCCESS, EXIT_AUTH
 from track_anywhere_cli.runtime import build_outcome
