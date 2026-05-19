@@ -1,10 +1,31 @@
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable, Generic, TypeVar
 
+from .config import CliConfig
 from .exit_codes import EXIT_SUCCESS
 from .http import exit_for_status
-from .output import CliDiagnostic, CliOutcome
+from .output import CliDiagnostic, CliOutcome, CommandResult
+
+
+Requester = Callable[[CliConfig, str, str, dict[str, Any] | None, str | None], tuple[int, Any]]
+
+
+@dataclass(frozen=True)
+class RuntimeContext:
+    config: CliConfig
+    requester: Requester
+
+
+TArg = TypeVar("TArg")
+
+
+@dataclass(frozen=True)
+class CliCommandSpec(Generic[TArg]):
+    command_path: str
+    requires_auth: bool
+    execute: Callable[[TArg, RuntimeContext], CommandResult]
 
 
 def diagnostics_for_status(status: int, data: Any) -> list[CliDiagnostic]:

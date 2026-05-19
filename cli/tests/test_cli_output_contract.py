@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+from argparse import Namespace
 import json
+from urllib.parse import parse_qs, urlparse
 
 from rich.console import Console
 
+import pytest
+
+from track_anywhere_cli.commands import command_paths, command_spec, command_specs
+from track_anywhere_cli.config import CliConfig
 from track_anywhere_cli.output import CliDiagnostic, CliOutcome, outcome_to_json_document
 from track_anywhere_cli.exit_codes import EXIT_SUCCESS, EXIT_AUTH
-from track_anywhere_cli.runtime import build_outcome
-from track_anywhere_cli.presenters import presenter_for
+from track_anywhere_cli.runtime import RuntimeContext, build_outcome
+from track_anywhere_cli.presenters import PRESENTERS, presenter_for
 
 
 def test_success_outcome_json_envelope():
@@ -135,6 +141,60 @@ def test_public_command_paths_have_presenters():
         renderable = presenter_for(command_path)({"status": "ok"})
 
         assert not isinstance(renderable, dict)
+
+
+def test_public_command_paths_include_known_contract_paths():
+    paths = set(command_paths())
+
+    assert "account.list" in paths
+    assert "tx.record" in paths
+    assert "auth.login" in paths
+    assert set(PRESENTERS) <= paths
+    assert paths <= set(PRESENTERS)
+    assert "auth.login" not in command_specs()
+
+
+def test_command_spec_rejects_local_only_command_paths():
+    with pytest.raises(KeyError):
+        command_spec("auth.login")
+
+
+def test_command_spec_executes_existing_api_dispatch():
+    calls = []
+
+    def requester(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key, "token": config.token})
+        return 200, {"accounts": []}
+
+    spec = command_spec("account.list")
+    result = spec.execute(
+        Namespace(
+            command="account",
+            account_command="list",
+            name="Visa",
+            type=None,
+            currency="USD",
+            institution_type=None,
+            subtype=None,
+            institution=None,
+        ),
+        RuntimeContext(
+            config=CliConfig(base_url="http://api.test", token="token-1"),
+            requester=requester,
+        ),
+    )
+
+    assert spec.command_path == "account.list"
+    assert spec.requires_auth is True
+    assert result.status == 200
+    assert result.data == {"accounts": []}
+    assert calls[0]["method"] == "GET"
+    assert calls[0]["payload"] is None
+    assert calls[0]["key"] is None
+    assert calls[0]["token"] == "token-1"
+    parsed_path = urlparse(calls[0]["path"])
+    assert parsed_path.path == "/api/v1/accounts"
+    assert parse_qs(parsed_path.query) == {"name": ["Visa"], "currency": ["USD"]}
 
 
 def test_public_presenters_render_real_payload_fields():
