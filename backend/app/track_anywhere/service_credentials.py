@@ -64,6 +64,7 @@ class CredentialUseCases:
             operation="credential.issue",
             request_hash=request_hash,
             fn=run,
+            stored_result_factory=_credential_issue_replay_receipt,
         )
         self._persist()
         return result
@@ -142,3 +143,9 @@ def _credential_public_dict(credential) -> dict[str, Any]:
         "revoked_at": credential.revoked_at.isoformat() if credential.revoked_at else None,
         "active": credential.active,
     }
+
+
+def _credential_issue_replay_receipt(result: dict[str, Any]) -> dict[str, Any]:
+    # Agent bearer tokens are one-time secrets. Keep immediate in-memory
+    # idempotency replay exact, but never persist the raw token in a receipt.
+    return {**result, "token": "[ISSUED_ONCE]"}

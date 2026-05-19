@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from hashlib import sha256
 from typing import Any
@@ -28,6 +29,7 @@ from .service_identity import IdentityUseCases
 from .service_ledger import LedgerUseCases
 from .service_recurring import RecurringUseCases
 from .storage import OrmStorage, new_owner_token
+from .storage_json import to_jsonable
 from .users import UserDirectory
 
 
@@ -42,7 +44,13 @@ class FinanceService(
     BalanceUseCases,
     LedgerUseCases,
 ):
-    def __init__(self, config: DeploymentSecurityConfig | None = None, *, database_url: str | None = None) -> None:
+    def __init__(
+        self,
+        config: DeploymentSecurityConfig | None = None,
+        *,
+        database_url: str | None = None,
+        persist_on_initialize: bool = False,
+    ) -> None:
         self.config = config or DeploymentSecurityConfig()
         self.startup_warnings = validate_startup_security(self.config)
         self.storage = OrmStorage(database_url)
@@ -63,10 +71,12 @@ class FinanceService(
         self.reconciliation_actions: list[dict[str, Any]] = []
         self.adjustment_account_ids: dict[str, str] = {}
         self.owner_token = new_owner_token()
+        self._startup_persist_required = False
         self.storage.load_into(self)
         self._ensure_domain_foundations()
         self._ensure_owner_credential()
-        self._persist()
+        if persist_on_initialize or self._startup_persist_required:
+            self._persist()
 
     def actor_from_token(self, token: str, required_scope: str | None = None) -> Actor:
         return self.credentials.verify(token, required_scope=required_scope)
@@ -113,8 +123,6 @@ class FinanceService(
             transaction.book_id = transaction.book_id or self._book_id_for_transaction(transaction)
             if transaction.lines is None:
                 transaction.lines = []
-            if transaction.category_id is not None and not transaction.lines:
-                self._add_category_line_for_transaction(transaction, self.categories.get(transaction.category_id))
         for draft in self.drafts.drafts.values():
             draft.book_id = draft.book_id or self._book_id_for_postings(draft.proposed_postings)
         for item in self.recurring.items.values():
@@ -132,10 +140,42 @@ class FinanceService(
         return DEFAULT_BOOK_ID
 
     @staticmethod
+    def _hash_request_payload(
+        operation: str,
+        payload: dict[str, Any] | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> str:
+        """Return a stable idempotency hash for the client supplied request.
+
+        Mutation commands may contain server-side dynamic defaults such as
+        ``occurred_at=datetime.now(...)``.  Hashing the validated command would
+        make two identical retries look different whenever the client omitted
+        that field.  The idempotency boundary must therefore be the canonical
+        raw request payload plus immutable route/context fields.
+        """
+
+        envelope: dict[str, Any] = {"operation": operation, "payload": payload or {}}
+        if extra:
+            envelope["extra"] = extra
+        encoded = json.dumps(
+            to_jsonable(envelope),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
     def _hash_command(command) -> str:
-        return sha256(command.model_dump_json().encode("utf-8")).hexdigest()
+        return FinanceService._hash_request_payload(
+            command.__class__.__name__,
+            command.model_dump(mode="python", exclude_unset=True),
+        )
 
     @staticmethod
     def _hash_command_payload(command, extra: dict[str, Any]) -> str:
-        payload = {**extra, **command.model_dump(mode="json", exclude_none=True)}
-        return sha256(str(sorted(payload.items())).encode("utf-8")).hexdigest()
+        return FinanceService._hash_request_payload(
+            command.__class__.__name__,
+            command.model_dump(mode="python", exclude_unset=True),
+            extra,
+        )

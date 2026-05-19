@@ -16,7 +16,7 @@ protected = [SessionGuard]
 
 
 def command_payload(command: StrictCommand) -> dict[str, Any]:
-    return command.model_dump(mode="python")
+    return command.model_dump(mode="python", exclude_unset=True)
 
 
 async def read_upload_with_limit(file: UploadFile) -> bytes:

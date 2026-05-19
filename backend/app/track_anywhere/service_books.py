@@ -54,8 +54,8 @@ class BookUseCases:
 
     def create_book_account(self, token: str, book_id: str, payload: dict[str, Any], *, idempotency_key: str):
         self.actor_for_book(token, book_id, "account:write")
-        command = CreateAccountCommand.model_validate({**payload, "book_id": book_id})
-        return self.create_account(token, command.model_dump(mode="json"), idempotency_key=idempotency_key)
+        CreateAccountCommand.model_validate({**payload, "book_id": book_id})
+        return self.create_account(token, {**payload, "book_id": book_id}, idempotency_key=idempotency_key)
 
     def list_book_transactions(self, token: str, book_id: str, *, limit: int = 20) -> list[Any]:
         self.actor_for_book(token, book_id, "ledger:read")
@@ -69,7 +69,7 @@ class BookUseCases:
         for account_id in (command.from_account_id, command.to_account_id):
             if self.ledger.get_account(account_id).book_id != book_id:
                 raise ValidationError("book transaction accounts must belong to the route book")
-        return self.record_transaction(token, command.model_dump(mode="python"), idempotency_key=idempotency_key)
+        return self.record_transaction(token, payload, idempotency_key=idempotency_key)
 
     def reverse_book_transaction(self, token: str, book_id: str, payload: dict[str, Any], *, idempotency_key: str):
         self.actor_for_book(token, book_id, "ledger:reverse")
@@ -77,7 +77,7 @@ class BookUseCases:
         transaction = self.get_transaction(token, command.transaction_id)
         if transaction.book_id != book_id:
             raise ValidationError("transaction does not belong to book")
-        return self.reverse_transaction(token, command.model_dump(mode="python"), idempotency_key=idempotency_key)
+        return self.reverse_transaction(token, payload, idempotency_key=idempotency_key)
 
     def create_book_category(self, token: str, book_id: str, payload: dict[str, Any], *, idempotency_key: str):
         self.actor_for_book(token, book_id, "category:write")
@@ -240,7 +240,7 @@ class BookUseCases:
         for transaction in self.ledger.transactions.values():
             if transaction.book_id != book_id or transaction.reversed_by is not None:
                 continue
-            for line in transaction.lines:
+            for line in self._report_lines_for_transaction(transaction):
                 if currency is not None and line.currency != currency:
                     continue
                 key = self._spending_report_key(line, group_by)
@@ -264,7 +264,7 @@ class BookUseCases:
         for transaction in self.ledger.transactions.values():
             if transaction.book_id != book_id or transaction.reversed_by is not None:
                 continue
-            for line in transaction.lines:
+            for line in self._report_lines_for_transaction(transaction):
                 if self._line_matches_budget_target(line, target):
                     total += line.amount
         return total

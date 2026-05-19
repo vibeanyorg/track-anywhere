@@ -14,7 +14,7 @@ from .commands import (
     ReconciliationActionCommand,
     RecordInvestmentEventCommand,
 )
-from .errors import ValidationError
+from .errors import NotFound, ValidationError
 from .investments import InvestmentEvent, investment_performance_report
 from .ledger import Posting
 
@@ -132,19 +132,24 @@ class FinancialUseCases:
 
     def allocate_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = FundAllocationCommand.model_validate(payload)
-        fund = self.budgets.require_current(command.fund_id, command.expected_version)
+        fund = self.budgets.get(command.fund_id)
+        if fund is None:
+            raise NotFound(f"fund not found: {command.fund_id}")
         actor = self.actor_for_book(token, fund.book_id, "budget:write")
+        source = self.ledger.get_account(command.source_account_id)
+        if source.book_id != fund.book_id:
+            raise ValidationError("fund allocation account must belong to the fund book")
+        if source.currency != command.currency or fund.currency != command.currency:
+            raise ValidationError("fund allocation currency must match source and fund currencies")
         request_hash = self._hash_command(command)
 
         def run():
-            source = self.ledger.get_account(command.source_account_id)
-            if source.book_id != fund.book_id:
-                raise ValidationError("fund allocation account must belong to the fund book")
+            current_fund = self.budgets.require_current(command.fund_id, command.expected_version)
             transaction = self.ledger.create_transaction(
-                command.memo or f"Allocate to {fund.name}",
+                command.memo or f"Allocate to {current_fund.name}",
                 [
                     Posting(command.source_account_id, -command.amount, command.currency),
-                    Posting(fund.account_id, command.amount, command.currency),
+                    Posting(current_fund.account_id, command.amount, command.currency),
                 ],
             )
             updated = self.budgets.allocate(command.fund_id, command.expected_version, command.amount, transaction.transaction_id)
@@ -168,18 +173,23 @@ class FinancialUseCases:
 
     def spend_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = FundSpendCommand.model_validate(payload)
-        fund = self.budgets.require_current(command.fund_id, command.expected_version)
+        fund = self.budgets.get(command.fund_id)
+        if fund is None:
+            raise NotFound(f"fund not found: {command.fund_id}")
         actor = self.actor_for_book(token, fund.book_id, "budget:write")
+        expense = self.ledger.get_account(command.expense_account_id)
+        if expense.book_id != fund.book_id:
+            raise ValidationError("fund spend account must belong to the fund book")
+        if expense.currency != command.currency or fund.currency != command.currency:
+            raise ValidationError("fund spend currency must match expense and fund currencies")
         request_hash = self._hash_command(command)
 
         def run():
-            expense = self.ledger.get_account(command.expense_account_id)
-            if expense.book_id != fund.book_id:
-                raise ValidationError("fund spend account must belong to the fund book")
+            current_fund = self.budgets.require_current(command.fund_id, command.expected_version)
             transaction = self.ledger.create_transaction(
-                command.memo or f"Spend from {fund.name}",
+                command.memo or f"Spend from {current_fund.name}",
                 [
-                    Posting(fund.account_id, -command.amount, command.currency),
+                    Posting(current_fund.account_id, -command.amount, command.currency),
                     Posting(command.expense_account_id, command.amount, command.currency),
                 ],
             )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from decimal import Decimal
 
 import pytest
@@ -146,3 +147,139 @@ def test_agent_scope_and_audit_redaction():
 
     issue_event = service.audit.events[-2]
     assert issue_event.details["token"] == "[REDACTED]"
+
+
+def test_posting_currency_must_match_account_currency():
+    service = FinanceService()
+    cash = service.ledger.create_account("Cash", "asset", "CNY")
+    food = service.ledger.create_account("Food", "expense", "USD")
+
+    with pytest.raises(ValidationError):
+        service.ledger.create_transaction(
+            "bad cross-currency posting",
+            [
+                Posting(cash.account_id, Decimal("-10"), "USD"),
+                Posting(food.account_id, Decimal("10"), "USD"),
+            ],
+        )
+
+
+def test_record_transaction_rejects_cross_currency_accounts():
+    service = FinanceService()
+    cash, _ = service.create_account(
+        service.owner_token,
+        {"name": "Cash CNY", "type": "asset", "currency": "CNY"},
+        idempotency_key="cross-currency-cash",
+    )
+    food, _ = service.create_account(
+        service.owner_token,
+        {"name": "Food USD", "type": "expense", "currency": "USD"},
+        idempotency_key="cross-currency-food",
+    )
+
+    with pytest.raises(ValidationError):
+        service.record_transaction(
+            service.owner_token,
+            {
+                "amount": "10",
+                "currency": "USD",
+                "from_account_id": cash.account_id,
+                "to_account_id": food.account_id,
+                "purpose": "must fail",
+            },
+            idempotency_key="cross-currency-transaction",
+        )
+
+
+def test_complete_draft_rejects_cross_currency_accounts():
+    service = FinanceService()
+    cash, _ = service.create_account(
+        service.owner_token,
+        {"name": "Cash CNY", "type": "asset", "currency": "CNY"},
+        idempotency_key="draft-cross-cash",
+    )
+    food, _ = service.create_account(
+        service.owner_token,
+        {"name": "Food USD", "type": "expense", "currency": "USD"},
+        idempotency_key="draft-cross-food",
+    )
+
+    with pytest.raises(ValidationError):
+        service.capture_draft(
+            service.owner_token,
+            {
+                "memo": "bad draft",
+                "amount": "10",
+                "currency": "USD",
+                "source_account_id": cash.account_id,
+                "expense_account_id": food.account_id,
+            },
+            idempotency_key="draft-cross-capture",
+        )
+
+
+def test_category_summary_does_not_mutate_legacy_transaction_lines(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Legacy Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="legacy-line-cash",
+    )
+    expense_account, _ = service.create_account(
+        token,
+        {"name": "Legacy Food Account", "type": "expense", "currency": "CNY"},
+        idempotency_key="legacy-line-food-account",
+    )
+    category, _ = service.create_category(
+        token,
+        {"kind": "expense", "primary": "Food"},
+        idempotency_key="legacy-line-category",
+    )
+    budget, _ = service.create_budget(
+        token,
+        "book_default",
+        {"name": "Food Budget", "period": "monthly", "currency": "CNY", "total_amount": "100"},
+        idempotency_key="legacy-line-budget",
+    )
+    service.add_budget_target(
+        token,
+        "book_default",
+        budget.budget_id,
+        {"target_type": "category_node", "target_id": category.category_id},
+        idempotency_key="legacy-line-budget-target",
+    )
+    transaction = service.ledger.create_transaction(
+        "legacy categorized tx",
+        [
+            Posting(cash.account_id, Decimal("-12"), "CNY"),
+            Posting(expense_account.account_id, Decimal("12"), "CNY"),
+        ],
+        category_id=category.category_id,
+    )
+    service._persist()
+
+    assert transaction.lines == []
+    summary = service.category_summary(token, kind="expense", currency="CNY")
+
+    assert summary["groups"][0]["amount"] == "12"
+    assert transaction.lines == []
+    service._persist()
+
+    restarted = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
+    assert restarted.ledger.transactions[transaction.transaction_id].lines == []
+    restarted_summary = restarted.category_summary(token, kind="expense", currency="CNY")
+    assert restarted_summary["groups"][0]["amount"] == "12"
+    spending = restarted.spending_report(token, "book_default", group_by="category_parent", currency="CNY")
+    execution = restarted.budget_execution_report(token, "book_default", budget.budget_id)
+    assert spending["groups"] == [{"key": "Food", "currency": "CNY", "amount": "12", "line_count": 1}]
+    assert execution["spent"] == "12"
+    assert restarted.ledger.transactions[transaction.transaction_id].lines == []
+
+    with sqlite3.connect(tmp_path / "track-anywhere.sqlite3") as connection:
+        line_count = connection.execute(
+            "select count(*) from transaction_lines where transaction_id = ?",
+            (transaction.transaction_id,),
+        ).fetchone()[0]
+    assert line_count == 0

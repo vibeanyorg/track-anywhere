@@ -114,6 +114,11 @@ class Ledger:
         posting_book_id: str | None = book_id
         for posting in postings:
             account = self.get_account(posting.account_id)
+            if posting.currency != account.currency:
+                raise ValidationError(
+                    f"posting currency {posting.currency} does not match "
+                    f"account {posting.account_id} currency {account.currency}"
+                )
             if posting_book_id is None:
                 posting_book_id = account.book_id
             elif account.book_id != posting_book_id:

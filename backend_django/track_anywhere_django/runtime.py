@@ -35,7 +35,7 @@ def allowed_origins() -> tuple[str, ...]:
     return origins or ("http://localhost:3000",)
 
 
-service = FinanceService(deployment_config_from_env())
+service = FinanceService(deployment_config_from_env(), persist_on_initialize=False)
 browser_sessions = BrowserSessionStore()
 ALLOWED_ORIGINS = allowed_origins()
 auth_settings = auth_settings_from_env(mode=service.config.mode)

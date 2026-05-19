@@ -192,6 +192,7 @@ class StorageLoaders:
                 operation=row.operation,
                 request_hash=row.request_hash,
                 result=row.result,
+                stored_result=row.result,
                 replay_count=row.replay_count,
             )
         return receipts

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from .audit import AuditEvent
 from .drafts import DraftTransaction
 from .ledger import Transaction
-from .security import redact
 from .storage_json import to_jsonable
 from .storage_models import (
     AuditEventRecord,
@@ -21,6 +22,52 @@ from .storage_models import (
     TransactionRecord,
 )
 from .domain_storage_models import TransactionLineRecord
+
+
+IDEMPOTENCY_SECRET_KEYS = {
+    "account_number",
+    "api_key",
+    "authorization",
+    "access_token",
+    "card_number",
+    "credential",
+    "csrf_token",
+    "idempotency_key",
+    "password",
+    "refresh_token",
+    "target_token",
+    "token",
+    "secret",
+}
+
+
+def _is_idempotency_secret_key(key: str) -> bool:
+    key_lower = key.lower()
+    return (
+        key_lower in IDEMPOTENCY_SECRET_KEYS
+        or key_lower.endswith("_token")
+        or key_lower.endswith("_secret")
+        or key_lower.endswith("_password")
+    )
+
+
+def redact_idempotency_result(value: Any) -> Any:
+    """Redact credentials without applying audit-log redaction to replay data.
+
+    Audit events intentionally redact human memo/note fields.  Idempotency
+    receipts need a replay snapshot of the business response, so applying the
+    audit redactor there makes replayed transactions lose their memo/purpose
+    after restart.  Receipts still must never persist bearer tokens or secrets.
+    """
+
+    if isinstance(value, dict):
+        return {
+            key: ("[REDACTED]" if _is_idempotency_secret_key(key) else redact_idempotency_result(item))
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_idempotency_result(item) for item in value]
+    return value
 
 
 class StorageWriters:
@@ -209,7 +256,7 @@ class StorageWriters:
                     actor_id=receipt.actor_id,
                     operation=receipt.operation,
                     request_hash=receipt.request_hash,
-                    result=redact(to_jsonable(receipt.result)),
+                    result=redact_idempotency_result(to_jsonable(receipt.stored_result)),
                     replay_count=receipt.replay_count,
                 )
             )

@@ -84,7 +84,7 @@ api = NinjaAPI(
 
 
 def command_payload(command) -> dict[str, Any]:
-    return command.model_dump(mode="python")
+    return command.model_dump(mode="python", exclude_unset=True)
 
 
 def error_to_status(error: Exception) -> int:

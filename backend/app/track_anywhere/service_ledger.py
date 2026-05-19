@@ -15,6 +15,8 @@ class LedgerUseCases:
         to_account = self.ledger.get_account(command.to_account_id)
         if from_account.book_id != to_account.book_id:
             raise ValidationError("transaction accounts must belong to one book")
+        if from_account.currency != command.currency or to_account.currency != command.currency:
+            raise ValidationError("transaction currency must match both account currencies")
         actor = self.actor_for_book(token, from_account.book_id, "ledger:confirm")
         if command.category_id is not None:
             category = self.categories.get(command.category_id)

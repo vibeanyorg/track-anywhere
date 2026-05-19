@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -7,6 +8,18 @@ from .books import DEFAULT_BOOK_ID
 from .categories import Category
 from .commands import CreateCategoryCommand
 from .errors import ValidationError
+
+
+@dataclass(frozen=True)
+class CategoryLineProjection:
+    line_type: str
+    amount: Decimal
+    currency: str
+    category_id: str | None
+    category_path_snapshot: dict[str, str | None] | None = None
+    project_id: str | None = None
+    merchant_id: str | None = None
+    necessity: str = "unknown"
 
 
 class CategoryUseCases:
@@ -26,12 +39,7 @@ class CategoryUseCases:
         for transaction in self.ledger.transactions.values():
             if transaction.book_id != book_id or transaction.reversed_by is not None:
                 continue
-            lines = transaction.lines or []
-            if not lines and transaction.category_id is not None:
-                category = self.categories.get(transaction.category_id)
-                projected = self._legacy_line_projection(transaction, category)
-                lines = [projected] if projected is not None else []
-            for line in lines:
+            for line in self._report_lines_for_transaction(transaction):
                 if line.category_id is None:
                     continue
                 category = self.categories.get(line.category_id)
@@ -166,16 +174,21 @@ class CategoryUseCases:
         currency, amount = next(iter(amounts.items()))
         if amount <= Decimal("0"):
             return None
-        return self.ledger.add_line(
-            transaction,
+        return CategoryLineProjection(
             line_type=category.kind,
             amount=amount,
             currency=currency,
             category_id=category.category_id,
-            category_version_id=self.categories.active_version(category.category_id).category_version_id,
             category_path_snapshot=self.categories.path_snapshot(category.category_id),
-            memo=transaction.memo,
         )
+
+    def _report_lines_for_transaction(self, transaction):
+        lines = transaction.lines or []
+        if lines or transaction.category_id is None:
+            return lines
+        category = self.categories.get(transaction.category_id)
+        projected = self._legacy_line_projection(transaction, category)
+        return [projected] if projected is not None else []
 
     def _add_category_line_for_transaction(self, transaction, category: Category):
         amounts = self._category_amounts_for_transaction(transaction, category)

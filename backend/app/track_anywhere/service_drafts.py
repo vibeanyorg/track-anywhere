@@ -150,6 +150,8 @@ class DraftUseCases:
             expense = self.ledger.get_account(expense_account_id)
             if source.book_id != expense.book_id:
                 raise ValidationError("draft postings must belong to one book")
+            if source.currency != command.currency or expense.currency != command.currency:
+                raise ValidationError("draft posting currency must match all referenced account currencies")
             book_id = source.book_id
             proposed.extend(
                 [

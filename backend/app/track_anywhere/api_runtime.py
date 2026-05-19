@@ -39,7 +39,7 @@ def _allowed_origins() -> tuple[str, ...]:
     return origins or ("http://localhost:3000",)
 
 
-service = FinanceService(_deployment_config_from_env())
+service = FinanceService(_deployment_config_from_env(), persist_on_initialize=False)
 browser_sessions = BrowserSessionStore()
 password_accounts = PasswordAccountStore()
 ALLOWED_ORIGINS = _allowed_origins()

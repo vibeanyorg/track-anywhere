@@ -145,6 +145,7 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, DomainStorageWriters, Sto
             owner_state = session.get(AppStateRecord, "owner_token")
             if owner_state is not None:
                 service.owner_token = str(owner_state.value["token"])
+                service._startup_persist_required = True
 
     def save(self, service: Any) -> None:
         with self.session_factory.begin() as session:
