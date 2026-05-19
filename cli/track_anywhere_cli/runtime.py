@@ -36,6 +36,7 @@ def build_outcome(
     status: int,
     data: Any,
     diagnostics: list[CliDiagnostic] | None = None,
+    exit_code: int | None = None,
 ) -> CliOutcome:
     all_diagnostics = [*diagnostics_for_status(status, data), *(diagnostics or [])]
     return CliOutcome(
@@ -43,5 +44,5 @@ def build_outcome(
         status=status,
         data=data,
         diagnostics=all_diagnostics,
-        exit_code=EXIT_SUCCESS if status < 400 else exit_for_status(status, data),
+        exit_code=exit_code if exit_code is not None else EXIT_SUCCESS if status < 400 else exit_for_status(status, data),
     )

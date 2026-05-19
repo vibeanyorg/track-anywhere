@@ -7,7 +7,8 @@ from pathlib import Path
 from click.testing import CliRunner
 
 import track_anywhere_cli.main as cli_main
-from track_anywhere_cli.main import EXIT_AUTH, cli, exit_for_status, main
+import track_anywhere_cli.oauth_login as oauth_login
+from track_anywhere_cli.main import EXIT_AUTH, EXIT_VALIDATION, cli, exit_for_status, main
 
 
 def test_cli_rejects_env_token_without_insecure_opt_in(monkeypatch):
@@ -74,7 +75,106 @@ def test_auth_dev_token_saves_local_token(monkeypatch, capsys):
 
     assert main(["auth", "dev-token", "--json"]) == 0
     assert saved["token"] == "owner-token"
-    assert json.loads(capsys.readouterr().out)["token"] == "owner-token"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["command"] == "auth.dev_token"
+    assert payload["status"] == 200
+    assert payload["data"]["token"] == "owner-token"
+
+
+def test_auth_login_with_token_still_saves_token(monkeypatch, capsys):
+    saved = {}
+    monkeypatch.setattr(cli_main.TokenStore, "save", lambda self, token: saved.setdefault("token", token))
+
+    assert main(["auth", "login", "ta_manual_token", "--json"]) == 0
+
+    assert saved["token"] == "ta_manual_token"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["command"] == "auth.login"
+    assert payload["status"] == 200
+    assert payload["data"]["token_saved"] is True
+
+
+def test_top_level_login_uses_auth_login_output_contract(monkeypatch, capsys):
+    saved = {}
+    monkeypatch.setattr(cli_main.TokenStore, "save", lambda self, token: saved.setdefault("token", token))
+
+    assert main(["login", "ta_manual_token", "--json"]) == 0
+
+    assert saved["token"] == "ta_manual_token"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["command"] == "auth.login"
+    assert payload["status"] == 200
+    assert payload["data"]["token_saved"] is True
+
+
+def test_auth_login_without_token_uses_pkce_callback_exchange(monkeypatch, capsys):
+    saved = {}
+    generated = iter(["state_value_123456789012345678901234567890123456", "verifier_value_12345678901234567890123456789012345678901234567890"])
+
+    def fake_request(config, method, path, payload=None, key=None):
+        assert config.base_url == "http://api.test"
+        assert method == "POST"
+        assert path == "/api/v1/oauth/token"
+        assert payload["code"] == "code_cli"
+        assert payload["client_id"] == "track-anywhere-web"
+        assert payload["redirect_uri"] == "http://127.0.0.1:3000/auth/callback"
+        assert payload["code_verifier"].startswith("verifier_value")
+        return 200, {"access_token": "ta_cli_access", "scope": payload.get("scope", "account:read")}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+    monkeypatch.setattr(cli_main.TokenStore, "save", lambda self, token: saved.setdefault("token", token))
+    monkeypatch.setattr(oauth_login.secrets, "token_urlsafe", lambda _length: next(generated))
+
+    callback = "http://127.0.0.1:3000/auth/callback?code=code_cli&state=state_value_123456789012345678901234567890123456"
+    assert main(["--base-url", "http://api.test", "auth", "login", "--no-browser", "--callback", callback, "--json"]) == 0
+
+    assert saved["token"] == "ta_cli_access"
+    output = capsys.readouterr()
+    assert "Open this URL" in output.err
+    payload = json.loads(output.out)
+    assert payload["command"] == "auth.login"
+    assert payload["status"] == 200
+    assert payload["data"]["token_saved"] is True
+    assert payload["data"]["scope"] == "account:read"
+
+
+def test_auth_login_rejects_callback_state_mismatch(monkeypatch, capsys):
+    generated = iter(["state_value_123456789012345678901234567890123456", "verifier_value_12345678901234567890123456789012345678901234567890"])
+    monkeypatch.setattr(oauth_login.secrets, "token_urlsafe", lambda _length: next(generated))
+
+    callback = "http://127.0.0.1:3000/auth/callback?code=code_cli&state=wrong"
+    assert main(["auth", "login", "--no-browser", "--callback", callback, "--json"]) == EXIT_VALIDATION
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert payload["ok"] is False
+    assert payload["command"] == "auth.login"
+    assert payload["status"] == 400
+    assert payload["diagnostics"][0]["code"] == "security_precondition"
+    assert "state did not match" in payload["diagnostics"][0]["message"]
+
+
+def test_auth_login_exchange_exception_still_returns_json_envelope(monkeypatch, capsys):
+    generated = iter(["state_value_123456789012345678901234567890123456", "verifier_value_12345678901234567890123456789012345678901234567890"])
+
+    def broken_request(config, method, path, payload=None, key=None):
+        raise RuntimeError("network unavailable")
+
+    monkeypatch.setattr(cli_main, "request_json", broken_request)
+    monkeypatch.setattr(oauth_login.secrets, "token_urlsafe", lambda _length: next(generated))
+
+    callback = "http://127.0.0.1:3000/auth/callback?code=code_cli&state=state_value_123456789012345678901234567890123456"
+    assert main(["auth", "login", "--no-browser", "--callback", callback, "--json"]) == EXIT_VALIDATION
+
+    output = capsys.readouterr()
+    payload = json.loads(output.out)
+    assert payload["ok"] is False
+    assert payload["command"] == "auth.login"
+    assert payload["status"] == 500
+    assert payload["diagnostics"][0]["code"] == "request_failed"
+    assert "network unavailable" in payload["diagnostics"][0]["message"]
 
 
 def test_data_backup_creates_readable_sqlite_copy(tmp_path, capsys):
@@ -99,9 +199,35 @@ def test_data_backup_creates_readable_sqlite_copy(tmp_path, capsys):
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
-    backup_path = Path(payload["backup"]["backup_path"])
+    assert payload["ok"] is True
+    assert payload["command"] == "data.backup"
+    assert payload["status"] == 200
+    backup_path = Path(payload["data"]["backup"]["backup_path"])
     assert backup_path.exists()
     assert backup_path.parent == tmp_path / "backups"
     assert "before-real-write" in backup_path.name
     with sqlite3.connect(backup_path) as connection:
         assert connection.execute("select name from accounts where account_id = 'acc_1'").fetchone() == ("Cash",)
+
+
+def test_data_backup_missing_database_preserves_validation_exit_code(tmp_path, capsys):
+    missing_database = tmp_path / "missing.sqlite3"
+
+    exit_code = main(
+        [
+            "data",
+            "backup",
+            "--database-url",
+            f"sqlite:///{missing_database}",
+            "--output-dir",
+            str(tmp_path / "backups"),
+            "--json",
+        ]
+    )
+
+    assert exit_code == EXIT_VALIDATION
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["command"] == "data.backup"
+    assert payload["status"] == 400
+    assert "sqlite database not found" in payload["diagnostics"][0]["message"]
