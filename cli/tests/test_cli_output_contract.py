@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 
+from rich.table import Table
+
 from track_anywhere_cli.output import CliDiagnostic, CliOutcome, outcome_to_json_document
 from track_anywhere_cli.exit_codes import EXIT_SUCCESS, EXIT_AUTH
 from track_anywhere_cli.runtime import build_outcome
+from track_anywhere_cli.presenters import presenter_for
 
 
 def test_success_outcome_json_envelope():
@@ -81,6 +84,20 @@ def test_build_outcome_maps_status_to_exit_code():
     assert outcome.status == 404
     assert outcome.exit_code == 8
     assert outcome.ok is False
+
+
+def test_account_list_has_explicit_presenter():
+    presenter = presenter_for("account.list")
+    renderable = presenter({"accounts": []})
+
+    assert not isinstance(renderable, dict)
+
+
+def test_unknown_presenter_fails():
+    import pytest
+
+    with pytest.raises(KeyError):
+        presenter_for("unknown.command")
 
 
 def test_render_json_writes_one_envelope(capsys):

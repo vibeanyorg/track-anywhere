@@ -3,8 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 from .output import CliOutcome, outcome_to_json_document
+from .presenters import presenter_for
 
 
 def emit_outcome(outcome: CliOutcome, *, json_mode: bool, no_color: bool) -> None:
@@ -35,14 +37,12 @@ def emit_result(
 
 def _render_human(data: Any, command_path: str):
     if isinstance(data, str):
-        return data
-    if command_path == "recurring.reminders" and isinstance(data, dict):
-        return _recurring_reminders_table(data.get("reminders", []))
-    if command_path == "recurring.list" and isinstance(data, dict):
-        return _recurring_items_table(data.get("recurring_items", []))
-    if command_path == "recurring.draft_due" and isinstance(data, dict):
-        return _recurring_drafts_table(data.get("result", data))
-    return data
+        renderable = data
+        return renderable
+    try:
+        return presenter_for(command_path)(data)
+    except KeyError:
+        return Panel("No human presenter registered.", title=command_path or "Command")
 
 
 def _recurring_reminders_table(reminders: list[dict[str, Any]]) -> Table:
