@@ -35,7 +35,12 @@ def _capture(root: click.Group) -> None:
             }
             from .renderers import emit_result
 
-            emit_result({"dry_run": True, "policy_decision": "would_create_draft", "payload": payload}, json_mode=state.json_mode or json_mode, no_color=state.no_color or no_color)
+            emit_result(
+                {"dry_run": True, "policy_decision": "would_create_draft", "payload": payload},
+                json_mode=state.json_mode or json_mode,
+                no_color=state.no_color or no_color,
+                command_path="capture",
+            )
             return 0
         args = common_args(state, json_mode, no_color, command="capture", **kwargs)
         return run_api(args, state=state, command_path="capture")

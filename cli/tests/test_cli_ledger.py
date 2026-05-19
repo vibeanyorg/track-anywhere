@@ -259,3 +259,13 @@ def test_account_adjust_posts_balance_delta(monkeypatch):
             "key": "adj-1",
         }
     ]
+
+
+def test_capture_dry_run_uses_capture_presenter(capsys):
+    exit_code = main(["capture", "spent 38", "--dry-run"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Capture response" in output
+    assert "No human presenter registered" not in output
+    assert not output.lstrip().startswith("{")
