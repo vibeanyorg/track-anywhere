@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import track_anywhere_cli.main as cli_main
-from track_anywhere_cli.main import main
+from track_anywhere_cli.main import EXIT_NOT_FOUND, main
 
 
 def test_tx_record_posts_agent_friendly_payload(monkeypatch, capsys):
@@ -70,7 +70,7 @@ def test_tx_show_not_found_emits_error_outcome_with_404(monkeypatch, capsys):
     exit_code = main(["--token", "token-1", "tx", "show", "txn_missing", "--json"])
 
     payload = json.loads(capsys.readouterr().out)
-    assert exit_code == 8
+    assert exit_code == EXIT_NOT_FOUND
     assert payload["ok"] is False
     assert payload["status"] == 404
     assert payload["command"] == "tx.show"
