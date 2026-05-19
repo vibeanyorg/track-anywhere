@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -9,6 +10,7 @@ from click.testing import CliRunner
 import track_anywhere_cli.main as cli_main
 import track_anywhere_cli.oauth_login as oauth_login
 from track_anywhere_cli.main import EXIT_AUTH, EXIT_VALIDATION, cli, exit_for_status, main
+from track_anywhere_cli.output import CliDiagnostic
 
 
 def test_cli_rejects_env_token_without_insecure_opt_in(monkeypatch):
@@ -94,6 +96,41 @@ def test_auth_login_with_token_still_saves_token(monkeypatch, capsys):
     assert payload["command"] == "auth.login"
     assert payload["status"] == 200
     assert payload["data"]["token_saved"] is True
+
+
+def test_auth_login_token_store_warning_is_structured_diagnostic(monkeypatch, capsys):
+    saved = {}
+
+    def save_with_warning(self, token):
+        saved["token"] = token
+        return [CliDiagnostic(level="warning", code="token_file_fallback", message="saved token to file")]
+
+    monkeypatch.setattr(cli_main.TokenStore, "save", save_with_warning)
+
+    assert main(["auth", "login", "ta_manual_token", "--json"]) == 0
+
+    assert saved["token"] == "ta_manual_token"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["diagnostics"][0]["code"] == "token_file_fallback"
+    assert payload["diagnostics"][0]["level"] == "warning"
+
+
+def test_token_store_keyring_write_failure_falls_back_to_structured_warning(monkeypatch, tmp_path):
+    class FailingKeyring:
+        @staticmethod
+        def set_password(*args, **kwargs):
+            raise RuntimeError("keyring unavailable")
+
+    token_file = tmp_path / "token"
+    monkeypatch.setitem(sys.modules, "keyring", FailingKeyring)
+    monkeypatch.setenv("TRACK_ANYWHERE_TOKEN_FILE", str(token_file))
+
+    diagnostics = cli_main.TokenStore().save("ta_manual_token")
+
+    assert token_file.read_text(encoding="utf-8") == "ta_manual_token\n"
+    assert token_file.stat().st_mode & 0o777 == 0o600
+    assert diagnostics[0].code == "token_file_fallback"
+    assert diagnostics[0].level == "warning"
 
 
 def test_top_level_login_uses_auth_login_output_contract(monkeypatch, capsys):

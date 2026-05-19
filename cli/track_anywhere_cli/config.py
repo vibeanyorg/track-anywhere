@@ -4,7 +4,6 @@ import argparse
 import os
 import re
 import sqlite3
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -47,18 +46,27 @@ class TokenStore:
             return self.token_file.read_text(encoding="utf-8").strip() or None
         return None
 
-    def save(self, token: str) -> None:
+    def save(self, token: str) -> list[CliDiagnostic]:
         try:
             import keyring  # type: ignore
         except Exception:
             keyring = None
         if keyring is not None:
-            keyring.set_password("track-anywhere", "cli-token", token)
-            return
+            try:
+                keyring.set_password("track-anywhere", "cli-token", token)
+                return []
+            except Exception:
+                pass
         self.token_file.parent.mkdir(parents=True, exist_ok=True)
         self.token_file.write_text(token + "\n", encoding="utf-8")
         self.token_file.chmod(0o600)
-        print(f"warning: OS keyring unavailable; saved token to {self.token_file}", file=sys.stderr)
+        return [
+            CliDiagnostic(
+                level="warning",
+                code="token_file_fallback",
+                message=f"OS keyring unavailable; saved token to {self.token_file}.",
+            )
+        ]
 
 
 def generated_idempotency_key(prefix: str) -> str:

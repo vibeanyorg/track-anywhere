@@ -12,8 +12,9 @@ from .click_recurring import register as register_recurring
 from .config import CliConfig, TokenStore, create_sqlite_backup, resolve_token_with_diagnostics
 from .exit_codes import EXIT_SUCCESS, EXIT_VALIDATION
 from .http import request_json
-from .interaction import ClickInteraction, Interaction
+from .interaction import ClickInteraction, Interaction, inform
 from .oauth_login import DEFAULT_CLI_SCOPE, DEFAULT_WEB_URL, create_browser_login_request, exchange_callback_for_token
+from .output import CliDiagnostic
 from .renderers import emit_outcome
 from .runtime import build_outcome
 
@@ -118,11 +119,12 @@ def auth_dev_token(state: ClickState, json_mode: bool, no_color: bool) -> int:
     output_no_color = state.no_color or no_color
     config = CliConfig(base_url=state.base_url, token=None, insecure_automation=state.insecure_automation)
     status, data = state.requester(config, "POST", "/api/v1/auth/dev-token")
+    diagnostics: list[CliDiagnostic] = []
     if status < 400 and isinstance(data, dict):
         token = data.get("token")
         if isinstance(token, str):
-            TokenStore().save(token)
-    outcome = build_outcome("auth.dev_token", status, data)
+            diagnostics = _save_token(token)
+    outcome = build_outcome("auth.dev_token", status, data, diagnostics=diagnostics)
     emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
     return outcome.exit_code
 
@@ -199,15 +201,15 @@ def run_login(
     interaction = interaction or ClickInteraction(open_browser=not no_browser)
 
     if token:
-        TokenStore().save(token)
-        outcome = build_outcome("auth.login", 200, {"authenticated": True, "token_saved": True})
+        diagnostics = _save_token(token)
+        outcome = build_outcome("auth.login", 200, {"authenticated": True, "token_saved": True}, diagnostics=diagnostics)
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
 
     login_request = create_browser_login_request(web_url=web_url, client_id=client_id, scope=scope)
     interaction.open_url(login_request.auth_url)
-    click.echo("Open this URL to authorize Track Anywhere CLI:", err=True)
-    click.echo(login_request.auth_url, err=True)
+    inform(interaction, "Open this URL to authorize Track Anywhere CLI:")
+    inform(interaction, login_request.auth_url)
     callback = callback_value or interaction.prompt("Paste the callback URL")
     try:
         status, data = exchange_callback_for_token(
@@ -242,12 +244,13 @@ def run_login(
         )
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
-    TokenStore().save(access_token)
+    diagnostics = _save_token(access_token)
     scope_value = data.get("scope") if isinstance(data, dict) else None
     outcome = build_outcome(
         "auth.login",
         status,
         {"authenticated": True, "token_saved": True, "scope": scope_value},
+        diagnostics=diagnostics,
     )
     emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
     return outcome.exit_code
@@ -257,6 +260,11 @@ def _state_args(state: ClickState):
     from argparse import Namespace
 
     return Namespace(token=state.token, insecure_automation=state.insecure_automation)
+
+
+def _save_token(token: str) -> list[CliDiagnostic]:
+    diagnostics = TokenStore().save(token)
+    return diagnostics if isinstance(diagnostics, list) else []
 
 
 def _token_source(state: ClickState, token: str | None) -> str | None:

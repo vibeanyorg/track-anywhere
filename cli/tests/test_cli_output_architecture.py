@@ -9,6 +9,24 @@ from rich.table import Table
 from track_anywhere_cli.renderers import _render_human
 
 
+def test_business_output_goes_through_output_boundary():
+    forbidden = ("print(", "click.echo(", "Console(")
+    allowlist = {
+        "cli/track_anywhere_cli/renderers.py",
+        "cli/track_anywhere_cli/interaction.py",
+    }
+    offenders = []
+    for path in Path("cli/track_anywhere_cli").rglob("*.py"):
+        if str(path) in allowlist:
+            continue
+        text = path.read_text()
+        for token in forbidden:
+            if token in text:
+                offenders.append(f"{path}:{token}")
+
+    assert offenders == []
+
+
 def test_no_dead_recurring_human_helpers_in_renderer():
     text = Path("cli/track_anywhere_cli/renderers.py").read_text()
 

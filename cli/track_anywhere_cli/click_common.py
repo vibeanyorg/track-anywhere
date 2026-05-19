@@ -72,8 +72,15 @@ def run_api(args: Namespace, *, state: ClickState, command_path: str) -> int:
     config = CliConfig(base_url=args.base_url, token=token_resolution.token, insecure_automation=args.insecure_automation)
     result = dispatch_api_command(args, config, state.requester)
     if result is None:
-        click.echo("unknown command", err=True)
-        return EXIT_VALIDATION
+        outcome = build_outcome(
+            command_path,
+            400,
+            {"detail": "unknown command"},
+            diagnostics=token_resolution.diagnostics,
+            exit_code=EXIT_VALIDATION,
+        )
+        emit_outcome(outcome, json_mode=args.json, no_color=args.no_color)
+        return outcome.exit_code
     status, data = result
     outcome = build_outcome(command_path, status, data, diagnostics=token_resolution.diagnostics)
     emit_outcome(outcome, json_mode=args.json, no_color=args.no_color)

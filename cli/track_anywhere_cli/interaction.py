@@ -26,3 +26,14 @@ class ClickInteraction:
 
     def prompt(self, text: str, *, secret: bool = False) -> str:
         return click.prompt(text, hide_input=secret, err=True)
+
+    def inform(self, text: str) -> None:
+        click.echo(text, err=True)
+
+
+def inform(interaction: Interaction, text: str) -> None:
+    inform_fn = getattr(interaction, "inform", None)
+    if callable(inform_fn):
+        inform_fn(text)
+        return
+    click.echo(text, err=True)
