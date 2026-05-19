@@ -6,6 +6,7 @@ from track_anywhere_cli.output import CliDiagnostic, CliOutcome, outcome_to_json
 from track_anywhere_cli.exit_codes import EXIT_SUCCESS, EXIT_AUTH
 from track_anywhere_cli.runtime import build_outcome
 from track_anywhere_cli.presenters import presenter_for
+from rich.panel import Panel
 
 
 def test_success_outcome_json_envelope():
@@ -96,6 +97,22 @@ def test_unknown_presenter_fails():
 
     with pytest.raises(KeyError):
         presenter_for("unknown.command")
+
+
+def test_known_command_paths_use_registered_presenters():
+    for command_path in (
+        "summary.accounts",
+        "category.create",
+        "tx.show",
+        "auth.status",
+        "data.backup",
+        "investment.performance",
+        "recurring.show",
+    ):
+        renderable = presenter_for(command_path)({"status": "ok"})
+
+        assert not isinstance(renderable, dict)
+        assert isinstance(renderable, Panel)
 
 
 def test_render_json_writes_one_envelope(capsys):

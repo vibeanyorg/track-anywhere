@@ -40,6 +40,13 @@ def success_panel(title: str) -> Presenter:
     return present
 
 
+def generic_payload_panel(title: str) -> Presenter:
+    def present(data: Any) -> Panel:
+        return Panel(str(data), title=title)
+
+    return present
+
+
 def recurring_reminders_table(data: Any) -> Table:
     reminders = data.get("reminders", []) if isinstance(data, dict) else []
     table = Table(title="Recurring reminders")
@@ -110,6 +117,10 @@ def recurring_drafts_table(data: Any) -> Table:
     return table
 
 
+def _generic_title(command_path: str) -> str:
+    return f"{command_path} response"
+
+
 PRESENTERS: dict[str, Presenter] = {
     "account.list": account_list,
     "account.find": account_list,
@@ -117,6 +128,40 @@ PRESENTERS: dict[str, Presenter] = {
     "recurring.reminders": recurring_reminders_table,
     "recurring.list": recurring_items_table,
     "recurring.draft_due": recurring_drafts_table,
+    "capture": generic_payload_panel("Capture response"),
+    "draft.confirm": generic_payload_panel("Draft confirm response"),
+    "tx.list": generic_payload_panel(_generic_title("tx.list")),
+    "tx.show": generic_payload_panel(_generic_title("tx.show")),
+    "tx.reverse": generic_payload_panel(_generic_title("tx.reverse")),
+    "balance.adjust": generic_payload_panel(_generic_title("balance.adjust")),
+    "balance": generic_payload_panel(_generic_title("balance")),
+    "expense.record": generic_payload_panel(_generic_title("expense.record")),
+    "income.record": generic_payload_panel(_generic_title("income.record")),
+    "recurring.create": generic_payload_panel(_generic_title("recurring.create")),
+    "recurring.show": generic_payload_panel(_generic_title("recurring.show")),
+    "recurring.update": generic_payload_panel(_generic_title("recurring.update")),
+    "summary.accounts": generic_payload_panel(_generic_title("summary.accounts")),
+    "summary.categories": generic_payload_panel(_generic_title("summary.categories")),
+    "user.create": generic_payload_panel(_generic_title("user.create")),
+    "user.list": generic_payload_panel(_generic_title("user.list")),
+    "category.create": generic_payload_panel(_generic_title("category.create")),
+    "category.list": generic_payload_panel(_generic_title("category.list")),
+    "category.find": generic_payload_panel(_generic_title("category.find")),
+    "category.show": generic_payload_panel(_generic_title("category.show")),
+    "credit_card.list": generic_payload_panel(_generic_title("credit_card.list")),
+    "credit_card.show": generic_payload_panel(_generic_title("credit_card.show")),
+    "credit_card.update": generic_payload_panel(_generic_title("credit_card.update")),
+    "account.create": generic_payload_panel(_generic_title("account.create")),
+    "account.show": generic_payload_panel(_generic_title("account.show")),
+    "account.update": generic_payload_panel(_generic_title("account.update")),
+    "account.balance": generic_payload_panel(_generic_title("account.balance")),
+    "account.adjust": generic_payload_panel(_generic_title("account.adjust")),
+    "investment.event": generic_payload_panel(_generic_title("investment.event")),
+    "investment.performance": generic_payload_panel(_generic_title("investment.performance")),
+    "auth.dev_token": generic_payload_panel(_generic_title("auth.dev_token")),
+    "auth.status": generic_payload_panel(_generic_title("auth.status")),
+    "data.backup": generic_payload_panel(_generic_title("data.backup")),
+    "auth.login": generic_payload_panel(_generic_title("auth.login")),
 }
 
 
