@@ -46,3 +46,28 @@ def test_error_outcome_json_envelope():
     assert payload["ok"] is False
     assert payload["command"] == "auth.status"
     assert payload["diagnostics"][0]["code"] == "auth_required"
+
+
+def test_diagnostic_to_json_omits_optional_fields_when_not_set():
+    diagnostic = CliDiagnostic(level="info", message="Cache warmed")
+
+    assert diagnostic.to_json() == {
+        "level": "info",
+        "message": "Cache warmed",
+    }
+
+
+def test_diagnostic_to_json_includes_optional_fields_when_set():
+    diagnostic = CliDiagnostic(
+        level="warning",
+        message="Rate limit nears",
+        code="rate_limit_warning",
+        detail={"retry_after": 30},
+    )
+
+    assert diagnostic.to_json() == {
+        "level": "warning",
+        "message": "Rate limit nears",
+        "code": "rate_limit_warning",
+        "detail": {"retry_after": 30},
+    }
