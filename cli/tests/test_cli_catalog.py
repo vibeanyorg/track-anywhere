@@ -161,3 +161,42 @@ def test_user_create_posts_payload(monkeypatch, capsys):
     assert payload["ok"] is True
     assert payload["command"] == "user.create"
     assert payload["data"]["user"]["username"] == "xyy"
+
+
+def test_category_command_human_output_is_rich_table(monkeypatch, capsys):
+    def fake_request(config, method, path, payload=None, key=None):
+        return 200, {
+            "categories": [
+                {
+                    "category_id": "cat_1",
+                    "kind": "expense",
+                    "primary": "餐饮",
+                    "secondary": "外卖",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "category",
+                "list",
+                "--kind",
+                "expense",
+                "--primary",
+                "餐饮",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert output.lstrip() and not output.lstrip().startswith("{")
+    assert "Categories" in output
+    assert "cat_1" in output
+    assert "expense" in output
+    assert "餐饮" in output

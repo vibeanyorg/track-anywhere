@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 
+from rich.console import Console
+
 from track_anywhere_cli.output import CliDiagnostic, CliOutcome, outcome_to_json_document
 from track_anywhere_cli.exit_codes import EXIT_SUCCESS, EXIT_AUTH
 from track_anywhere_cli.runtime import build_outcome
 from track_anywhere_cli.presenters import presenter_for
-from rich.panel import Panel
 
 
 def test_success_outcome_json_envelope():
@@ -92,6 +93,60 @@ def test_account_list_has_explicit_presenter():
     assert not isinstance(renderable, dict)
 
 
+def test_catalog_and_account_commands_have_presenters():
+    for command_path in (
+        "summary.accounts",
+        "summary.categories",
+        "user.create",
+        "user.list",
+        "category.create",
+        "category.list",
+        "category.find",
+        "category.show",
+        "credit_card.list",
+        "credit_card.show",
+        "credit_card.update",
+        "account.create",
+        "account.list",
+        "account.find",
+        "account.show",
+        "account.update",
+        "account.balance",
+        "account.adjust",
+    ):
+        renderable = presenter_for(command_path)({"status": "ok"})
+
+        assert not isinstance(renderable, dict)
+
+
+def test_catalog_and_account_presenters_render_real_payload_fields():
+    cases = [
+        (
+            "summary.accounts",
+            {"groups": [{"key": "ewallet", "currency": "USD", "asset_amount": "100", "liability_amount": "10", "net_amount": "90"}]},
+            ("Account summary", "ewallet", "90"),
+        ),
+        (
+            "category.create",
+            {"category": {"category_id": "cat_1", "kind": "expense", "primary": "Food", "secondary": "Delivery"}},
+            ("Category", "cat_1", "Delivery"),
+        ),
+        (
+            "user.create",
+            {"user": {"user_id": "user_1", "username": "xyy", "display_name": "XYY"}},
+            ("User", "user_1", "xyy"),
+        ),
+    ]
+
+    for command_path, payload, expected_fragments in cases:
+        console = Console(record=True, width=120)
+        console.print(presenter_for(command_path)(payload))
+        rendered = console.export_text()
+
+        for fragment in expected_fragments:
+            assert fragment in rendered
+
+
 def test_unknown_presenter_fails():
     import pytest
 
@@ -112,7 +167,7 @@ def test_known_command_paths_use_registered_presenters():
         renderable = presenter_for(command_path)({"status": "ok"})
 
         assert not isinstance(renderable, dict)
-        assert isinstance(renderable, Panel)
+        assert hasattr(renderable, "__rich_console__")
 
 
 def test_render_json_writes_one_envelope(capsys):

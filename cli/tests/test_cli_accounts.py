@@ -219,3 +219,82 @@ def test_account_list_command_returns_enveloped_json_payload(monkeypatch, capsys
     assert calls == [
         {"method": "GET", "path": "/api/v1/accounts?name=Visa&currency=USD", "payload": None, "key": None},
     ]
+
+
+def test_account_list_human_output_is_rich_table(monkeypatch, capsys):
+    def fake_request(config, method, path, payload=None, key=None):
+        return 200, {
+            "accounts": [
+                {
+                    "account_id": "acc_1",
+                    "name": "Visa",
+                    "type": "asset",
+                    "currency": "USD",
+                    "balance": "100",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "account",
+                "list",
+                "--name",
+                "Visa",
+                "--currency",
+                "USD",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert output.lstrip() and not output.lstrip().startswith("{")
+    assert "Accounts" in output
+    assert "Visa" in output
+    assert "USD" in output
+    assert "100" in output
+
+
+def test_summary_accounts_human_output_is_readable_table(monkeypatch, capsys):
+    def fake_request(config, method, path, payload=None, key=None):
+        return 200, {
+            "group_by": "subtype",
+            "groups": [
+                {
+                    "key": "ewallet",
+                    "currency": "USD",
+                    "asset_amount": "100",
+                    "liability_amount": "10",
+                    "net_amount": "90",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "summary",
+                "accounts",
+                "--group-by",
+                "subtype",
+            ]
+        )
+        == 0
+    )
+
+    output = capsys.readouterr().out
+    assert output.lstrip() and not output.lstrip().startswith("{")
+    assert "Account summary" in output
+    assert "ewallet" in output
+    assert "USD" in output
+    assert "90" in output
