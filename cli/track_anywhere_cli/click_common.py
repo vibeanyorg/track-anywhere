@@ -75,8 +75,7 @@ def run_api(args: Namespace, *, state: ClickState, command_path: str) -> int:
         click.echo("unknown command", err=True)
         return EXIT_VALIDATION
     status, data = result
-    diagnostics = token_resolution.diagnostics if status < 400 else None
-    outcome = build_outcome(command_path, status, data, diagnostics=diagnostics)
+    outcome = build_outcome(command_path, status, data, diagnostics=token_resolution.diagnostics)
     emit_outcome(outcome, json_mode=args.json, no_color=args.no_color)
     return outcome.exit_code
 

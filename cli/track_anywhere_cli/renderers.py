@@ -55,8 +55,9 @@ def _render_diagnostic(diagnostic: Any) -> Panel:
         "info": "blue",
     }.get(diagnostic.level, "blue")
     title = _diagnostic_title(diagnostic)
-    detail = f" [{diagnostic.code}]" if diagnostic.code else ""
-    message = Text.from_markup(f"[{level_color}]{diagnostic.message}[/]{detail}")
+    message = Text(str(diagnostic.message), style=level_color)
+    if diagnostic.code:
+        message.append(f" [{diagnostic.code}]", style="dim")
     return Panel(message, title=title, border_style=level_color, expand=False)
 
 
