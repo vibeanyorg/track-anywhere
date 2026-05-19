@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .output import CliDiagnostic
 from sqlalchemy.engine import make_url
 
 
@@ -116,13 +117,33 @@ def create_sqlite_backup(database_url: str | None = None, output_dir: str | None
     }
 
 
-def resolve_token(args: argparse.Namespace) -> str | None:
+@dataclass(frozen=True)
+class TokenResolution:
+    token: str | None
+    diagnostics: list[CliDiagnostic]
+
+
+def resolve_token_with_diagnostics(args: argparse.Namespace) -> TokenResolution:
     if args.token:
-        return args.token
+        return TokenResolution(token=args.token, diagnostics=[])
+
     env_token = os.getenv("TRACK_ANYWHERE_TOKEN")
     if env_token:
         if not args.insecure_automation:
             raise RuntimeError("TRACK_ANYWHERE_TOKEN requires --insecure-automation; prefer OS keyring")
-        print("warning: using insecure env-token automation", file=sys.stderr)
-        return env_token
-    return TokenStore().load()
+        return TokenResolution(
+            token=env_token,
+            diagnostics=[
+                CliDiagnostic(
+                    level="warning",
+                    code="insecure_env_token",
+                    message="Using TRACK_ANYWHERE_TOKEN with --insecure-automation.",
+                )
+            ],
+        )
+
+    return TokenResolution(token=TokenStore().load(), diagnostics=[])
+
+
+def resolve_token(args: argparse.Namespace) -> str | None:
+    return resolve_token_with_diagnostics(args).token

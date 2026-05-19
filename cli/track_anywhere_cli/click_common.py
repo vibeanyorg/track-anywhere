@@ -8,7 +8,7 @@ from typing import Any, Callable
 import click
 
 from .commands import dispatch_api_command
-from .config import CliConfig, resolve_token
+from .config import CliConfig, resolve_token_with_diagnostics
 from .exit_codes import EXIT_VALIDATION
 from .renderers import emit_outcome, emit_result
 from .runtime import build_outcome
@@ -64,18 +64,19 @@ def api_command(command_path: str):
 
 def run_api(args: Namespace, *, state: ClickState, command_path: str) -> int:
     try:
-        token = resolve_token(args)
+        token_resolution = resolve_token_with_diagnostics(args)
     except RuntimeError as exc:
         outcome = build_outcome(command_path, 401, {"detail": str(exc)})
         emit_outcome(outcome, json_mode=args.json, no_color=args.no_color)
         return outcome.exit_code
-    config = CliConfig(base_url=args.base_url, token=token, insecure_automation=args.insecure_automation)
+    config = CliConfig(base_url=args.base_url, token=token_resolution.token, insecure_automation=args.insecure_automation)
     result = dispatch_api_command(args, config, state.requester)
     if result is None:
         click.echo("unknown command", err=True)
         return EXIT_VALIDATION
     status, data = result
-    outcome = build_outcome(command_path, status, data)
+    diagnostics = token_resolution.diagnostics if status < 400 else None
+    outcome = build_outcome(command_path, status, data, diagnostics=diagnostics)
     emit_outcome(outcome, json_mode=args.json, no_color=args.no_color)
     return outcome.exit_code
 
