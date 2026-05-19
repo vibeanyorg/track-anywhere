@@ -39,3 +39,19 @@ def test_env_token_warning_is_structured(monkeypatch, capsys):
     assert payload["command"] == "capture"
     assert payload["diagnostics"][0]["level"] == "warning"
     assert payload["diagnostics"][0]["code"] == "insecure_env_token"
+
+
+def test_env_token_warning_is_visible_in_human_mode(monkeypatch, capsys):
+    monkeypatch.setenv("TRACK_ANYWHERE_TOKEN", "secret")
+
+    def fake_request(config, method, path, payload=None, key=None):
+        return 200, {"draft": {"draft_id": "draft_1"}}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    exit_code = main(["--insecure-automation", "capture", "spent 38", "--idempotency-key", "k"])
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Using TRACK_ANYWHERE_TOKEN with --insecure-automation." in output
+    assert "Capture response" in output
