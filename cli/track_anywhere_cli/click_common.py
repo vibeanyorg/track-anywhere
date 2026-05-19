@@ -9,9 +9,9 @@ import click
 
 from .commands import dispatch_api_command
 from .config import CliConfig, resolve_token
-from .exit_codes import EXIT_AUTH, EXIT_VALIDATION
-from .http import exit_for_status
-from .renderers import emit_result
+from .exit_codes import EXIT_VALIDATION
+from .renderers import emit_outcome, emit_result
+from .runtime import build_outcome
 
 
 Requester = Callable[[CliConfig, str, str, dict[str, Any] | None, str | None], tuple[int, Any]]
@@ -66,22 +66,18 @@ def run_api(args: Namespace, *, state: ClickState, command_path: str) -> int:
     try:
         token = resolve_token(args)
     except RuntimeError as exc:
-        click.echo(str(exc), err=True)
-        return EXIT_AUTH
+        outcome = build_outcome(command_path, 401, {"detail": str(exc)})
+        emit_outcome(outcome, json_mode=args.json, no_color=args.no_color)
+        return outcome.exit_code
     config = CliConfig(base_url=args.base_url, token=token, insecure_automation=args.insecure_automation)
     result = dispatch_api_command(args, config, state.requester)
     if result is None:
         click.echo("unknown command", err=True)
         return EXIT_VALIDATION
     status, data = result
-    emit_result(
-        data,
-        json_mode=args.json,
-        no_color=args.no_color,
-        command_path=command_path,
-        status=status,
-    )
-    return exit_for_status(status, data)
+    outcome = build_outcome(command_path, status, data)
+    emit_outcome(outcome, json_mode=args.json, no_color=args.no_color)
+    return outcome.exit_code
 
 
 def emit_local(data: Any, *, state: ClickState, json_mode: bool, no_color: bool, command_path: str = "") -> int:

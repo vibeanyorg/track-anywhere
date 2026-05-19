@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import track_anywhere_cli.main as cli_main
 from track_anywhere_cli.main import main
 
@@ -181,4 +183,39 @@ def test_summary_accounts_uses_query_api(monkeypatch):
             "payload": None,
             "key": None,
         }
+    ]
+
+
+def test_account_list_command_returns_enveloped_json_payload(monkeypatch, capsys):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key})
+        return 200, {"accounts": [{"account_id": "acc_1"}]}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "account",
+                "list",
+                "--name",
+                "Visa",
+                "--currency",
+                "USD",
+                "--json",
+            ]
+        )
+        == 0
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["command"] == "account.list"
+    assert payload["data"]["accounts"] == [{"account_id": "acc_1"}]
+    assert calls == [
+        {"method": "GET", "path": "/api/v1/accounts?name=Visa&currency=USD", "payload": None, "key": None},
     ]

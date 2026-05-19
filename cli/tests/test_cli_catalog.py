@@ -157,4 +157,7 @@ def test_user_create_posts_payload(monkeypatch, capsys):
         }
     ]
     assert calls[0]["key"].startswith("user-create-")
-    assert json.loads(capsys.readouterr().out)["user"]["username"] == "xyy"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["command"] == "user.create"
+    assert payload["data"]["user"]["username"] == "xyy"

@@ -53,7 +53,29 @@ def test_tx_record_posts_agent_friendly_payload(monkeypatch, capsys):
         }
     ]
     assert calls[0]["key"].startswith("tx-record-")
-    assert json.loads(capsys.readouterr().out)["transaction"]["purpose"] == "lunch"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["command"] == "tx.record"
+    assert payload["data"]["transaction"]["purpose"] == "lunch"
+
+
+def test_tx_show_not_found_emits_error_outcome_with_404(monkeypatch, capsys):
+    def fake_request(config, method, path, payload=None, key=None):
+        assert method == "GET"
+        assert path == "/api/v1/ledger/transactions/txn_missing"
+        return 404, {"detail": "missing"}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    exit_code = main(["--token", "token-1", "tx", "show", "txn_missing", "--json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 8
+    assert payload["ok"] is False
+    assert payload["status"] == 404
+    assert payload["command"] == "tx.show"
+    assert payload["data"]["detail"] == "missing"
+    assert payload["diagnostics"][0]["code"] == "not_found"
 
 
 def test_expense_and_income_record_commands_post_category_transactions(monkeypatch):
