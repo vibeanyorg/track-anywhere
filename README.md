@@ -2,9 +2,9 @@
 
 Track Anywhere is a local-first personal ledger. It keeps official balances strict while allowing drafts, screenshots, and agent input to become entries only after review.
 
-It ships a FastAPI backend, a `ta` CLI usable by humans and agents, SQLite persistence by default, PostgreSQL-compatible storage URLs, and a Next.js frontend stub.
+It ships a FastAPI backend, a Django backend, a `ta`/`track-anywhere` CLI usable by humans and agents, SQLite persistence by default, PostgreSQL-compatible storage URLs, and a Next.js frontend.
 
-Status: MVP. The CLI and backend are usable locally. The frontend is not yet a full product surface.
+Status: MVP. The CLI and backend are usable locally. The frontend now owns the separated login/signup flow and platform OAuth connection surface.
 
 ## Typical use
 
@@ -25,6 +25,7 @@ Status: MVP. The CLI and backend are usable locally. The frontend is not yet a f
 
 ```text
 backend/   FastAPI app, ledger domain, persistence, tests
+backend_django/ Django backend using admin, allauth, guardian, DRF, and Ninja
 cli/       ta command-line client
 frontend/  Next.js frontend stub
 docs/      Architecture, operations, ADRs, agent guidance
@@ -56,10 +57,13 @@ uv run uvicorn track_anywhere.api:app --app-dir backend/app --host 127.0.0.1 --p
 In another shell:
 
 ```bash
-uv run ta auth dev-token --json
-uv run ta auth login <token-from-json>
+uv run ta auth login
 uv run ta auth status --json
 ```
+
+`ta auth login <token>` still accepts a bearer/API token for automation. Without
+a token, the CLI opens the web app, completes a PKCE code exchange, and saves the
+issued platform token.
 
 ### 4. Create a user and account
 
@@ -107,6 +111,28 @@ uv run ta data backup --label before-change --json
 ```
 
 Backups are written to `.local/backups/`, also ignored by git. See [Data Backup](docs/operations/data-backup.md).
+
+## Browser, OAuth, and RBAC auth
+
+The API keeps CLI/agent bearer tokens and browser OAuth login separate. Bearer tokens remain the automation path; browser login uses Authlib-backed OAuth/OIDC routes, persistent provider identities, and role-to-scope mapping before entering the existing ledger authorization layer. See [Auth Integration](docs/architecture/auth-integration.md).
+
+## Django backend
+
+There is a Django backend under `backend_django/`. It keeps the same `/api/v1`
+route contract and calls the same service/command layer as the FastAPI backend,
+so CLI payloads and idempotency behavior stay aligned while Django Admin,
+allauth, guardian object permissions, and DRF backoffice APIs provide the
+Django-native surface.
+
+```bash
+uv run python backend_django/manage.py migrate --run-syncdb
+uv run python backend_django/manage.py runserver 8001
+TRACK_ANYWHERE_API=http://localhost:8001 uv run ta auth dev-token --json
+```
+
+The Django admin models are read-only previews over the existing ledger tables;
+the source of truth is still the SQLAlchemy/Alembic persistence layer until a
+dedicated storage migration moves it. See [Django Backend](docs/architecture/django-backend.md).
 
 ## CLI
 

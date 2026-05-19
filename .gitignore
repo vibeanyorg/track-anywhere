@@ -38,3 +38,4 @@ frontend/tsconfig.tsbuildinfo
 *.log
 tmp/
 temp/
+playground/
