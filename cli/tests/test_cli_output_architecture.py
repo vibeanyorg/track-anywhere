@@ -9,6 +9,11 @@ from rich.table import Table
 from track_anywhere_cli.renderers import _render_human
 
 
+def test_legacy_argparse_surface_is_removed():
+    assert not Path("cli/track_anywhere_cli/parser.py").exists()
+    assert not Path("cli/track_anywhere_cli/parser_recurring.py").exists()
+
+
 def test_business_output_goes_through_output_boundary():
     forbidden = ("print(", "click.echo(", "Console(")
     allowlist = {
