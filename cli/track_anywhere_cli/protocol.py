@@ -5,7 +5,7 @@ from typing import Any
 
 import click
 
-from .commands import MUTATING_COMMAND_PATHS, command_paths
+from .commands import LOCAL_COMMAND_PATHS, MUTATING_COMMAND_PATHS, command_paths
 from .output import CLI_SCHEMA_VERSION
 
 
@@ -25,6 +25,7 @@ COMMAND_TOKENS: dict[str, list[str]] = {
     "data.backup": ["data", "backup"],
     "draft.confirm": ["draft-confirm"],
     "recurring.draft_due": ["recurring", "draft-due"],
+    "release.bump": ["release", "bump"],
     "schema": ["schema"],
     "version": ["version"],
 }
@@ -73,7 +74,7 @@ def command_schema(root: click.Group, command_path: str) -> dict[str, Any]:
         "idempotent": command_path in MUTATING_COMMAND_PATHS,
         "supports_dry_run": _has_option(command, "--dry-run"),
         "supports_input_stdin": False,
-        "requires_auth": command_path not in {"auth.login", "auth.dev_token", "auth.status", "capabilities", "data.backup", "schema", "version"},
+        "requires_auth": command_path not in LOCAL_COMMAND_PATHS,
         "arguments": [_argument_schema(param) for param in command.params if isinstance(param, click.Argument)],
         "flags": [_option_schema(param) for param in command.params if isinstance(param, click.Option)],
         "output": {"format": "CliOutcome", "schema_version": CLI_SCHEMA_VERSION},
@@ -104,7 +105,7 @@ def supports_payload() -> dict[str, Any]:
         "no_input": True,
         "structured_errors": True,
         "stderr_errors": True,
-        "dry_run_commands": ["capture"],
+        "dry_run_commands": ["capture", "release.bump"],
         "idempotency_keys": True,
         "agent_requires_explicit_idempotency_key": True,
         "ndjson_output": False,

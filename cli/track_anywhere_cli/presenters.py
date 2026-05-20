@@ -52,6 +52,7 @@ PRESENTERS: dict[str, Presenter] = {
     "recurring.create": lambda data: recurring_item_summary(data, title="Recurring item created"),
     "recurring.show": lambda data: recurring_item_summary(data, title="Recurring item"),
     "recurring.update": lambda data: recurring_item_summary(data, title="Recurring item updated"),
+    "release.bump": generic_payload_panel(_generic_title("release.bump")),
     "summary.accounts": summary_accounts,
     "summary.categories": summary_categories,
     "user.create": user_summary,

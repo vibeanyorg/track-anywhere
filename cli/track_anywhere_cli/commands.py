@@ -47,6 +47,7 @@ PUBLIC_COMMAND_PATHS = (
     "recurring.reminders",
     "recurring.show",
     "recurring.update",
+    "release.bump",
     "summary.accounts",
     "summary.categories",
     "tx.list",
@@ -58,7 +59,7 @@ PUBLIC_COMMAND_PATHS = (
     "schema",
     "version",
 )
-LOCAL_COMMAND_PATHS = frozenset({"auth.dev_token", "auth.login", "auth.status", "capabilities", "data.backup", "schema", "version"})
+LOCAL_COMMAND_PATHS = frozenset({"auth.dev_token", "auth.login", "auth.status", "capabilities", "data.backup", "release.bump", "schema", "version"})
 API_COMMAND_PATHS = tuple(command_path for command_path in PUBLIC_COMMAND_PATHS if command_path not in LOCAL_COMMAND_PATHS)
 MUTATING_COMMAND_PATHS = frozenset(
     {
@@ -76,6 +77,7 @@ MUTATING_COMMAND_PATHS = frozenset(
         "recurring.create",
         "recurring.draft_due",
         "recurring.update",
+        "release.bump",
         "tx.record",
         "tx.reverse",
         "user.create",

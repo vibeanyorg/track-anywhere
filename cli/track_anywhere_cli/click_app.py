@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 import click
 
@@ -15,6 +16,7 @@ from .config import create_sqlite_backup
 from .exit_codes import EXIT_SUCCESS, EXIT_VALIDATION
 from .http import request_json
 from .protocol import capabilities_payload, schema_payload, version_payload
+from .release_version import ReleaseVersionError, apply_version_bump, build_version_bump_plan
 from .renderers import emit_outcome
 from .runtime import build_outcome
 
@@ -60,6 +62,81 @@ def cli(
 @cli.group()
 def data():
     """Local data commands."""
+
+
+@cli.group()
+def release():
+    """Release automation commands."""
+
+
+@release.command("bump")
+@click.option("--part", type=click.Choice(["major", "minor", "patch"]), default="patch", show_default=True)
+@click.option("--to", "target_version", help="Set an exact semver target instead of incrementing a part.")
+@click.option("--project-file", type=click.Path(dir_okay=False, path_type=Path), default=Path("pyproject.toml"), show_default=True)
+@click.option("--apply", "apply_changes", is_flag=True, help="Apply the version change.")
+@click.option("--dry-run", is_flag=True, help="Preview the version change without writing files.")
+@click.option("--confirm", help="Required with --apply. Must equal the target version.")
+@click.option("--allow-dirty", is_flag=True, help="Allow applying with an existing dirty git worktree.")
+@output_options
+@pass_state
+def release_bump(
+    state: ClickState,
+    json_mode: bool,
+    no_color: bool,
+    part: str,
+    target_version: str | None,
+    project_file: Path,
+    apply_changes: bool,
+    dry_run: bool,
+    confirm: str | None,
+    allow_dirty: bool,
+) -> int:
+    output_json = state.json_mode or json_mode
+    output_no_color = state.no_color or no_color
+    try:
+        if dry_run and apply_changes:
+            raise ReleaseVersionError(
+                "conflicting_flags",
+                "Use either --dry-run or --apply, not both.",
+                remediation=[{"description": "Preview the bump.", "command": ["ta", "release", "bump", "--dry-run", "--agent"]}],
+            )
+        plan = build_version_bump_plan(project_file, part=part, target_version=target_version)
+        if apply_changes:
+            if confirm != plan.next_version:
+                code = "confirmation_required" if confirm is None else "confirmation_mismatch"
+                raise ReleaseVersionError(
+                    code,
+                    f"Applying this bump requires --confirm {plan.next_version}.",
+                    remediation=[
+                        {
+                            "description": "Apply the planned bump with explicit confirmation.",
+                            "command": ["ta", "release", "bump", "--apply", "--confirm", plan.next_version, "--agent"],
+                        }
+                    ],
+                )
+            apply_version_bump(plan, allow_dirty=allow_dirty)
+            payload = plan.to_payload(dry_run=False, applied=True)
+        else:
+            payload = plan.to_payload(dry_run=True, applied=False)
+        outcome = build_outcome("release.bump", 200, payload)
+    except ReleaseVersionError as exc:
+        outcome = build_outcome(
+            "release.bump",
+            400,
+            {
+                "detail": exc.message,
+                "error": {
+                    "code": exc.code,
+                    "category": "usage",
+                    "message": exc.message,
+                    "retryable": False,
+                    "remediation": exc.remediation,
+                },
+            },
+            exit_code=EXIT_VALIDATION,
+        )
+    emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
+    return outcome.exit_code
 
 
 @data.command("backup")
