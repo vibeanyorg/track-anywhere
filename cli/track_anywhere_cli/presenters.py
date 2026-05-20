@@ -72,8 +72,11 @@ PRESENTERS: dict[str, Presenter] = {
     "investment.performance": investment_performance_summary,
     "auth.dev_token": generic_payload_panel(_generic_title("auth.dev_token")),
     "auth.status": generic_payload_panel(_generic_title("auth.status")),
+    "capabilities": generic_payload_panel(_generic_title("capabilities")),
     "data.backup": generic_payload_panel(_generic_title("data.backup")),
     "auth.login": generic_payload_panel(_generic_title("auth.login")),
+    "schema": generic_payload_panel(_generic_title("schema")),
+    "version": generic_payload_panel(_generic_title("version")),
 }
 
 

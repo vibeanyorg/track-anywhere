@@ -6,6 +6,10 @@ import track_anywhere_cli.main as cli_main
 from track_anywhere_cli.main import EXIT_NOT_FOUND, main
 
 
+def _json_from_output(captured):
+    return json.loads(captured.out or captured.err)
+
+
 def test_tx_record_posts_agent_friendly_payload(monkeypatch, capsys):
     calls = []
 
@@ -53,7 +57,7 @@ def test_tx_record_posts_agent_friendly_payload(monkeypatch, capsys):
         }
     ]
     assert calls[0]["key"].startswith("tx-record-")
-    payload = json.loads(capsys.readouterr().out)
+    payload = _json_from_output(capsys.readouterr())
     assert payload["ok"] is True
     assert payload["command"] == "tx.record"
     assert payload["data"]["transaction"]["purpose"] == "lunch"
@@ -69,7 +73,7 @@ def test_tx_show_not_found_emits_error_outcome_with_404(monkeypatch, capsys):
 
     exit_code = main(["--token", "token-1", "tx", "show", "txn_missing", "--json"])
 
-    payload = json.loads(capsys.readouterr().out)
+    payload = _json_from_output(capsys.readouterr())
     assert exit_code == EXIT_NOT_FOUND
     assert payload["ok"] is False
     assert payload["status"] == 404

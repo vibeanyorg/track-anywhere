@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from rich.console import Console
@@ -11,12 +12,13 @@ from .presenters import presenter_for
 
 def emit_outcome(outcome: CliOutcome, *, json_mode: bool, no_color: bool) -> None:
     if json_mode:
-        print(outcome_to_json_document(outcome))
+        print(outcome_to_json_document(outcome), file=sys.stderr if not outcome.ok else sys.stdout)
         return
 
     console = Console(no_color=no_color)
+    diagnostic_console = Console(stderr=True, no_color=no_color)
     for diagnostic in outcome.diagnostics:
-        console.print(_render_diagnostic(diagnostic))
+        diagnostic_console.print(_render_diagnostic(diagnostic))
     renderable = _render_human(outcome.data, outcome.command_path)
     console.print(renderable)
 

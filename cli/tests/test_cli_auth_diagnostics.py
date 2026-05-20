@@ -8,6 +8,10 @@ from track_anywhere_cli.click_common import ClickState, run_api
 from track_anywhere_cli.main import EXIT_AUTH, main
 
 
+def _json_from_output(captured):
+    return json.loads(captured.out or captured.err)
+
+
 def _diagnostic_by_code(payload: dict, code: str):
     return next((item for item in payload["diagnostics"] if item["code"] == code), None)
 
@@ -18,7 +22,7 @@ def test_env_token_requires_insecure_opt_in_json_diagnostic(monkeypatch, capsys)
     exit_code = main(["capture", "spent 38", "--idempotency-key", "k", "--json"])
 
     assert exit_code == EXIT_AUTH
-    payload = json.loads(capsys.readouterr().out)
+    payload = _json_from_output(capsys.readouterr())
     assert payload["ok"] is False
     assert payload["status"] == 401
     assert _diagnostic_by_code(payload, "auth_required") is not None
@@ -59,9 +63,9 @@ def test_env_token_warning_is_present_for_api_failure(monkeypatch, capsys):
     exit_code = main(["--insecure-automation", "capture", "spent 38", "--idempotency-key", "k", "--json"])
 
     assert exit_code != 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = _json_from_output(capsys.readouterr())
     assert payload["status"] == 503
-    assert _diagnostic_by_code(payload, "request_failed") is not None
+    assert _diagnostic_by_code(payload, "external_dependency_error") is not None
     assert _diagnostic_by_code(payload, "insecure_env_token") is not None
 
 
@@ -87,7 +91,7 @@ def test_env_token_warning_is_present_for_unknown_api_command(monkeypatch, capsy
     exit_code = run_api(args, state=state, command_path="unknown.command")
 
     assert exit_code != 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = _json_from_output(capsys.readouterr())
     assert payload["status"] == 400
     assert _diagnostic_by_code(payload, "insecure_env_token") is not None
 
@@ -103,7 +107,7 @@ def test_env_token_warning_is_visible_in_human_mode(monkeypatch, capsys):
     exit_code = main(["--insecure-automation", "capture", "spent 38", "--idempotency-key", "k"])
 
     assert exit_code == 0
-    output = capsys.readouterr().out
-    assert "Using TRACK_ANYWHERE_TOKEN with --insecure-automation." in output
-    assert "Capture confirmed" in output
-    assert "draft_1" in output
+    captured = capsys.readouterr()
+    assert "Using TRACK_ANYWHERE_TOKEN with --insecure-automation." in captured.err
+    assert "Capture confirmed" in captured.out
+    assert "draft_1" in captured.out

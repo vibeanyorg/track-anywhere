@@ -40,6 +40,7 @@ PUBLIC_COMMAND_PATHS = (
     "income.record",
     "investment.event",
     "investment.performance",
+    "capabilities",
     "recurring.create",
     "recurring.draft_due",
     "recurring.list",
@@ -54,9 +55,32 @@ PUBLIC_COMMAND_PATHS = (
     "tx.show",
     "user.create",
     "user.list",
+    "schema",
+    "version",
 )
-LOCAL_COMMAND_PATHS = frozenset({"auth.dev_token", "auth.login", "auth.status", "data.backup"})
+LOCAL_COMMAND_PATHS = frozenset({"auth.dev_token", "auth.login", "auth.status", "capabilities", "data.backup", "schema", "version"})
 API_COMMAND_PATHS = tuple(command_path for command_path in PUBLIC_COMMAND_PATHS if command_path not in LOCAL_COMMAND_PATHS)
+MUTATING_COMMAND_PATHS = frozenset(
+    {
+        "account.adjust",
+        "account.create",
+        "account.update",
+        "balance.adjust",
+        "capture",
+        "category.create",
+        "credit_card.update",
+        "draft.confirm",
+        "expense.record",
+        "income.record",
+        "investment.event",
+        "recurring.create",
+        "recurring.draft_due",
+        "recurring.update",
+        "tx.record",
+        "tx.reverse",
+        "user.create",
+    }
+)
 
 
 def _command_not_found(command_path: str) -> CommandResult:

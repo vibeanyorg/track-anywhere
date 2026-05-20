@@ -13,6 +13,10 @@ from track_anywhere_cli.main import EXIT_AUTH, EXIT_VALIDATION, cli, exit_for_st
 from track_anywhere_cli.output import CliDiagnostic
 
 
+def _json_from_output(captured):
+    return json.loads(captured.out or captured.err)
+
+
 def test_cli_rejects_env_token_without_insecure_opt_in(monkeypatch):
     monkeypatch.setenv("TRACK_ANYWHERE_TOKEN", "secret")
     assert main(["capture", "spent 38", "--idempotency-key", "k"]) == EXIT_AUTH
@@ -77,7 +81,7 @@ def test_auth_dev_token_saves_local_token(monkeypatch, capsys):
 
     assert main(["auth", "dev-token", "--json"]) == 0
     assert saved["token"] == "owner-token"
-    payload = json.loads(capsys.readouterr().out)
+    payload = _json_from_output(capsys.readouterr())
     assert payload["ok"] is True
     assert payload["command"] == "auth.dev_token"
     assert payload["status"] == 200
@@ -91,7 +95,7 @@ def test_auth_login_with_token_still_saves_token(monkeypatch, capsys):
     assert main(["auth", "login", "ta_manual_token", "--json"]) == 0
 
     assert saved["token"] == "ta_manual_token"
-    payload = json.loads(capsys.readouterr().out)
+    payload = _json_from_output(capsys.readouterr())
     assert payload["ok"] is True
     assert payload["command"] == "auth.login"
     assert payload["status"] == 200
@@ -169,7 +173,7 @@ def test_auth_login_without_token_uses_pkce_callback_exchange(monkeypatch, capsy
 
     assert saved["token"] == "ta_cli_access"
     output = capsys.readouterr()
-    assert "Open this URL" in output.err
+    assert "Open this URL" not in output.err
     payload = json.loads(output.out)
     assert payload["command"] == "auth.login"
     assert payload["status"] == 200
@@ -185,7 +189,7 @@ def test_auth_login_rejects_callback_state_mismatch(monkeypatch, capsys):
     assert main(["auth", "login", "--no-browser", "--callback", callback, "--json"]) == EXIT_VALIDATION
 
     output = capsys.readouterr()
-    payload = json.loads(output.out)
+    payload = _json_from_output(output)
     assert payload["ok"] is False
     assert payload["command"] == "auth.login"
     assert payload["status"] == 400
@@ -203,14 +207,14 @@ def test_auth_login_exchange_exception_still_returns_json_envelope(monkeypatch, 
     monkeypatch.setattr(oauth_login.secrets, "token_urlsafe", lambda _length: next(generated))
 
     callback = "http://127.0.0.1:3000/auth/callback?code=code_cli&state=state_value_123456789012345678901234567890123456"
-    assert main(["auth", "login", "--no-browser", "--callback", callback, "--json"]) == EXIT_VALIDATION
+    assert main(["auth", "login", "--no-browser", "--callback", callback, "--json"]) == cli_main.EXIT_EXTERNAL_DEPENDENCY
 
     output = capsys.readouterr()
-    payload = json.loads(output.out)
+    payload = _json_from_output(output)
     assert payload["ok"] is False
     assert payload["command"] == "auth.login"
     assert payload["status"] == 500
-    assert payload["diagnostics"][0]["code"] == "request_failed"
+    assert payload["diagnostics"][0]["code"] == "external_dependency_error"
     assert "network unavailable" in payload["diagnostics"][0]["message"]
 
 
@@ -235,7 +239,7 @@ def test_data_backup_creates_readable_sqlite_copy(tmp_path, capsys):
     )
 
     assert exit_code == 0
-    payload = json.loads(capsys.readouterr().out)
+    payload = _json_from_output(capsys.readouterr())
     assert payload["ok"] is True
     assert payload["command"] == "data.backup"
     assert payload["status"] == 200
@@ -263,7 +267,7 @@ def test_data_backup_missing_database_preserves_validation_exit_code(tmp_path, c
     )
 
     assert exit_code == EXIT_VALIDATION
-    payload = json.loads(capsys.readouterr().out)
+    payload = _json_from_output(capsys.readouterr())
     assert payload["ok"] is False
     assert payload["command"] == "data.backup"
     assert payload["status"] == 400

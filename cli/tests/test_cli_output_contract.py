@@ -8,7 +8,7 @@ import pytest
 
 from track_anywhere_cli.commands import command_paths, command_spec, command_specs
 from track_anywhere_cli.config import CliConfig
-from track_anywhere_cli.output import CliDiagnostic, CliOutcome, outcome_to_json_document
+from track_anywhere_cli.output import CLI_SCHEMA_VERSION, CliDiagnostic, CliOutcome, outcome_to_json_document
 from track_anywhere_cli.exit_codes import EXIT_SUCCESS, EXIT_AUTH
 from track_anywhere_cli.runtime import RuntimeContext, build_outcome
 from track_anywhere_cli.presenters import PRESENTERS, presenter_for
@@ -27,6 +27,7 @@ def test_success_outcome_json_envelope():
 
     assert payload == {
         "ok": True,
+        "schema_version": CLI_SCHEMA_VERSION,
         "command": "account.list",
         "status": 200,
         "data": {"accounts": []},
@@ -54,6 +55,7 @@ def test_error_outcome_json_envelope():
     assert payload["ok"] is False
     assert payload["command"] == "auth.status"
     assert payload["diagnostics"][0]["code"] == "auth_required"
+    assert payload["error"]["code"] == "auth_required"
 
 
 def test_diagnostic_to_json_omits_optional_fields_when_not_set():
@@ -218,11 +220,11 @@ def test_render_json_writes_one_envelope(capsys):
 
 def test_diagnostics_for_known_error_statuses():
     cases = [
-        (400, "security_precondition", "Validation failed"),
+        (400, "usage_error", "Validation failed"),
         (401, "auth_required", "Missing credentials"),
         (403, "policy_denied", "Access denied"),
         (409, "conflict", "Conflict"),
-        (503, "request_failed", "Server unavailable"),
+        (503, "external_dependency_error", "Server unavailable"),
     ]
 
     for status, code, detail in cases:

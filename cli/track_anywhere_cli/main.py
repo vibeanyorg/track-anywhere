@@ -4,7 +4,9 @@ from .click_app import cli, run
 from .config import CliConfig, TokenStore, create_sqlite_backup, resolve_token
 from .exit_codes import (
     EXIT_AUTH,
+    EXIT_EXTERNAL_DEPENDENCY,
     EXIT_IDEMPOTENCY_CONFLICT,
+    EXIT_INTERNAL,
     EXIT_NOT_FOUND,
     EXIT_POLICY_DENIED,
     EXIT_SECURITY_PRECONDITION,
@@ -22,7 +24,9 @@ def main(argv: list[str] | None = None) -> int:
 __all__ = [
     "CliConfig",
     "EXIT_AUTH",
+    "EXIT_EXTERNAL_DEPENDENCY",
     "EXIT_IDEMPOTENCY_CONFLICT",
+    "EXIT_INTERNAL",
     "EXIT_NOT_FOUND",
     "EXIT_POLICY_DENIED",
     "EXIT_SECURITY_PRECONDITION",

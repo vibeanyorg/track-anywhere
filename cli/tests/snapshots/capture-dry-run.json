@@ -1,4 +1,5 @@
 {
+  "schema_version": "2026-05-20",
   "ok": true,
   "command": "capture",
   "status": 200,
