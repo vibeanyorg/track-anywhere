@@ -21,7 +21,10 @@ path.
 
 Password signup/login stores password accounts in the SQLAlchemy persistence
 layer and maps successful login into the same Track Anywhere identity, role,
-credential, `ta_session`, and `ta_csrf` model used by OAuth sessions.
+credential, `ta_session`, and `ta_csrf` model used by OAuth sessions. Local
+mode allows open password signup for development. Non-local mode requires the
+signup email to be listed in `TRACK_ANYWHERE_PASSWORD_SIGNUP_ALLOWED_EMAILS`;
+existing password login remains available for previously created accounts.
 
 ## RBAC Model
 
@@ -47,6 +50,7 @@ TRACK_ANYWHERE_AUTH_SESSION_SECRET=change-me
 TRACK_ANYWHERE_OAUTH_ALLOWED_EMAILS=owner@example.com
 TRACK_ANYWHERE_OAUTH_OWNER_EMAILS=owner@example.com
 TRACK_ANYWHERE_OAUTH_DEFAULT_ROLE=viewer
+TRACK_ANYWHERE_PASSWORD_SIGNUP_ALLOWED_EMAILS=owner@example.com
 
 TRACK_ANYWHERE_OAUTH_GOOGLE_CLIENT_ID=...
 TRACK_ANYWHERE_OAUTH_GOOGLE_CLIENT_SECRET=...
@@ -78,4 +82,4 @@ The browser must send `X-CSRF-Token` for mutating API calls when using `ta_sessi
 
 ## Next Step
 
-Before opening OAuth login to arbitrary users, add invite/admin UI for role and book-membership assignment. Until that exists, non-local OAuth login requires `TRACK_ANYWHERE_OAUTH_ALLOWED_EMAILS`, and `owner` should be granted only through `TRACK_ANYWHERE_OAUTH_OWNER_EMAILS`.
+Before opening OAuth or password signup to arbitrary users, add invite/admin UI for role and book-membership assignment. Until that exists, non-local OAuth login requires `TRACK_ANYWHERE_OAUTH_ALLOWED_EMAILS`, non-local password signup requires `TRACK_ANYWHERE_PASSWORD_SIGNUP_ALLOWED_EMAILS`, and `owner` should be granted only through explicit allowlists.

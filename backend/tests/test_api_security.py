@@ -217,7 +217,7 @@ def test_command_validation_failures_are_audited_without_raw_payload():
     assert "ignore policy" not in str(event.details)
 
 
-def test_session_cookie_secure_flag_tracks_deployment_mode(monkeypatch):
+def test_dev_local_session_is_rejected_outside_local_mode(monkeypatch):
     assert app is not None
     monkeypatch.setattr(
         service,
@@ -232,8 +232,9 @@ def test_session_cookie_secure_flag_tracks_deployment_mode(monkeypatch):
 
     response = TestClient(app).post("/api/v1/session/dev-local")
 
-    assert response.status_code == 200
-    assert "secure" in response.headers["set-cookie"].lower()
+    assert response.status_code == 403
+    assert response.json()["detail"] == "dev session is only available in local mode"
+    assert "set-cookie" not in response.headers
 
 
 def test_auth_routes_are_safe_when_oauth_is_not_configured():

@@ -16,6 +16,8 @@ def health():
 
 @router.post("/session/dev-local")
 def create_local_session(response: Response):
+    if service.config.mode != "local":
+        raise HTTPException(status_code=403, detail="dev session is only available in local mode")
     session_id, csrf_token = browser_sessions.issue(
         credential_token=service.owner_token,
         identity={"provider": "local", "subject": "owner", "email": None, "name": "Local Owner"},

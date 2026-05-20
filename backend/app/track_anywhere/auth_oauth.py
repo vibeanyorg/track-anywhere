@@ -38,6 +38,7 @@ class AuthSettings:
     success_redirect_url: str | None
     allowed_emails: frozenset[str]
     owner_emails: frozenset[str]
+    password_signup_allowed_emails: frozenset[str]
     default_role: str
     providers: tuple[OAuthProviderSettings, ...]
 
@@ -60,6 +61,10 @@ def auth_settings_from_env(*, mode: str) -> AuthSettings:
     owner_emails = frozenset(
         item.lower()
         for item in _split_csv(os.getenv("TRACK_ANYWHERE_OAUTH_OWNER_EMAILS"))
+    )
+    password_signup_allowed_emails = frozenset(
+        item.lower()
+        for item in _split_csv(os.getenv("TRACK_ANYWHERE_PASSWORD_SIGNUP_ALLOWED_EMAILS"))
     )
     default_role = _clean_optional(os.getenv("TRACK_ANYWHERE_OAUTH_DEFAULT_ROLE")) or "viewer"
     _validate_role(default_role)
@@ -84,6 +89,7 @@ def auth_settings_from_env(*, mode: str) -> AuthSettings:
         success_redirect_url=success_redirect_url,
         allowed_emails=allowed_emails,
         owner_emails=owner_emails,
+        password_signup_allowed_emails=password_signup_allowed_emails,
         default_role=default_role,
         providers=providers,
     )

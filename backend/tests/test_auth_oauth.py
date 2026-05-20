@@ -17,6 +17,7 @@ OAUTH_ENV_VARS = (
     "TRACK_ANYWHERE_OAUTH_GOOGLE_CLIENT_ID",
     "TRACK_ANYWHERE_OAUTH_GOOGLE_CLIENT_SECRET",
     "TRACK_ANYWHERE_OAUTH_ALLOWED_EMAILS",
+    "TRACK_ANYWHERE_PASSWORD_SIGNUP_ALLOWED_EMAILS",
     "TRACK_ANYWHERE_OIDC_PROVIDER_NAME",
     "TRACK_ANYWHERE_OIDC_CLIENT_ID",
     "TRACK_ANYWHERE_OIDC_CLIENT_SECRET",
@@ -105,3 +106,12 @@ def test_oauth_role_selection_uses_explicit_owner_email(monkeypatch):
 
     assert role_for_identity(settings, owner) == "owner"
     assert role_for_identity(settings, viewer) == "viewer"
+
+
+def test_password_signup_allowlist_is_loaded_from_environment(monkeypatch):
+    clear_oauth_env(monkeypatch)
+    monkeypatch.setenv("TRACK_ANYWHERE_PASSWORD_SIGNUP_ALLOWED_EMAILS", "FIRST@example.com,second@example.com")
+
+    settings = auth_settings_from_env(mode="local")
+
+    assert settings.password_signup_allowed_emails == frozenset({"first@example.com", "second@example.com"})

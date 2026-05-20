@@ -64,6 +64,9 @@ def create_api_key_session(payload: ApiKeySessionCommand):
 
 @router.post("/password/signup")
 def signup_with_password(payload: PasswordSignupCommand):
+    if service.config.mode != "local" and payload.email not in auth_settings.password_signup_allowed_emails:
+        service.record_security_failure("auth.password_signup_denied", {"reason": "email_not_allowlisted"})
+        raise HTTPException(status_code=403, detail="password signup is not allowlisted")
     try:
         account = password_accounts.create(
             email=payload.email,

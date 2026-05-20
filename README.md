@@ -114,6 +114,9 @@ Backups are written to `.local/backups/`, also ignored by git. See [Data Backup]
 ## Browser, OAuth, and RBAC auth
 
 The API keeps CLI/agent bearer tokens and browser OAuth login separate. Bearer tokens remain the automation path; browser login uses Authlib-backed OAuth/OIDC routes, persistent provider identities, and role-to-scope mapping before entering the existing ledger authorization layer. See [Auth Integration](docs/architecture/auth-integration.md).
+Password signup is open only in local mode. In non-local deployments, signup
+requires `TRACK_ANYWHERE_PASSWORD_SIGNUP_ALLOWED_EMAILS`; login still works for
+existing password accounts.
 
 ## Backoffice API
 
