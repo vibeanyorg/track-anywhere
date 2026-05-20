@@ -2,9 +2,8 @@
 
 Track Anywhere uses two layers of authentication:
 
-- **Identity login**: browser users can sign in with OAuth/OIDC. The FastAPI
-  backend uses Authlib. The Django backend uses django-allauth under
-  `/accounts/`.
+- **Identity login**: browser users can sign in with OAuth/OIDC through the
+  FastAPI Authlib routes, or with the built-in password session endpoints.
 - **RBAC authorization**: roles map to ledger scopes and default book membership.
 - **Ledger command authorization**: internal credentials, idempotency, book access, and audit rules still gate every ledger command.
 
@@ -20,12 +19,9 @@ CSRF handling, so the smaller integration surface is to add Authlib for
 OAuth/OIDC login and map successful identities into the existing authorization
 path.
 
-The Django backend delegates login, signup, password management, and social
-account flows to django-allauth. A local auth bridge maps the authenticated
-Django user or allauth `SocialAccount` into the same Track Anywhere identity,
-role, credential, `ta_session`, and `ta_csrf` model used by the FastAPI API
-contract. That bridge is the only place where Django sessions become ledger
-credentials.
+Password signup/login stores password accounts in the SQLAlchemy persistence
+layer and maps successful login into the same Track Anywhere identity, role,
+credential, `ta_session`, and `ta_csrf` model used by OAuth sessions.
 
 ## RBAC Model
 
@@ -38,9 +34,9 @@ The first RBAC slice uses four roles:
 
 OAuth login creates or refreshes an `auth_identities` record keyed by provider + subject, creates a Track Anywhere user when needed, grants default-book membership for the selected role, and issues a short-lived internal credential for that browser session. The browser never receives that credential; it receives only the `ta_session` cookie and CSRF token.
 
-Django group membership is the source of coarse role truth for Django sessions.
-If a user's role changes, the bridge refreshes the internal credential before
-the next API command is authorized.
+Role membership is stored in Track Anywhere book memberships and converted to
+credential scopes at login. Owner/admin users can inspect roles and backoffice
+resources through `/api/v1/backoffice/`.
 
 ## Environment
 
@@ -74,7 +70,9 @@ TRACK_ANYWHERE_AUTH_SUCCESS_REDIRECT=https://app.example.com/auth/complete
 - `GET /api/v1/auth/oauth/{provider}/callback` exchanges the provider callback, links the identity, applies RBAC, creates a `ta_session` cookie, and returns a CSRF token in JSON or a readable `ta_csrf` cookie when redirecting.
 - `GET /api/v1/auth/session` returns the current browser session identity, if present.
 - `POST /api/v1/auth/logout` revokes the browser session and clears auth
-  cookies. In Django it also logs out the Django session.
+  cookies.
+- `GET /api/v1/backoffice/roles` lists role-to-scope mappings for owner/admin
+  users.
 
 The browser must send `X-CSRF-Token` for mutating API calls when using `ta_session`. Bearer tokens still work for CLI and agent workflows.
 

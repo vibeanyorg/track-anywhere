@@ -7,7 +7,6 @@ from typing import Any, Protocol
 
 
 os.environ.setdefault("TRACK_ANYWHERE_DATABASE_URL", "sqlite:///:memory:")
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend_django.config.settings")
 
 
 @dataclass(frozen=True)
@@ -98,52 +97,3 @@ class FastApiClient:
             for path, details in sorted(app.openapi()["paths"].items())
         }
 
-
-class DjangoApiClient:
-    name = "django"
-    _migrated = False
-
-    def __init__(self) -> None:
-        import django
-        from django.apps import apps
-        from django.core.management import call_command
-        from django.test import Client
-
-        if not apps.ready:
-            django.setup()
-        if not DjangoApiClient._migrated:
-            call_command("migrate", run_syncdb=True, verbosity=0)
-            DjangoApiClient._migrated = True
-        self._client = Client()
-
-    def get(self, path: str, *, headers: dict[str, str] | None = None) -> ContractResponse:
-        response = self._client.get(path, headers=headers)
-        return parse_json_response(response.status_code, dict(response.headers), response.content)
-
-    def post(
-        self,
-        path: str,
-        *,
-        json_body: dict[str, Any] | None = None,
-        headers: dict[str, str] | None = None,
-    ) -> ContractResponse:
-        response = self._client.post(path, json_body, content_type="application/json", headers=headers)
-        return parse_json_response(response.status_code, dict(response.headers), response.content)
-
-    def patch(
-        self,
-        path: str,
-        *,
-        json_body: dict[str, Any] | None = None,
-        headers: dict[str, str] | None = None,
-    ) -> ContractResponse:
-        response = self._client.patch(path, json_body, content_type="application/json", headers=headers)
-        return parse_json_response(response.status_code, dict(response.headers), response.content)
-
-    def openapi_paths(self) -> dict[str, list[str]]:
-        from backend_django.track_anywhere_django.api import api
-
-        return {
-            path: sorted(method for method in details if method in {"get", "post", "put", "patch", "delete"})
-            for path, details in sorted(api.get_openapi_schema()["paths"].items())
-        }

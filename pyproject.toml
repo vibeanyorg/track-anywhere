@@ -7,12 +7,6 @@ dependencies = [
   "alembic>=1.13",
   "authlib>=1.6.6",
   "click>=8.3.3",
-  "django>=6.0",
-  "django-allauth[socialaccount]>=65.0",
-  "django-filter>=25.0",
-  "django-guardian>=3.0",
-  "django-ninja>=1.6",
-  "djangorestframework>=3.16",
   "fastapi>=0.115",
   "itsdangerous>=2.2",
   "pydantic>=2.11",
@@ -41,5 +35,5 @@ include = ["track_anywhere*", "track_anywhere_cli*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["backend/app", "cli"]
-testpaths = ["backend/tests", "backend_django/tests", "cli/tests", "contract_tests"]
+testpaths = ["backend/tests", "cli/tests", "contract_tests"]
 addopts = "-q"

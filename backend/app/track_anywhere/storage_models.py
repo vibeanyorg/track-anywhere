@@ -59,6 +59,16 @@ class AuthIdentityRecord(Base):
     version: Mapped[int] = mapped_column(Integer)
 
 
+class PasswordAccountRecord(Base):
+    __tablename__ = "password_accounts"
+
+    email: Mapped[str] = mapped_column(String(254), primary_key=True)
+    display_name: Mapped[str] = mapped_column(String(150))
+    password_hash: Mapped[str] = mapped_column(String(260))
+    role: Mapped[str] = mapped_column(String(40))
+    version: Mapped[int] = mapped_column(Integer)
+
+
 class TransactionRecord(Base):
     __tablename__ = "transactions"
 

@@ -2,10 +2,10 @@
 
 Next.js 16 App Router frontend for the Track Anywhere web experience.
 
-Run the Django backend first:
+Run the FastAPI backend first:
 
 ```bash
-uv run python backend_django/manage.py runserver 8001
+uv run uvicorn track_anywhere.api:app --app-dir ../backend/app --host 127.0.0.1 --port 8000
 ```
 
 Then run the frontend:

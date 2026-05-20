@@ -5,10 +5,14 @@ import hmac
 import re
 import secrets
 from dataclasses import dataclass
+from typing import Callable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from .errors import PolicyDenied, ValidationError
+from .storage_models import PasswordAccountRecord
 
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -53,11 +57,32 @@ class PasswordAccount:
 
 
 class PasswordAccountStore:
-    def __init__(self) -> None:
+    def __init__(self, session_factory: Callable[[], Session] | None = None) -> None:
+        self._session_factory = session_factory
         self._accounts: dict[str, PasswordAccount] = {}
 
     def create(self, *, email: str, password: str, display_name: str | None) -> PasswordAccount:
         normalized = normalize_email(email)
+        if self._session_factory is not None:
+            with self._session_factory.begin() as session:
+                if session.get(PasswordAccountRecord, normalized) is not None:
+                    raise ValidationError("email is already registered")
+                account = PasswordAccount(
+                    email=normalized,
+                    display_name=display_name or normalized.split("@", 1)[0],
+                    password_hash=_hash_password(password),
+                    role="owner" if _password_account_count(session) == 0 else "viewer",
+                )
+                session.add(
+                    PasswordAccountRecord(
+                        email=account.email,
+                        display_name=account.display_name,
+                        password_hash=account.password_hash,
+                        role=account.role,
+                        version=1,
+                    )
+                )
+                return account
         if normalized in self._accounts:
             raise ValidationError("email is already registered")
         account = PasswordAccount(
@@ -70,6 +95,17 @@ class PasswordAccountStore:
         return account
 
     def authenticate(self, *, email: str, password: str) -> PasswordAccount:
+        if self._session_factory is not None:
+            with self._session_factory() as session:
+                row = session.get(PasswordAccountRecord, normalize_email(email))
+                if row is None or not _verify_password(password, row.password_hash):
+                    raise PolicyDenied("email or password is incorrect")
+                return PasswordAccount(
+                    email=row.email,
+                    display_name=row.display_name,
+                    password_hash=row.password_hash,
+                    role=row.role,
+                )
         account = self._accounts.get(normalize_email(email))
         if account is None or not _verify_password(password, account.password_hash):
             raise PolicyDenied("email or password is incorrect")
@@ -96,3 +132,7 @@ def _verify_password(password: str, encoded: str) -> bool:
         return False
     candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), iterations).hex()
     return hmac.compare_digest(candidate, digest)
+
+
+def _password_account_count(session: Session) -> int:
+    return int(session.query(func.count(PasswordAccountRecord.email)).scalar() or 0)

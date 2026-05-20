@@ -38,6 +38,36 @@
     "/api/v1/auth/session/api-key": [
       "post"
     ],
+    "/api/v1/backoffice/accounts": [
+      "get"
+    ],
+    "/api/v1/backoffice/audit-events": [
+      "get"
+    ],
+    "/api/v1/backoffice/auth-identities": [
+      "get"
+    ],
+    "/api/v1/backoffice/book-members": [
+      "get"
+    ],
+    "/api/v1/backoffice/books": [
+      "get"
+    ],
+    "/api/v1/backoffice/categories": [
+      "get"
+    ],
+    "/api/v1/backoffice/ledger-users": [
+      "get"
+    ],
+    "/api/v1/backoffice/recurring-items": [
+      "get"
+    ],
+    "/api/v1/backoffice/roles": [
+      "get"
+    ],
+    "/api/v1/backoffice/transactions": [
+      "get"
+    ],
     "/api/v1/books": [
       "get",
       "post"

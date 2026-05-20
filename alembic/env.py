@@ -25,10 +25,42 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+IGNORED_EXTERNAL_TABLES = {
+    "django_migrations",
+    "django_admin_log",
+    "django_content_type",
+    "django_session",
+    "django_site",
+    "auth_group",
+    "auth_group_permissions",
+    "auth_permission",
+    "auth_user",
+    "auth_user_groups",
+    "auth_user_user_permissions",
+}
+IGNORED_EXTERNAL_PREFIXES = (
+    "account_",
+    "guardian_",
+    "socialaccount_",
+)
+
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
+
+
+def include_object(object_, name, type_, reflected, compare_to) -> bool:
+    if type_ == "table":
+        return not _is_ignored_external_table(name)
+    table = getattr(object_, "table", None)
+    if table is not None and _is_ignored_external_table(table.name):
+        return False
+    return True
+
+
+def _is_ignored_external_table(name: str) -> bool:
+    return name in IGNORED_EXTERNAL_TABLES or name.startswith(IGNORED_EXTERNAL_PREFIXES)
 
 
 def run_migrations_offline() -> None:
@@ -47,6 +79,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=url,
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -69,6 +102,7 @@ def run_migrations_online() -> None:
             connection=connectable,
             target_metadata=target_metadata,
             compare_type=True,
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()
@@ -87,6 +121,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            include_object=include_object,
         )
 
         with context.begin_transaction():

@@ -1,13 +1,12 @@
 # Contract Conformance Tests
 
-These tests prove that backend implementations can differ internally while
-preserving the same external behavior.
+These tests prove the supported backend and CLI preserve the same external
+behavior as the public contract evolves.
 
 Current scope:
 
-- `/api/v1` HTTP behavior for FastAPI and Django.
-- CLI command behavior for FastAPI and Django through the same command handler
-  layer used by `ta`.
+- `/api/v1` HTTP behavior for the FastAPI backend.
+- CLI command behavior through the same command handler layer used by `ta`.
 - Route/method contract against the public API snapshot.
 - Auth, logout, session cookies, idempotency, validation errors, and core
   ledger flows.

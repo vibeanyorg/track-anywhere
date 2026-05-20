@@ -41,7 +41,7 @@ def _allowed_origins() -> tuple[str, ...]:
 
 service = FinanceService(_deployment_config_from_env(), persist_on_initialize=False)
 browser_sessions = BrowserSessionStore()
-password_accounts = PasswordAccountStore()
+password_accounts = PasswordAccountStore(service.storage.session_factory)
 ALLOWED_ORIGINS = _allowed_origins()
 auth_settings = auth_settings_from_env(mode=service.config.mode)
 oauth_registry = build_oauth_registry(auth_settings)

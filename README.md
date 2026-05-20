@@ -2,7 +2,7 @@
 
 Track Anywhere is a local-first personal ledger. It keeps official balances strict while allowing drafts, screenshots, and agent input to become entries only after review.
 
-It ships a FastAPI backend, a Django backend, a `ta`/`track-anywhere` CLI usable by humans and agents, SQLite persistence by default, PostgreSQL-compatible storage URLs, and a Next.js frontend.
+It ships a FastAPI backend, a `ta`/`track-anywhere` CLI usable by humans and agents, SQLite persistence by default, PostgreSQL-compatible storage URLs, and a Next.js frontend.
 
 Status: MVP. The CLI and backend are usable locally. The frontend now owns the separated login/signup flow and platform OAuth connection surface.
 
@@ -25,7 +25,6 @@ Status: MVP. The CLI and backend are usable locally. The frontend now owns the s
 
 ```text
 backend/   FastAPI app, ledger domain, persistence, tests
-backend_django/ Django backend using admin, allauth, guardian, DRF, and Ninja
 cli/       ta command-line client
 frontend/  Next.js frontend stub
 docs/      Architecture, operations, ADRs, agent guidance
@@ -116,23 +115,14 @@ Backups are written to `.local/backups/`, also ignored by git. See [Data Backup]
 
 The API keeps CLI/agent bearer tokens and browser OAuth login separate. Bearer tokens remain the automation path; browser login uses Authlib-backed OAuth/OIDC routes, persistent provider identities, and role-to-scope mapping before entering the existing ledger authorization layer. See [Auth Integration](docs/architecture/auth-integration.md).
 
-## Django backend
+## Backoffice API
 
-There is a Django backend under `backend_django/`. It keeps the same `/api/v1`
-route contract and calls the same service/command layer as the FastAPI backend,
-so CLI payloads and idempotency behavior stay aligned while Django Admin,
-allauth, guardian object permissions, and DRF backoffice APIs provide the
-Django-native surface.
-
-```bash
-uv run python backend_django/manage.py migrate --run-syncdb
-uv run python backend_django/manage.py runserver 8001
-TRACK_ANYWHERE_API=http://localhost:8001 uv run ta auth dev-token --json
-```
-
-The Django admin models are read-only previews over the existing ledger tables;
-the source of truth is still the SQLAlchemy/Alembic persistence layer until a
-dedicated storage migration moves it. See [Django Backend](docs/architecture/django-backend.md).
+Internal read-only inspection endpoints live under `/api/v1/backoffice/`.
+They expose books, memberships, accounts, ledger users, auth identities,
+categories, transactions, recurring items, audit events, and role/scope
+metadata. These routes require owner/admin-level `user:write` scope and use the
+same FastAPI auth, session, CSRF, and ledger authorization layer as the rest of
+the API.
 
 ## CLI
 
