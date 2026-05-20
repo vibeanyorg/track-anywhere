@@ -1,6 +1,6 @@
 [project]
 name = "track-anywhere"
-version = "0.1.0"
+version = "0.1.1"
 description = "Personal accounting system with a strict ledger core and draft-first capture."
 requires-python = ">=3.12"
 dependencies = [
