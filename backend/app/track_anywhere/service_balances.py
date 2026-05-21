@@ -14,6 +14,7 @@ class BalanceUseCases:
         command = BalanceAdjustmentCommand.model_validate(payload)
         account = self.ledger.get_account(command.account_id)
         actor = self.actor_for_book(token, account.book_id, "ledger:confirm")
+        self.assets.validate_amount(command.currency, command.amount)
         request_hash = self._hash_command(command)
 
         def run():
@@ -102,6 +103,29 @@ class BalanceUseCases:
             book_id=book_id,
         )
         self.adjustment_account_ids[key] = account.account_id
+        return account.account_id
+
+    def _system_fx_clearing_account_id(self, currency: str, *, book_id: str | None = None) -> str:
+        book_id = book_id or self.books.ensure_default().book_id
+        for account in self.ledger.accounts.values():
+            if (
+                account.type == "system"
+                and account.currency == currency
+                and account.book_id == book_id
+                and account.institution_type == "system"
+                and account.subtype == "fx_clearing"
+                and account.institution == "track-anywhere"
+            ):
+                return account.account_id
+        account = self.ledger.create_account(
+            f"System FX clearing {currency}",
+            "system",
+            currency,
+            institution_type="system",
+            subtype="fx_clearing",
+            institution="track-anywhere",
+            book_id=book_id,
+        )
         return account.account_id
 
     def _system_category_account_id(self, kind: str, currency: str, *, book_id: str | None = None) -> str:

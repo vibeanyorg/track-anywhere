@@ -6,6 +6,7 @@ from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
 from ..api_runtime import service
 from ..api_serialization import serialize
+from ..domain_commands import RecordFxExchangeCommand
 from ..commands import (
     BalanceAdjustmentCommand,
     CaptureDraftCommand,
@@ -54,6 +55,16 @@ def record_transaction(payload: RecordTransactionCommand, token: AuthToken, key:
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "ledger.transaction.record")
 
+
+
+
+@router.post("/ledger/fx-exchanges", dependencies=protected)
+def record_fx_exchange(payload: RecordFxExchangeCommand, token: AuthToken, key: IdempotencyKey):
+    try:
+        transaction, replay = service.record_fx_exchange(token, command_payload(payload), idempotency_key=key)
+        return {"transaction": serialize(transaction), "idempotent_replay": replay}
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "ledger.fx.exchange")
 
 @router.post("/expenses", dependencies=protected)
 def record_expense(payload: RecordExpenseCommand, token: AuthToken, key: IdempotencyKey):

@@ -16,6 +16,8 @@ from .domain_commands import (
 from .errors import ValidationError
 
 
+SPENDING_LINE_TYPES = {"expense", "refund", "transfer_fee"}
+
 class BookUseCases:
     def list_books(self, token: str) -> list[LedgerBook]:
         actor = self.actor_from_token(token, "book:read")
@@ -249,6 +251,8 @@ class BookUseCases:
             if transaction.book_id != book_id or transaction.reversed_by is not None:
                 continue
             for line in self._report_lines_for_transaction(transaction):
+                if line.line_type not in SPENDING_LINE_TYPES:
+                    continue
                 if currency is not None and line.currency != currency:
                     continue
                 key = self._spending_report_key(line, group_by)
@@ -273,6 +277,8 @@ class BookUseCases:
             if transaction.book_id != book_id or transaction.reversed_by is not None:
                 continue
             for line in self._report_lines_for_transaction(transaction):
+                if line.line_type not in SPENDING_LINE_TYPES:
+                    continue
                 if self._line_matches_budget_target(line, target):
                     total += line.amount
         return total

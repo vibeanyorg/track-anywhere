@@ -14,6 +14,8 @@ class AccountUseCases:
         command = CreateAccountCommand.model_validate(payload)
         book_id = command.book_id or DEFAULT_BOOK_ID
         actor = self.actor_for_book(token, book_id, "account:write")
+        self.assets.ensure(command.currency)
+        self.assets.validate_amount(command.currency, command.opening_balance, field_name="opening balance")
         request_hash = self._hash_command(command)
 
         def run():

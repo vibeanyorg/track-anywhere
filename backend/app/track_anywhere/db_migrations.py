@@ -23,6 +23,10 @@ LEGACY_SQLITE_COLUMNS = {
     },
     "transactions": {
         "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
+        "reverses_transaction_id": "VARCHAR(80)",
+    },
+    "postings": {
+        "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
     },
     "drafts": {
         "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
@@ -37,6 +41,7 @@ LEGACY_SQLITE_COLUMNS = {
     },
     "investment_events": {
         "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
+        "transaction_id": "VARCHAR(80)",
     },
     "categories": {
         "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",

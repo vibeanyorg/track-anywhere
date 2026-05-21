@@ -5,6 +5,7 @@ from datetime import timedelta
 from hashlib import sha256
 from typing import Any
 
+from .assets import AssetCatalog
 from .audit import AuditLog
 from .attachments import AttachmentIntake
 from .auth_identities import AuthIdentityDirectory
@@ -18,6 +19,7 @@ from .investments import InvestmentBook
 from .ledger import Ledger
 from .recurring import RecurringBook
 from .security import Actor, CredentialStore, DeploymentSecurityConfig, validate_startup_security
+from .service_assets import AssetUseCases
 from .service_auth import OWNER_SCOPES
 from .service_balances import BalanceUseCases
 from .service_books import BookUseCases
@@ -25,7 +27,9 @@ from .service_catalog import CatalogUseCases
 from .service_credentials import CredentialUseCases
 from .service_drafts import DraftUseCases
 from .service_finance import FinancialUseCases
+from .service_fx import FxUseCases
 from .service_identity import IdentityUseCases
+from .service_investments import InvestmentUseCases
 from .service_ledger import LedgerUseCases
 from .service_recurring import RecurringUseCases
 from .storage import OrmStorage, new_owner_token
@@ -37,11 +41,14 @@ class FinanceService(
     IdentityUseCases,
     BookUseCases,
     CatalogUseCases,
+    AssetUseCases,
+    InvestmentUseCases,
     FinancialUseCases,
     CredentialUseCases,
     DraftUseCases,
     RecurringUseCases,
     BalanceUseCases,
+    FxUseCases,
     LedgerUseCases,
 ):
     def __init__(
@@ -57,8 +64,9 @@ class FinanceService(
         self.credentials = CredentialStore()
         self.audit = AuditLog()
         self.idempotency = IdempotencyStore()
+        self.assets = AssetCatalog()
         self.books = BookDirectory()
-        self.ledger = Ledger()
+        self.ledger = Ledger(asset_scale_lookup=self.assets.scale_for)
         self.drafts = DraftBook()
         self.recurring = RecurringBook()
         self.budgets = BudgetBook()
@@ -106,8 +114,12 @@ class FinanceService(
 
     def _ensure_domain_foundations(self) -> None:
         self.books.ensure_default()
+        self.assets.ensure_defaults()
+        for book in self.books.books.values():
+            self.assets.ensure(book.base_currency)
         for account in self.ledger.accounts.values():
             account.book_id = account.book_id or DEFAULT_BOOK_ID
+            self.assets.ensure(account.currency)
         for category in list(self.categories.categories.values()):
             category.book_id = category.book_id or DEFAULT_BOOK_ID
             self.categories._sync_display_fields(category)
@@ -117,11 +129,33 @@ class FinanceService(
             transaction.book_id = transaction.book_id or self._book_id_for_transaction(transaction)
             if transaction.lines is None:
                 transaction.lines = []
+            for posting in transaction.postings:
+                self.assets.ensure(posting.currency)
+            for line in transaction.lines:
+                self.assets.ensure(line.currency)
+            if transaction.reverses_transaction_id:
+                original = self.ledger.transactions.get(transaction.reverses_transaction_id)
+                if original is not None and original.reversed_by is None:
+                    original.reversed_by = transaction.transaction_id
         for draft in self.drafts.drafts.values():
             draft.book_id = draft.book_id or self._book_id_for_postings(draft.proposed_postings)
         for item in self.recurring.items.values():
             if not item.book_id and item.source_account_id is not None:
                 item.book_id = self.ledger.get_account(item.source_account_id).book_id
+            if item.currency is not None:
+                self.assets.ensure(item.currency)
+        for event in self.investments.events.values():
+            account = self.ledger.accounts.get(event.account_id)
+            if account is not None:
+                event.book_id = event.book_id or account.book_id
+            self.assets.ensure(event.currency)
+        for valuation in self.investments.valuations.values():
+            account = self.ledger.accounts.get(valuation.account_id)
+            if account is not None:
+                valuation.book_id = valuation.book_id or account.book_id
+            self.assets.ensure(valuation.currency)
+        for budget in self.budgets.budgets.values():
+            self.assets.ensure(budget.currency)
 
     def _book_id_for_transaction(self, transaction) -> str:
         return self._book_id_for_postings(transaction.postings)

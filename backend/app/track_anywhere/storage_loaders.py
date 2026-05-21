@@ -9,7 +9,7 @@ from .audit import AuditEvent
 from .budgets import BudgetFund
 from .drafts import DraftTransaction
 from .idempotency import CommandReceipt
-from .investments import InvestmentEvent
+from .investments import InvestmentEvent, InvestmentValuation
 from .ledger import Posting, Transaction, TransactionLine
 from .recurring import Recurrence, RecurringItem
 from .security import Actor, Credential
@@ -21,6 +21,7 @@ from .storage_models import (
     FundRecord,
     IdempotencyReceiptRecord,
     InvestmentEventRecord,
+    InvestmentValuationRecord,
     PostingRecord,
     RecurringItemRecord,
     TransactionRecord,
@@ -67,6 +68,7 @@ class StorageLoaders:
                 postings=postings_by_transaction.get(row.transaction_id, []),
                 lines=lines_by_transaction.get(row.transaction_id, []),
                 reversed_by=row.reversed_by,
+                reverses_transaction_id=getattr(row, "reverses_transaction_id", None),
                 version=row.version,
             )
             for row in session.query(TransactionRecord).all()
@@ -142,6 +144,7 @@ class StorageLoaders:
         return {
             row.event_id: InvestmentEvent(
                 event_id=row.event_id,
+                book_id=row.book_id,
                 account_id=row.account_id,
                 event_type=row.event_type,
                 amount=Decimal(row.amount),
@@ -150,9 +153,26 @@ class StorageLoaders:
                 memo=row.memo,
                 units=Decimal(row.units) if row.units is not None else None,
                 nav=Decimal(row.nav) if row.nav is not None else None,
+                transaction_id=getattr(row, "transaction_id", None),
                 version=row.version,
             )
             for row in session.query(InvestmentEventRecord).all()
+        }
+
+    def _load_investment_valuations(self, session: Session) -> dict[str, InvestmentValuation]:
+        return {
+            row.valuation_id: InvestmentValuation(
+                valuation_id=row.valuation_id,
+                book_id=row.book_id,
+                account_id=row.account_id,
+                value=Decimal(row.value),
+                currency=row.currency,
+                observed_at=datetime.fromisoformat(row.observed_at),
+                source=row.source,
+                memo=row.memo,
+                version=row.version,
+            )
+            for row in session.query(InvestmentValuationRecord).all()
         }
 
     def _load_credentials(self, session: Session) -> dict[str, Credential]:

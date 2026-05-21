@@ -6,6 +6,7 @@ from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
 from ..api_runtime import service
 from ..api_serialization import serialize
+from ..domain_commands import RecordInvestmentValuationCommand
 from ..commands import (
     CreateFundCommand,
     FundAllocationCommand,
@@ -27,6 +28,24 @@ def record_investment_event(payload: RecordInvestmentEventCommand, token: AuthTo
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "investment.event.record")
 
+
+
+
+@router.post("/investments/valuations", dependencies=protected)
+def record_investment_valuation(payload: RecordInvestmentValuationCommand, token: AuthToken, key: IdempotencyKey):
+    try:
+        valuation, replay = service.record_investment_valuation(token, command_payload(payload), idempotency_key=key)
+        return {"valuation": serialize(valuation), "idempotent_replay": replay}
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "investment.valuation.record")
+
+
+@router.get("/investments/accounts/{account_id}/valuations", dependencies=protected)
+def list_investment_valuations(account_id: str, token: AuthToken):
+    try:
+        return {"valuations": serialize(service.list_investment_valuations(token, account_id))}
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "investment.valuation.list")
 
 @router.get("/investments/accounts/{account_id}/performance", dependencies=protected)
 def investment_performance(account_id: str, token: AuthToken, as_of: str | None = None):

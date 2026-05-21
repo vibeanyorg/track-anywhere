@@ -17,6 +17,7 @@ class LedgerUseCases:
             raise ValidationError("transaction accounts must belong to one book")
         if from_account.currency != command.currency or to_account.currency != command.currency:
             raise ValidationError("transaction currency must match both account currencies")
+        self.assets.validate_amount(command.currency, command.amount)
         actor = self.actor_for_book(token, from_account.book_id, "ledger:confirm")
         if command.category_id is not None:
             category = self.categories.get(command.category_id)
@@ -65,6 +66,7 @@ class LedgerUseCases:
         actor = self.actor_for_book(token, source.book_id, "ledger:confirm")
         if source.currency != command.currency:
             raise ValidationError("expense currency must match source account currency")
+        self.assets.validate_amount(command.currency, command.amount)
         category = self.categories.get(command.category_id)
         if category.book_id != source.book_id:
             raise ValidationError("expense category must belong to the same book")
@@ -108,6 +110,7 @@ class LedgerUseCases:
         actor = self.actor_for_book(token, target.book_id, "ledger:confirm")
         if target.currency != command.currency:
             raise ValidationError("income currency must match target account currency")
+        self.assets.validate_amount(command.currency, command.amount)
         category = self.categories.get(command.category_id)
         if category.book_id != target.book_id:
             raise ValidationError("income category must belong to the same book")

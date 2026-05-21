@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Callable
 from uuid import uuid4
 
+from .assets import default_asset_definition, validate_asset_amount
 from .books import DEFAULT_BOOK_ID
 from .errors import NotFound, ValidationError
 
@@ -59,13 +61,15 @@ class Transaction:
     book_id: str = DEFAULT_BOOK_ID
     lines: list[TransactionLine] = field(default_factory=list)
     reversed_by: str | None = None
+    reverses_transaction_id: str | None = None
     version: int = 1
 
 
 class Ledger:
-    def __init__(self) -> None:
+    def __init__(self, *, asset_scale_lookup: Callable[[str], int] | None = None) -> None:
         self.accounts: dict[str, Account] = {}
         self.transactions: dict[str, Transaction] = {}
+        self._asset_scale_lookup = asset_scale_lookup or (lambda code: default_asset_definition(code).scale)
 
     def create_account(
         self,
@@ -105,12 +109,18 @@ class Ledger:
         occurred_at: datetime | None = None,
         purpose: str | None = None,
         book_id: str | None = None,
+        reverses_transaction_id: str | None = None,
     ) -> Transaction:
         if len(postings) < 2:
             raise ValidationError("confirmed transaction requires at least two postings")
         totals: dict[str, Decimal] = {}
         posting_book_id: str | None = book_id
         for posting in postings:
+            if posting.amount == Decimal("0"):
+                raise ValidationError("posting amount must not be zero")
+            validate_asset_amount(
+                posting.amount, posting.currency, field_name="posting amount", scale_lookup=self._asset_scale_lookup
+            )
             account = self.get_account(posting.account_id)
             if posting.currency != account.currency:
                 raise ValidationError(
@@ -133,6 +143,7 @@ class Ledger:
             postings=postings,
             book_id=posting_book_id or DEFAULT_BOOK_ID,
             lines=[],
+            reverses_transaction_id=reverses_transaction_id,
         )
         self.transactions[transaction.transaction_id] = transaction
         return transaction
@@ -149,10 +160,28 @@ class Ledger:
         category_path_snapshot: dict[str, str | None] | None = None,
         memo: str = "",
     ) -> TransactionLine:
-        if line_type not in {"expense", "income", "transfer_fee", "refund", "adjustment"}:
+        allowed_line_types = {
+            "expense",
+            "income",
+            "transfer_fee",
+            "refund",
+            "adjustment",
+            "dividend",
+            "interest",
+            "investment_buy",
+            "investment_sell",
+            "investment_fee",
+            "investment_tax",
+            "fx_exchange",
+            "fx_fee",
+            "fx_gain_loss",
+            "investment_gain_loss",
+        }
+        if line_type not in allowed_line_types:
             raise ValidationError("transaction line type is invalid")
         if amount <= Decimal("0"):
             raise ValidationError("transaction line amount must be positive")
+        validate_asset_amount(amount, currency, field_name="transaction line amount", scale_lookup=self._asset_scale_lookup)
         line = TransactionLine(
             line_id=f"line_{uuid4().hex}",
             transaction_id=transaction.transaction_id,
@@ -173,8 +202,6 @@ class Ledger:
         self.get_account(account_id)
         totals: dict[str, Decimal] = {}
         for transaction in self.transactions.values():
-            if transaction.reversed_by is not None:
-                continue
             for posting in transaction.postings:
                 if posting.account_id == account_id:
                     totals[posting.currency] = totals.get(posting.currency, Decimal("0")) + posting.amount
@@ -186,6 +213,8 @@ class Ledger:
             raise NotFound(f"transaction not found: {transaction_id}")
         if transaction.reversed_by is not None:
             raise ValidationError("transaction is already reversed")
+        if transaction.reverses_transaction_id is not None:
+            raise ValidationError("reversal transactions cannot be reversed directly")
         reversal = self.create_transaction(
             memo=memo,
             purpose="reversal",
@@ -193,6 +222,8 @@ class Ledger:
                 Posting(account_id=posting.account_id, amount=-posting.amount, currency=posting.currency)
                 for posting in transaction.postings
             ],
+            book_id=transaction.book_id,
+            reverses_transaction_id=transaction.transaction_id,
         )
         transaction.reversed_by = reversal.transaction_id
         return reversal

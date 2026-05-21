@@ -228,6 +228,8 @@ class RecordInvestmentEventCommand(StrictCommand):
     memo: str = Field(default="", max_length=256)
     units: Decimal | None = Field(default=None, gt=0)
     nav: Decimal | None = Field(default=None, gt=0)
+    transaction_id: str | None = None
+    cash_account_id: str | None = None
 
 
 class ConfirmDraftCommand(StrictCommand):

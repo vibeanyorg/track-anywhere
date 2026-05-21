@@ -218,21 +218,20 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
     with sqlite3.connect(database_path) as connection:
         tables = {row[0] for row in connection.execute("select name from sqlite_master where type = 'table'").fetchall()}
         version = connection.execute("select version_num from alembic_version").fetchone()[0]
-        account_columns = {
-            row[1]: row[2]
-            for row in connection.execute("pragma table_info(accounts)").fetchall()
-        }
+        account_columns = {row[1]: row[2] for row in connection.execute("pragma table_info(accounts)").fetchall()}
         draft_columns = {row[1] for row in connection.execute("pragma table_info(drafts)").fetchall()}
+        investment_valuation_indexes = {row[1] for row in connection.execute("pragma index_list(investment_valuations)").fetchall()}
 
     assert "alembic_version" in tables
     assert "accounts" in tables
     assert "transactions" in tables
     assert "postings" in tables
     assert "recurring_items" in tables
-    assert version == "0008_retire_legacy_categories"
+    assert version == "0009_reversal_investment_links"
     assert account_columns["currency"].upper() == "VARCHAR(16)"
     assert account_columns["book_id"].upper() == "VARCHAR(80)"
     assert {"category_id", "metadata"} <= draft_columns
+    assert "ix_investment_valuations_book_account_observed" in investment_valuation_indexes
     assert {
         "ledger_books",
         "book_members",
@@ -279,7 +278,7 @@ def test_alembic_adopts_legacy_sqlite_schema_without_destroying_data(tmp_path):
             for row in connection.execute("select name from sqlite_master where type = 'table'").fetchall()
         }
 
-    assert version == "0008_retire_legacy_categories"
+    assert version == "0009_reversal_investment_links"
     assert {"institution_type", "subtype", "institution", "book_id"} <= account_columns
     assert "book_id" in transaction_columns
     assert "category_id" not in transaction_columns
@@ -296,4 +295,4 @@ def test_alembic_migrations_are_idempotent_across_restart(tmp_path):
     with sqlite3.connect(database_path) as connection:
         versions = connection.execute("select version_num from alembic_version").fetchall()
 
-    assert versions == [("0008_retire_legacy_categories",)]
+    assert versions == [("0009_reversal_investment_links",)]

@@ -28,10 +28,12 @@ class FinancialUseCases:
             raise ValidationError("investment events can only be recorded against asset accounts")
         if account.currency != command.currency:
             raise ValidationError("investment event currency must match account currency")
+        self.assets.validate_amount(command.currency, command.amount)
         request_hash = self._hash_command(command)
 
         def run():
             event = self.investments.record(
+                book_id=account.book_id,
                 account_id=command.account_id,
                 event_type=command.event_type,
                 amount=command.amount,
@@ -40,6 +42,7 @@ class FinancialUseCases:
                 memo=command.memo,
                 units=command.units,
                 nav=command.nav,
+                transaction_id=command.transaction_id,
             )
             self.audit.record(
                 operation="investment.event.record",
@@ -63,14 +66,9 @@ class FinancialUseCases:
         if account_id is not None:
             account = self.ledger.get_account(account_id)
             self.actor_for_book(token, account.book_id, "investment:read")
-            return self.investments.list(account_id)
+            return self.investments.list(account_id, book_id=account.book_id)
         self.actor_for_book(token, DEFAULT_BOOK_ID, "investment:read")
-        return [
-            event
-            for event in self.investments.list(account_id)
-            if self.ledger.accounts.get(event.account_id) is not None
-            and self.ledger.accounts[event.account_id].book_id == DEFAULT_BOOK_ID
-        ]
+        return self.investments.list(book_id=DEFAULT_BOOK_ID)
 
     def investment_performance(self, token: str, account_id: str, *, as_of: str | None = None):
         account = self.ledger.get_account(account_id)
@@ -79,9 +77,10 @@ class FinancialUseCases:
             as_of_datetime = datetime.fromisoformat(as_of) if as_of is not None else None
         except ValueError as exc:
             raise ValidationError("as_of must be an ISO-8601 datetime") from exc
+        events = self.investments.list(account_id, book_id=account.book_id)
         if as_of_datetime is None:
             as_of_datetime = max(
-                (event.occurred_at for event in self.investments.list(account_id)),
+                (event.occurred_at for event in events),
                 default=None,
             )
         if as_of_datetime is None:
@@ -96,13 +95,14 @@ class FinancialUseCases:
             account_id=account_id,
             currency=account.currency,
             current_value=current_value,
-            events=self.investments.list(account_id),
+            events=events,
             as_of=as_of_datetime,
         )
 
     def create_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         actor = self.actor_for_book(token, DEFAULT_BOOK_ID, "budget:write")
         command = CreateFundCommand.model_validate(payload)
+        self.assets.ensure(command.currency)
         request_hash = self._hash_command(command)
 
         def run():
@@ -141,6 +141,7 @@ class FinancialUseCases:
             raise ValidationError("fund allocation account must belong to the fund book")
         if source.currency != command.currency or fund.currency != command.currency:
             raise ValidationError("fund allocation currency must match source and fund currencies")
+        self.assets.validate_amount(command.currency, command.amount)
         request_hash = self._hash_command(command)
 
         def run():
@@ -183,6 +184,7 @@ class FinancialUseCases:
             raise ValidationError("fund spend account must belong to the fund book")
         if expense.currency != command.currency or fund.currency != command.currency:
             raise ValidationError("fund spend currency must match expense and fund currencies")
+        self.assets.validate_amount(command.currency, command.amount)
         request_hash = self._hash_command(command)
 
         def run():

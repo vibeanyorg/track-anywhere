@@ -101,6 +101,13 @@ class BookDirectory:
             raise PolicyDenied("book membership is read-only")
         return book
 
+    def has_access(self, book_id: str | None, actor: Actor, required_scope: str | None = None) -> bool:
+        try:
+            self.require_access(book_id, actor, required_scope)
+            return True
+        except (NotFound, PolicyDenied):
+            return False
+
     def list(self, *, status: str | None = "active") -> list[LedgerBook]:
         books = list(self.books.values())
         if status is not None:

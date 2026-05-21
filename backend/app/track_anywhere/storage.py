@@ -6,6 +6,7 @@ from typing import Any
 from sqlalchemy import delete
 from sqlalchemy.orm import sessionmaker
 
+from .assets import AssetDefinition
 from .attachments import Attachment
 from .auth_identities import LinkedAuthIdentity
 from .categories import Category
@@ -20,6 +21,7 @@ from .storage_loaders import StorageLoaders
 from .storage_models import (
     AdjustmentAccountRecord,
     AppStateRecord,
+    AssetRecord,
     AttachmentRecord,
     AuthIdentityRecord,
     Base,
@@ -43,6 +45,19 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, DomainStorageWriters, Sto
     def load_into(self, service: Any) -> None:
         with self.session_factory() as session:
             service.books.books, service.books.members = self._load_books(session)
+            service.assets.assets.update({
+                row.asset_code: AssetDefinition(
+                    asset_code=row.asset_code,
+                    kind=row.kind,
+                    scale=row.scale,
+                    name=row.name,
+                    display_scale=getattr(row, "display_scale", row.scale),
+                    status=row.status,
+                    version=row.version,
+                )
+                for row in session.query(AssetRecord).all()
+            })
+            service.assets.ensure_defaults()
             service.ledger.accounts = {
                 row.account_id: Account(
                     account_id=row.account_id,
@@ -87,6 +102,7 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, DomainStorageWriters, Sto
             service.budgets.funds = self._load_funds(session)
             service.budgets.budgets, service.budgets.targets = self._load_budgets(session)
             service.investments.events = self._load_investment_events(session)
+            service.investments.valuations = self._load_investment_valuations(session)
             service.categories.categories = {
                 row.category_id: Category(
                     category_id=row.category_id,
@@ -149,6 +165,18 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, DomainStorageWriters, Sto
         with self.session_factory.begin() as session:
             session.execute(delete(AppStateRecord).where(AppStateRecord.key == "owner_token"))
             self._save_books(session, service.books)
+            for asset in service.assets.assets.values():
+                session.merge(
+                    AssetRecord(
+                        asset_code=asset.asset_code,
+                        kind=asset.kind,
+                        scale=asset.scale,
+                        display_scale=asset.display_scale if asset.display_scale is not None else asset.scale,
+                        name=asset.name,
+                        status=asset.status,
+                        version=asset.version,
+                    )
+                )
             for account in service.ledger.accounts.values():
                 session.merge(
                     AccountRecord(
@@ -193,6 +221,7 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, DomainStorageWriters, Sto
             self._save_funds(session, service.budgets.funds.values())
             self._save_budgets(session, service.budgets)
             self._save_investment_events(session, service.investments.events.values())
+            self._save_investment_valuations(session, service.investments.valuations.values())
             for category in service.categories.categories.values():
                 session.merge(
                     CategoryRecord(

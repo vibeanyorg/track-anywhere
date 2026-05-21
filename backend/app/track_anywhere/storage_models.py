@@ -1,24 +1,29 @@
 from __future__ import annotations
-
 from typing import Any
-
 from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-
 ASSET_CODE_LENGTH = 16
-
-
 class Base(DeclarativeBase):
     pass
 
 
+class AssetRecord(Base):
+    __tablename__ = "assets"
+
+    asset_code: Mapped[str] = mapped_column(String(ASSET_CODE_LENGTH), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    scale: Mapped[int] = mapped_column(Integer)
+    display_scale: Mapped[int] = mapped_column(Integer, default=2)
+    name: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(40))
+    version: Mapped[int] = mapped_column(Integer)
+
+
 class AppStateRecord(Base):
     __tablename__ = "app_state"
-
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[dict[str, Any]] = mapped_column(JSON)
-
 
 class AccountRecord(Base):
     __tablename__ = "accounts"
@@ -78,6 +83,7 @@ class TransactionRecord(Base):
     occurred_at: Mapped[str] = mapped_column(String(80))
     purpose: Mapped[str] = mapped_column(String(256))
     reversed_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    reverses_transaction_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     version: Mapped[int] = mapped_column(Integer)
 
 
@@ -86,6 +92,7 @@ class PostingRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.transaction_id"))
+    book_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     position: Mapped[int] = mapped_column(Integer)
     account_id: Mapped[str] = mapped_column(String(80))
     amount: Mapped[str] = mapped_column(String(80))
@@ -168,6 +175,21 @@ class InvestmentEventRecord(Base):
     memo: Mapped[str] = mapped_column(String(256))
     units: Mapped[str | None] = mapped_column(String(80), nullable=True)
     nav: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    transaction_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    version: Mapped[int] = mapped_column(Integer)
+
+
+class InvestmentValuationRecord(Base):
+    __tablename__ = "investment_valuations"
+
+    valuation_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    book_id: Mapped[str] = mapped_column(String(80), default="book_default")
+    account_id: Mapped[str] = mapped_column(String(80))
+    value: Mapped[str] = mapped_column(String(80))
+    currency: Mapped[str] = mapped_column(String(ASSET_CODE_LENGTH))
+    observed_at: Mapped[str] = mapped_column(String(80))
+    source: Mapped[str] = mapped_column(String(80))
+    memo: Mapped[str] = mapped_column(String(256))
     version: Mapped[int] = mapped_column(Integer)
 
 

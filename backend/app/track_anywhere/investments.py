@@ -14,6 +14,7 @@ INVESTMENT_EVENT_TYPES = CONTRIBUTION_EVENT_TYPES | INFLOW_EVENT_TYPES
 @dataclass
 class InvestmentEvent:
     event_id: str
+    book_id: str
     account_id: str
     event_type: str
     amount: Decimal
@@ -22,16 +23,32 @@ class InvestmentEvent:
     memo: str = ""
     units: Decimal | None = None
     nav: Decimal | None = None
+    transaction_id: str | None = None
+    version: int = 1
+
+
+@dataclass
+class InvestmentValuation:
+    valuation_id: str
+    book_id: str
+    account_id: str
+    value: Decimal
+    currency: str
+    observed_at: datetime
+    source: str = "manual"
+    memo: str = ""
     version: int = 1
 
 
 class InvestmentBook:
     def __init__(self) -> None:
         self.events: dict[str, InvestmentEvent] = {}
+        self.valuations: dict[str, InvestmentValuation] = {}
 
     def record(
         self,
         *,
+        book_id: str,
         account_id: str,
         event_type: str,
         amount: Decimal,
@@ -40,9 +57,11 @@ class InvestmentBook:
         memo: str = "",
         units: Decimal | None = None,
         nav: Decimal | None = None,
+        transaction_id: str | None = None,
     ) -> InvestmentEvent:
         event = InvestmentEvent(
             event_id=f"inv_{uuid4().hex}",
+            book_id=book_id,
             account_id=account_id,
             event_type=event_type,
             amount=amount,
@@ -51,15 +70,60 @@ class InvestmentBook:
             memo=memo,
             units=units,
             nav=nav,
+            transaction_id=transaction_id,
         )
         self.events[event.event_id] = event
         return event
 
-    def list(self, account_id: str | None = None) -> list[InvestmentEvent]:
+    def list(self, account_id: str | None = None, *, book_id: str | None = None) -> list[InvestmentEvent]:
         events = list(self.events.values())
         if account_id is not None:
             events = [event for event in events if event.account_id == account_id]
-        return sorted(events, key=lambda event: (event.occurred_at, event.event_id))
+        if book_id is not None:
+            events = [event for event in events if event.book_id == book_id]
+        return sorted(events, key=lambda event: (_time_key(event.occurred_at), event.event_id))
+
+    def record_valuation(
+        self,
+        *,
+        book_id: str,
+        account_id: str,
+        value: Decimal,
+        currency: str,
+        observed_at: datetime,
+        source: str = "manual",
+        memo: str = "",
+    ) -> InvestmentValuation:
+        valuation = InvestmentValuation(
+            valuation_id=f"val_{uuid4().hex}",
+            book_id=book_id,
+            account_id=account_id,
+            value=value,
+            currency=currency,
+            observed_at=observed_at,
+            source=source,
+            memo=memo,
+        )
+        self.valuations[valuation.valuation_id] = valuation
+        return valuation
+
+    def list_valuations(self, account_id: str | None = None, *, book_id: str | None = None) -> list[InvestmentValuation]:
+        valuations = list(self.valuations.values())
+        if account_id is not None:
+            valuations = [valuation for valuation in valuations if valuation.account_id == account_id]
+        if book_id is not None:
+            valuations = [valuation for valuation in valuations if valuation.book_id == book_id]
+        return sorted(valuations, key=lambda valuation: (_time_key(valuation.observed_at), valuation.valuation_id))
+
+    def latest_valuation(self, account_id: str, *, book_id: str, as_of: datetime) -> InvestmentValuation | None:
+        candidates = [
+            valuation
+            for valuation in self.list_valuations(account_id, book_id=book_id)
+            if _time_key(valuation.observed_at) <= _time_key(as_of)
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda valuation: (_time_key(valuation.observed_at), valuation.valuation_id))
 
 
 def investment_performance_report(
@@ -69,6 +133,8 @@ def investment_performance_report(
     current_value: Decimal,
     events: list[InvestmentEvent],
     as_of: datetime,
+    current_value_source: str = "account_balance",
+    valuation_id: str | None = None,
 ) -> dict[str, object]:
     relevant = [event for event in events if _time_key(event.occurred_at) <= _time_key(as_of)]
     contributions = sum((event.amount for event in relevant if event.event_type in CONTRIBUTION_EVENT_TYPES), Decimal("0"))
@@ -96,11 +162,13 @@ def investment_performance_report(
     cash_flows.sort(key=lambda item: (_time_key(item[0]), item[2], item[1]))
 
     annualized = _xirr([(date, amount) for date, amount, _ in cash_flows])
-    report: dict[str, object] = {
+    return {
         "account_id": account_id,
         "currency": currency,
         "as_of": as_of.isoformat(),
         "current_value": str(current_value),
+        "current_value_source": current_value_source,
+        "valuation_id": valuation_id,
         "contributions": str(contributions),
         "withdrawals": str(withdrawals),
         "income": str(income),
@@ -115,9 +183,8 @@ def investment_performance_report(
         ],
         "money_weighted_annualized_return": str(annualized) if annualized is not None else None,
         "money_weighted_annualized_return_percent": str(annualized * Decimal("100")) if annualized is not None else None,
-        "method": "xirr_with_current_account_balance",
+        "method": "xirr_with_explicit_valuation_or_account_balance",
     }
-    return report
 
 
 def _xirr(cash_flows: list[tuple[datetime, Decimal]]) -> Decimal | None:

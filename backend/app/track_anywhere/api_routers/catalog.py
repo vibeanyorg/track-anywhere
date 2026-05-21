@@ -19,6 +19,14 @@ from .common import COMMAND_ERRORS, command_payload, protected
 router = APIRouter()
 
 
+@router.get("/assets", dependencies=protected)
+def list_assets(token: AuthToken, status: str | None = "active"):
+    try:
+        return {"assets": serialize(service.list_assets(token, status=status))}
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "asset.list")
+
+
 @router.get("/accounts", dependencies=protected)
 def list_accounts(
     token: AuthToken,
