@@ -120,6 +120,9 @@ class CredentialStore:
     def get_by_jti(self, jti: str) -> Credential | None:
         return next((credential for credential in self._credentials.values() if credential.jti == jti), None)
 
+    def get_by_token(self, token: str) -> Credential | None:
+        return self._credentials.get(hash_secret(token))
+
     def revoke(self, token: str) -> None:
         credential = self._credentials.get(hash_secret(token))
         if credential is not None:

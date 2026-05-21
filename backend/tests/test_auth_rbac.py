@@ -44,6 +44,32 @@ def test_oauth_login_creates_persistent_user_identity_and_book_role(tmp_path):
     assert reloaded.books.members[("book_default", persisted.user_id)].role == "viewer"
 
 
+def test_oauth_login_uses_incremental_persist(monkeypatch, tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'auth-rbac-incremental.sqlite3'}"
+    service = FinanceService(database_url=database_url)
+    saved_states = []
+
+    def fail_full_save(_service):
+        raise AssertionError("login should not full-save service state")
+
+    def capture_login_state(**kwargs):
+        saved_states.append(kwargs)
+
+    monkeypatch.setattr(service.storage, "save", fail_full_save)
+    monkeypatch.setattr(service.storage, "save_auth_login_state", capture_login_state)
+
+    login = service.login_oauth_identity(oauth_identity("incremental@example.com"), role="viewer")
+
+    assert len(saved_states) == 1
+    persisted = saved_states[0]
+    assert persisted["book"].book_id == "book_default"
+    assert persisted["user"].user_id == login["user"]["user_id"]
+    assert persisted["identity"].identity_id == login["identity"]["identity_id"]
+    assert persisted["credential"].actor.actor_id == login["user"]["user_id"]
+    assert persisted["audit_event"].operation == "auth.login"
+    assert {member.user_id for member in persisted["members"]} == {"owner", login["user"]["user_id"]}
+
+
 def test_oauth_login_reuses_identity_and_can_promote_role(tmp_path):
     service = FinanceService(database_url=f"sqlite:///{tmp_path / 'auth-rbac-promote.sqlite3'}")
     identity = oauth_identity("owner@example.com", subject="subject-owner")

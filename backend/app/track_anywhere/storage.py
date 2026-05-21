@@ -16,6 +16,7 @@ from .db_migrations import run_migrations
 from .domain_storage_loaders import DomainStorageLoaders
 from .domain_storage_writers import DomainStorageWriters
 from .ledger import Account
+from .storage_auth import AuthStorageWriters
 from .storage_engine import create_database_engine, database_url_from_env
 from .storage_json import new_owner_token, to_jsonable
 from .storage_loaders import StorageLoaders
@@ -36,7 +37,7 @@ from .storage_writers import StorageWriters
 from .users import AppUser
 
 
-class OrmStorage(DomainStorageLoaders, StorageLoaders, DomainStorageWriters, StorageWriters):
+class OrmStorage(DomainStorageLoaders, StorageLoaders, AuthStorageWriters, DomainStorageWriters, StorageWriters):
     def __init__(self, database_url: str | None = None) -> None:
         self.database_url = database_url or database_url_from_env()
         self.engine = create_database_engine(self.database_url)

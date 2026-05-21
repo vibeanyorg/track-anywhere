@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import Any
 
 from .auth_identities import OAuthIdentity
-from .books import BookMember
+from .books import DEFAULT_OWNER_ID, BookMember
 from .errors import ValidationError
 from .service_auth import scopes_for_role
 
@@ -59,7 +59,10 @@ class IdentityUseCases:
             scopes=scopes,
             ttl=timedelta(minutes=ttl_minutes),
         )
-        self.audit.record(
+        credential = self.credentials.get_by_token(credential_token)
+        if credential is None:
+            raise RuntimeError("issued credential was not stored")
+        audit_event = self.audit.record(
             operation="auth.login",
             actor=self.actor_from_token(credential_token),
             entity_ref=linked_identity.identity_id,
@@ -70,7 +73,16 @@ class IdentityUseCases:
                 "role": member.role,
             },
         )
-        self._persist()
+        owner_member = self.books.members.get((book.book_id, DEFAULT_OWNER_ID))
+        members = [member] if owner_member is None else [owner_member, member]
+        self.storage.save_auth_login_state(
+            book=book,
+            members=members,
+            user=user,
+            identity=linked_identity,
+            credential=credential,
+            audit_event=audit_event,
+        )
         return {
             "credential_token": credential_token,
             "user": {
