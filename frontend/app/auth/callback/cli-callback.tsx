@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { readJson } from "../../lib/http";
 
 type SessionResponse = {
   authenticated: boolean;
@@ -34,7 +35,7 @@ export function CliCallback() {
       return;
     }
     fetch("/api/v1/auth/session", { credentials: "include", cache: "no-store" })
-      .then((response) => response.json())
+      .then((response) => readJson<SessionResponse>(response))
       .then((payload: SessionResponse) => {
         setSession(payload);
         setStatus(payload.authenticated ? "Ready" : "Login required");
@@ -60,7 +61,7 @@ export function CliCallback() {
         },
         body: JSON.stringify(payload)
       });
-      const data = (await response.json()) as { redirect_uri?: string; detail?: string };
+      const data = await readJson<{ redirect_uri?: string; detail?: string }>(response);
       if (!response.ok || !data.redirect_uri) {
         throw new Error(friendlyAuthError(data.detail));
       }

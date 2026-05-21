@@ -58,16 +58,25 @@ if [ "$SELECTED_API_PORT" != "$API_PORT" ]; then
   env_set TRACK_ANYWHERE_DEV_API_PORT "$SELECTED_API_PORT"
   env_set TRACK_ANYWHERE_API "http://$API_BIND:$SELECTED_API_PORT"
   env_set TRACK_ANYWHERE_SERVICE_URL "http://$API_BIND:$SELECTED_API_PORT"
+  env_set TRACK_ANYWHERE_BACKEND_URL "http://$API_BIND:$SELECTED_API_PORT"
 fi
 if [ "$SELECTED_POSTGRES_PORT" != "$POSTGRES_PORT" ]; then
   env_set TRACK_ANYWHERE_DEV_POSTGRES_PORT "$SELECTED_POSTGRES_PORT"
 fi
+if [ -z "$(env_get TRACK_ANYWHERE_BACKEND_URL)" ]; then
+  env_set TRACK_ANYWHERE_BACKEND_URL "http://$API_BIND:$SELECTED_API_PORT"
+fi
 
 cd "$ROOT"
-docker compose --env-file "$ENV_FILE" -f compose.dev.yaml up -d --build
+if [ "${TRACK_ANYWHERE_DEV_REBUILD:-0}" = "1" ]; then
+  docker compose --env-file "$ENV_FILE" -f compose.dev.yaml up -d --build
+else
+  docker compose --env-file "$ENV_FILE" -f compose.dev.yaml up -d
+fi
 
 SERVICE_URL=$(awk -F= '/^TRACK_ANYWHERE_SERVICE_URL=/{print $2}' "$ENV_FILE" | tail -n 1)
 if [ -z "$SERVICE_URL" ]; then
   SERVICE_URL=$(awk -F= '/^TRACK_ANYWHERE_API=/{print $2}' "$ENV_FILE" | tail -n 1)
 fi
 printf 'Track Anywhere dev service: %s\n' "${SERVICE_URL:-http://127.0.0.1:8000}"
+printf 'Fast frontend dev: cd frontend && TRACK_ANYWHERE_BACKEND_URL=%s npm run dev\n' "${SERVICE_URL:-http://127.0.0.1:8000}"

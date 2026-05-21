@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { accountUrl } from "./auth-links";
+import { readJson, responseError } from "../lib/http";
 
 type Identity = {
   provider?: string;
@@ -47,7 +48,7 @@ export function AuthHeader() {
     setIsLoading(true);
     try {
       const response = await fetch(sessionEndpoint, { credentials: "include", cache: "no-store" });
-      const nextSession = (await response.json()) as SessionResponse;
+      const nextSession = await readJson<SessionResponse>(response);
       setSession(nextSession);
       setStatus(nextStatus ?? (nextSession.authenticated ? "Session active" : "Ready"));
     } catch {
@@ -65,8 +66,9 @@ export function AuthHeader() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_key: key })
     });
+    const payload = await readJson<{ detail?: string }>(response);
     if (!response.ok) {
-      throw new Error("key rejected");
+      throw new Error(responseError(payload, "key rejected"));
     }
     setApiKey("");
     await refreshAuth(nextStatus);
@@ -98,8 +100,9 @@ export function AuthHeader() {
         method: "POST",
         credentials: "include"
       });
+      const payload = await readJson<{ detail?: string }>(response);
       if (!response.ok) {
-        throw new Error("local session failed");
+        throw new Error(responseError(payload, "local session failed"));
       }
       await refreshAuth();
       notifyAuthChanged();
@@ -141,9 +144,9 @@ export function AuthHeader() {
           action: "approve"
         })
       });
-      const authorizePayload = (await authorizeResponse.json()) as { redirect_uri?: string };
+      const authorizePayload = await readJson<{ redirect_uri?: string; detail?: string }>(authorizeResponse);
       if (!authorizeResponse.ok || !authorizePayload.redirect_uri) {
-        throw new Error("authorization failed");
+        throw new Error(responseError(authorizePayload, "authorization failed"));
       }
 
       const callbackUrl = new URL(authorizePayload.redirect_uri);
@@ -164,9 +167,9 @@ export function AuthHeader() {
           code_verifier: verifier
         })
       });
-      const tokenPayload = (await tokenResponse.json()) as TokenResponse;
+      const tokenPayload = await readJson<TokenResponse & { detail?: string }>(tokenResponse);
       if (!tokenResponse.ok || !tokenPayload.access_token) {
-        throw new Error("token exchange failed");
+        throw new Error(responseError(tokenPayload, "token exchange failed"));
       }
 
       await createSessionFromKey(tokenPayload.access_token, "Platform token active");

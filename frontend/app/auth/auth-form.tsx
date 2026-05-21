@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
+import { readJson, responseError } from "../lib/http";
 
 type AuthMode = "login" | "signup";
 
@@ -53,9 +54,9 @@ export function AuthForm({ mode }: AuthFormProps) {
           ...(isSignup && displayName.trim() ? { display_name: displayName.trim() } : {})
         })
       });
-      const payload = (await response.json()) as AuthResponse | { detail?: string };
+      const payload = await readJson<AuthResponse | { detail?: string }>(response);
       if (!response.ok || !("authenticated" in payload) || !payload.authenticated) {
-        throw new Error(readError(payload));
+        throw new Error(responseError(payload, response.statusText || "Authentication failed"));
       }
       window.dispatchEvent(new Event("track-anywhere-auth-changed"));
       router.push(nextPath);
@@ -117,13 +118,6 @@ export function AuthForm({ mode }: AuthFormProps) {
       </section>
     </main>
   );
-}
-
-function readError(payload: AuthResponse | { detail?: unknown }) {
-  if ("detail" in payload && payload.detail) {
-    return typeof payload.detail === "string" ? payload.detail : "Authentication failed";
-  }
-  return "Authentication failed";
 }
 
 function safeNext(value: string | null) {

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { accountUrl } from "./auth-links";
+import { readJson, responseError } from "../lib/http";
 
 type SessionResponse = {
   authenticated: boolean;
@@ -69,7 +70,7 @@ export function AuthConsole() {
   async function refreshCredentials() {
     const response = await fetch("/api/v1/credentials", { credentials: "include", cache: "no-store" });
     if (response.ok) {
-      const payload = (await response.json()) as { credentials?: CredentialSummary[] };
+      const payload = await readJson<{ credentials?: CredentialSummary[] }>(response);
       setCredentials(payload.credentials ?? []);
     }
   }
@@ -77,7 +78,7 @@ export function AuthConsole() {
   async function refreshClients() {
     const response = await fetch("/api/v1/oauth/clients", { credentials: "include", cache: "no-store" });
     if (response.ok) {
-      const payload = (await response.json()) as { clients?: OAuthClientSummary[] };
+      const payload = await readJson<{ clients?: OAuthClientSummary[] }>(response);
       const nextClients = payload.clients ?? [];
       setClients(nextClients);
       if (!nextClients.some((client) => client.client_id === selectedClientId)) {
@@ -339,8 +340,9 @@ function SecretOutput({ value, label, onCopy }: { value: string; label: string; 
 
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { credentials: "include", cache: "no-store" });
-  if (!response.ok) throw new Error("request failed");
-  return (await response.json()) as T;
+  const payload = await readJson<T & { detail?: string }>(response);
+  if (!response.ok) throw new Error(responseError(payload));
+  return payload;
 }
 
 async function postJson<T>(url: string, payload: object, csrf = false): Promise<T> {
@@ -353,8 +355,9 @@ async function postJson<T>(url: string, payload: object, csrf = false): Promise<
     },
     body: JSON.stringify(payload),
   });
-  if (!response.ok) throw new Error("request failed");
-  return (await response.json()) as T;
+  const body = await readJson<T & { detail?: string }>(response);
+  if (!response.ok) throw new Error(responseError(body));
+  return body;
 }
 
 async function actionWithCsrf(action: () => Promise<void>, _csrf: boolean) {

@@ -20,6 +20,33 @@ services:
       - ALL
     restart: unless-stopped
 
+  web:
+    image: ${TRACK_ANYWHERE_IMAGE:-ghcr.io/vibeanyorg/track-anywhere:latest}
+    container_name: track-anywhere-prod-web
+    env_file:
+      - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
+    environment:
+      TRACK_ANYWHERE_BACKEND_URL: http://api:8000
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["node", "frontend/server.js"]
+    healthcheck:
+      disable: true
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${TRACK_ANYWHERE_PROD_WEB_BIND:-127.0.0.1}:${TRACK_ANYWHERE_PROD_WEB_PORT:-3000}:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
   cli:
     image: ${TRACK_ANYWHERE_IMAGE:-ghcr.io/vibeanyorg/track-anywhere:latest}
     profiles: ["cli"]

@@ -46,3 +46,7 @@ ALLOWED_ORIGINS = _allowed_origins()
 auth_settings = auth_settings_from_env(mode=service.config.mode)
 oauth_registry = build_oauth_registry(auth_settings)
 platform_key_exchange = PlatformKeyExchange()
+
+
+def auth_cookie_secure() -> bool:
+    return _env_bool("TRACK_ANYWHERE_AUTH_COOKIE_SECURE", default=service.config.mode != "local")

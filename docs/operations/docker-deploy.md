@@ -1,13 +1,15 @@
 # Docker Deployment
 
-Track Anywhere publishes one image for both the API service and the `ta` CLI:
+Track Anywhere publishes one image for the API service, the production web
+frontend, and the `ta` CLI:
 
 ```text
 ghcr.io/vibeanyorg/track-anywhere:latest
 ```
 
-The image starts the FastAPI service by default. Run `ta` inside the same image
-when you need a containerized CLI:
+The image starts the FastAPI service by default. The production Compose file runs
+the same image twice: `api` on port 8000 and `web` on port 3000. Run `ta` inside
+the same image when you need a containerized CLI:
 
 ```bash
 docker run --rm ghcr.io/vibeanyorg/track-anywhere:latest ta --help
@@ -36,8 +38,17 @@ One command starts an isolated dev API and Postgres pair:
 scripts/deploy-local.sh
 ```
 
-The script creates `deploy/env/dev.env` from the example file if needed, builds
-the local image, and starts the `track-anywhere-dev` Compose project.
+The script creates `deploy/env/dev.env` from the example file if needed and
+starts the `track-anywhere-dev` Compose project. It reuses the existing local
+image for fast restarts; set `TRACK_ANYWHERE_DEV_REBUILD=1` when backend package
+changes need a fresh image.
+
+Run the web frontend directly for the fastest edit loop:
+
+```bash
+cd frontend
+TRACK_ANYWHERE_BACKEND_URL=http://127.0.0.1:8000 npm run dev
+```
 
 Useful commands:
 
@@ -57,6 +68,11 @@ production security precondition flags enabled: `TRACK_ANYWHERE_TLS`,
 `TRACK_ANYWHERE_KEY_PROVIDER` or `TRACK_ANYWHERE_ENCRYPTED_VOLUME`,
 `TRACK_ANYWHERE_BACKUP_DOC`, and `TRACK_ANYWHERE_ATTACHMENT_SCANNER`.
 
+For a private SSH-tunnel login at `http://127.0.0.1:3000`, include
+`http://127.0.0.1:3000` in `TRACK_ANYWHERE_ALLOWED_ORIGINS` and set
+`TRACK_ANYWHERE_AUTH_COOKIE_SECURE=0`. Keep the default secure-cookie behavior
+for real HTTPS deployments.
+
 Deploy to the default VPS alias:
 
 ```bash
@@ -71,9 +87,10 @@ scripts/deploy-vps.sh root@example.com
 
 The script copies `compose.prod.yaml`, ensures a production env file exists,
 fills missing non-secret production defaults, pulls the configured image,
-disables the legacy `track-anywhere-api.service` if it exists, and starts the
-`track-anywhere-prod` Compose project. If the image is in a private registry,
-log in with `docker login` before running the script.
+disables legacy `track-anywhere-api.service` and `track-anywhere-web.service`
+units if they exist, and starts the `track-anywhere-prod` Compose project. If
+the image is in a private registry, log in with `docker login` before running
+the script.
 
 ## Publishing
 

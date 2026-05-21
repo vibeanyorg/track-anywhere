@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 from .api_routes import router
-from .api_runtime import ALLOWED_ORIGINS, _deployment_config_from_env, auth_settings, service
+from .api_runtime import ALLOWED_ORIGINS, _deployment_config_from_env, auth_cookie_secure, auth_settings, service
 
 
 def create_app() -> FastAPI:
@@ -17,7 +17,7 @@ def create_app() -> FastAPI:
             SessionMiddleware,
             secret_key=auth_settings.session_secret,
             same_site="strict",
-            https_only=service.config.mode != "local",
+            https_only=auth_cookie_secure(),
         )
     app.add_middleware(
         CORSMiddleware,

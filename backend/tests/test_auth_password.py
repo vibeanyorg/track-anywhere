@@ -64,3 +64,25 @@ def test_password_signup_allowlist_permits_non_local_signup(monkeypatch):
     assert response.status_code == 200
     assert response.json()["authenticated"] is True
     assert "secure" in response.headers["set-cookie"].lower()
+
+
+def test_password_signup_cookie_secure_can_be_disabled_for_loopback_tunnel(monkeypatch):
+    assert app is not None
+    email = f"loopback-password-{uuid4().hex}@example.com"
+    monkeypatch.setattr(service, "config", _production_config())
+    monkeypatch.setenv("TRACK_ANYWHERE_AUTH_COOKIE_SECURE", "0")
+    monkeypatch.setattr(
+        auth_router,
+        "auth_settings",
+        replace(auth_router.auth_settings, password_signup_allowed_emails=frozenset({email})),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/v1/auth/password/signup",
+        json={"email": email, "password": "correct-password-123"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["authenticated"] is True
+    assert "secure" not in response.headers["set-cookie"].lower()

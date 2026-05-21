@@ -17,8 +17,8 @@ npm install
 npm run dev
 ```
 
-`TRACK_ANYWHERE_BACKEND_URL` is used by `next.config.mjs` to rewrite `/api/*`
-to the backend. The header auth flow calls:
+`TRACK_ANYWHERE_BACKEND_URL` is used by the App Router `/api/v1/*` route handler
+to proxy browser calls to the backend. The header auth flow calls:
 
 - `GET /api/v1/auth/session`
 - `POST /api/v1/auth/password/login`

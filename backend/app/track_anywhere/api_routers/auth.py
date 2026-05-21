@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from ..api_sessions import SESSION_COOKIE, clear_browser_session_cookies, set_browser_session_cookies
-from ..api_runtime import auth_settings, browser_sessions, oauth_registry, password_accounts, service
+from ..api_runtime import auth_cookie_secure, auth_settings, browser_sessions, oauth_registry, password_accounts, service
 from ..auth_identities import OAuthIdentity
 from ..auth_oauth import identity_from_oauth_token, oauth_callback_url, require_allowed_identity, role_for_identity
 from ..errors import PolicyDenied, ValidationError
@@ -57,7 +57,7 @@ def create_api_key_session(payload: ApiKeySessionCommand):
         response,
         session_id=session_id,
         csrf_token=csrf_token,
-        secure=service.config.mode != "local",
+        secure=auth_cookie_secure(),
     )
     return response
 
@@ -139,7 +139,7 @@ async def oauth_callback(provider: str, request: Request):
         response,
         session_id=session_id,
         csrf_token=csrf_token,
-        secure=service.config.mode != "local",
+        secure=auth_cookie_secure(),
     )
     return response
 
@@ -172,6 +172,6 @@ def _password_session_response(email: str, display_name: str, role: str):
         response,
         session_id=session_id,
         csrf_token=csrf_token,
-        secure=service.config.mode != "local",
+        secure=auth_cookie_secure(),
     )
     return response

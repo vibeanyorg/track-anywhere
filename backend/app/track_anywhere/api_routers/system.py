@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Response
 
 from ..api_sessions import set_browser_session_cookies
-from ..api_runtime import browser_sessions, service
+from ..api_runtime import auth_cookie_secure, browser_sessions, service
 
 
 router = APIRouter()
@@ -22,7 +22,7 @@ def create_local_session(response: Response):
         credential_token=service.owner_token,
         identity={"provider": "local", "subject": "owner", "email": None, "name": "Local Owner"},
     )
-    secure_cookie = service.config.mode != "local"
+    secure_cookie = auth_cookie_secure()
     set_browser_session_cookies(response, session_id=session_id, csrf_token=csrf_token, secure=secure_cookie)
     return {
         "csrf_token": csrf_token,

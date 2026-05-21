@@ -65,10 +65,15 @@ ensure_env TRACK_ANYWHERE_BACKUP_DOC 1
 ensure_env TRACK_ANYWHERE_ATTACHMENT_SCANNER 1
 ensure_env TRACK_ANYWHERE_API http://127.0.0.1:8000
 ensure_env TRACK_ANYWHERE_SERVICE_URL http://127.0.0.1:8000
+ensure_env TRACK_ANYWHERE_PROD_API_BIND 127.0.0.1
+ensure_env TRACK_ANYWHERE_PROD_API_PORT 8000
+ensure_env TRACK_ANYWHERE_PROD_WEB_BIND 127.0.0.1
+ensure_env TRACK_ANYWHERE_PROD_WEB_PORT 3000
 REMOTE
 ssh "$HOST" "cd '$REMOTE_DIR' && TRACK_ANYWHERE_IMAGE='$IMAGE' docker compose --env-file deploy/env/prod.env -f compose.prod.yaml pull"
 ssh "$HOST" "if systemctl list-unit-files track-anywhere-api.service >/dev/null 2>&1; then systemctl disable --now track-anywhere-api.service || true; fi"
-ssh "$HOST" "cd '$REMOTE_DIR' && TRACK_ANYWHERE_IMAGE='$IMAGE' docker compose --env-file deploy/env/prod.env -f compose.prod.yaml up -d"
+ssh "$HOST" "if systemctl list-unit-files track-anywhere-web.service >/dev/null 2>&1; then systemctl disable --now track-anywhere-web.service || true; fi"
+ssh "$HOST" "cd '$REMOTE_DIR' && TRACK_ANYWHERE_IMAGE='$IMAGE' docker compose --env-file deploy/env/prod.env -f compose.prod.yaml up -d --remove-orphans"
 ssh "$HOST" "REMOTE_DIR='$REMOTE_DIR' IMAGE='$IMAGE' sh -s" <<'REMOTE'
 set -eu
 cat > /usr/local/bin/ta <<EOF
@@ -81,9 +86,23 @@ chmod 0755 /usr/local/bin/ta
 ln -sf /usr/local/bin/ta /usr/local/bin/track-anywhere
 REMOTE
 attempt=1
-while ! ssh "$HOST" "curl -fsS http://127.0.0.1:\${TRACK_ANYWHERE_PROD_API_PORT:-8000}/api/v1/health"; do
+API_PORT=$(ssh "$HOST" "awk -F= '\$1 == \"TRACK_ANYWHERE_PROD_API_PORT\" { value = \$2 } END { print value }' '$REMOTE_DIR/deploy/env/prod.env'")
+WEB_PORT=$(ssh "$HOST" "awk -F= '\$1 == \"TRACK_ANYWHERE_PROD_WEB_PORT\" { value = \$2 } END { print value }' '$REMOTE_DIR/deploy/env/prod.env'")
+API_PORT=${API_PORT:-8000}
+WEB_PORT=${WEB_PORT:-3000}
+
+while ! ssh "$HOST" "curl -fsS http://127.0.0.1:$API_PORT/api/v1/health"; do
   if [ "$attempt" -ge 30 ]; then
     ssh "$HOST" "docker logs --tail 80 track-anywhere-prod-api" || true
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  sleep 2
+done
+attempt=1
+while ! ssh "$HOST" "curl -fsS http://127.0.0.1:$WEB_PORT/api/v1/health"; do
+  if [ "$attempt" -ge 30 ]; then
+    ssh "$HOST" "docker logs --tail 80 track-anywhere-prod-web" || true
     exit 1
   fi
   attempt=$((attempt + 1))
