@@ -35,6 +35,24 @@ services:
       - "${TRACK_ANYWHERE_DEV_API_BIND:-127.0.0.1}:${TRACK_ANYWHERE_DEV_API_PORT:-8000}:8000"
     restart: unless-stopped
 
+  web:
+    image: ${TRACK_ANYWHERE_DEV_IMAGE:-track-anywhere:dev}
+    container_name: track-anywhere-dev-web
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      TRACK_ANYWHERE_BACKEND_URL: http://api:8000
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      NEXT_TELEMETRY_DISABLED: "1"
+    command: ["node", "frontend/server.js"]
+    healthcheck:
+      disable: true
+    ports:
+      - "${TRACK_ANYWHERE_DEV_WEB_BIND:-127.0.0.1}:${TRACK_ANYWHERE_DEV_WEB_PORT:-3000}:3000"
+    restart: unless-stopped
+
   cli:
     image: ${TRACK_ANYWHERE_DEV_IMAGE:-track-anywhere:dev}
     profiles: ["cli"]
