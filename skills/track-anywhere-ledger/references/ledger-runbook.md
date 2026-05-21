@@ -1,5 +1,21 @@
 # Track Anywhere Ledger Runbook
 
+## Service Address
+
+Use `TRACK_ANYWHERE_API` or `TRACK_ANYWHERE_SERVICE_URL` to point `ta` at the
+right API service. Prefer this order:
+
+1. Explicit `--base-url`
+2. `TRACK_ANYWHERE_API`
+3. `TRACK_ANYWHERE_SERVICE_URL`
+4. `deploy/env/dev.env` for local Docker development
+5. `deploy/env/prod.env` on production/VPS hosts
+6. `http://localhost:8000`
+
+Development and production Docker services are intentionally separate:
+`track-anywhere-dev-*` for local development and `track-anywhere-prod-*` for
+production.
+
 ## Read Commands
 
 Discover syntax from the CLI:

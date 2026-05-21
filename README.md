@@ -33,6 +33,33 @@ skills/    Codex/Hermes/OpenClaw skill for safe ledger operation
 
 ## Quick Start
 
+### Docker
+
+The public image includes both the API service and the `ta`/`track-anywhere`
+CLI:
+
+```text
+ghcr.io/vibeanyorg/track-anywhere:latest
+```
+
+Start an isolated local development stack:
+
+```bash
+scripts/deploy-local.sh
+```
+
+Deploy the production stack to the default VPS alias (`root@cc6`):
+
+```bash
+scripts/deploy-vps.sh
+```
+
+Development and production use separate Compose project names, container names,
+ports, and env files. Agents should read the service address from
+`TRACK_ANYWHERE_SERVICE_URL` first, falling back to `TRACK_ANYWHERE_API`.
+
+See [Docker Deployment](docs/operations/docker-deploy.md).
+
 ### 1. Install
 
 Requirements:
@@ -137,6 +164,10 @@ uv run ta account --help
 uv run ta tx --help
 uv run ta summary --help
 ```
+
+The CLI resolves the service URL from `--base-url`, then
+`TRACK_ANYWHERE_API`, then `TRACK_ANYWHERE_SERVICE_URL`, and finally
+`http://localhost:8000`.
 
 Read the ledger:
 

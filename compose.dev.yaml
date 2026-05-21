@@ -1,0 +1,50 @@
+name: track-anywhere-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: track-anywhere-dev-postgres
+    environment:
+      POSTGRES_DB: track_anywhere
+      POSTGRES_USER: track_anywhere
+      POSTGRES_PASSWORD: track_anywhere
+    ports:
+      - "${TRACK_ANYWHERE_DEV_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - track-anywhere-dev-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U track_anywhere -d track_anywhere"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build:
+      context: .
+    image: ${TRACK_ANYWHERE_DEV_IMAGE:-track-anywhere:dev}
+    container_name: track-anywhere-dev-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TRACK_ANYWHERE_MODE: local
+      TRACK_ANYWHERE_DATABASE_URL: postgresql+psycopg://track_anywhere:track_anywhere@postgres:5432/track_anywhere
+      TRACK_ANYWHERE_ALLOWED_ORIGINS: ${TRACK_ANYWHERE_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "${TRACK_ANYWHERE_DEV_API_BIND:-127.0.0.1}:${TRACK_ANYWHERE_DEV_API_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  cli:
+    image: ${TRACK_ANYWHERE_DEV_IMAGE:-track-anywhere:dev}
+    profiles: ["cli"]
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      TRACK_ANYWHERE_API: http://api:8000
+      TRACK_ANYWHERE_SERVICE_URL: http://api:8000
+    entrypoint: ["ta"]
+
+volumes:
+  track-anywhere-dev-postgres:

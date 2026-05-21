@@ -13,6 +13,23 @@ if [ -n "${TRACK_ANYWHERE_ROOT:-}" ]; then
 fi
 ```
 
+## Service Address
+
+Resolve the API base URL before running CLI/API commands:
+
+1. Use `--base-url` when the user explicitly gives one.
+2. Otherwise use `TRACK_ANYWHERE_API` if set.
+3. Otherwise use `TRACK_ANYWHERE_SERVICE_URL` if set.
+4. For Docker local dev, read `TRACK_ANYWHERE_SERVICE_URL` from `deploy/env/dev.env`.
+5. For Docker production/VPS, read it from `deploy/env/prod.env` on the host.
+6. Fall back to `http://localhost:8000`.
+
+Do not hardcode the VPS address in ledger commands. Export the resolved value:
+
+```bash
+export TRACK_ANYWHERE_API="${TRACK_ANYWHERE_API:-${TRACK_ANYWHERE_SERVICE_URL:-http://localhost:8000}}"
+```
+
 ## Core Rules
 
 - NEVER write to SQLite directly. Use `ta` or the HTTP API.

@@ -1,0 +1,31 @@
+name: track-anywhere-prod
+
+services:
+  api:
+    image: ${TRACK_ANYWHERE_IMAGE:-ghcr.io/vibeanyorg/track-anywhere:latest}
+    container_name: track-anywhere-prod-api
+    env_file:
+      - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
+    environment:
+      TRACK_ANYWHERE_MODE: production
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "${TRACK_ANYWHERE_PROD_API_BIND:-127.0.0.1}:${TRACK_ANYWHERE_PROD_API_PORT:-8000}:8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  cli:
+    image: ${TRACK_ANYWHERE_IMAGE:-ghcr.io/vibeanyorg/track-anywhere:latest}
+    profiles: ["cli"]
+    env_file:
+      - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
+    environment:
+      TRACK_ANYWHERE_API: http://api:8000
+      TRACK_ANYWHERE_SERVICE_URL: http://api:8000
+    entrypoint: ["ta"]

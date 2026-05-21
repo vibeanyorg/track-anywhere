@@ -22,7 +22,7 @@ from .runtime import build_outcome
 
 
 @click.group()
-@click.option("--base-url", envvar="TRACK_ANYWHERE_API", default="http://localhost:8000")
+@click.option("--base-url", envvar=["TRACK_ANYWHERE_API", "TRACK_ANYWHERE_SERVICE_URL"], default="http://localhost:8000")
 @click.option("--token", default=None, help="Bearer token. Prefer OS keyring; this is for one-shot use.")
 @click.option("--insecure-automation", is_flag=True, help="Allow env-token automation with warning.")
 @click.option("--format", "output_format", type=click.Choice(["human", "json"]), default=None, help="Output renderer.")

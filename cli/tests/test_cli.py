@@ -30,6 +30,15 @@ def test_click_cli_exposes_recurring_help():
     assert "reminders" in result.output
 
 
+def test_cli_accepts_service_url_env_alias(monkeypatch, capsys):
+    monkeypatch.delenv("TRACK_ANYWHERE_API", raising=False)
+    monkeypatch.setenv("TRACK_ANYWHERE_SERVICE_URL", "http://track-anywhere-prod:8000")
+
+    assert main(["--token", "token-1", "auth", "status", "--json"]) == 0
+    payload = _json_from_output(capsys.readouterr())
+    assert payload["data"]["base_url"] == "http://track-anywhere-prod:8000"
+
+
 def test_exit_code_mapping_for_conflicts():
     assert exit_for_status(409, {"detail": "idempotency key reused"}) == 4
     assert exit_for_status(409, {"detail": "draft version conflict"}) == 5
