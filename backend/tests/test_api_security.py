@@ -200,6 +200,23 @@ def test_security_rejections_are_audited_and_bearer_origin_is_gated():
     assert service.audit.events[-1].operation == "security.origin_denied"
 
 
+def test_security_failure_audit_uses_incremental_persist(monkeypatch):
+    saved_events = []
+
+    def fail_full_save(_service):
+        raise AssertionError("security failure should not full-save service state")
+
+    monkeypatch.setattr(service.storage, "save", fail_full_save)
+    monkeypatch.setattr(service.storage, "save_audit_event", saved_events.append)
+    before = len(service.audit.events)
+
+    service.record_security_failure("security.incremental_probe", {"password": "do-not-store", "token": "do-not-store"})
+
+    assert len(service.audit.events) == before + 1
+    assert saved_events == [service.audit.events[-1]]
+    assert saved_events[0].details == {"password": "[REDACTED]", "token": "[REDACTED]"}
+
+
 def test_command_validation_failures_are_audited_without_raw_payload():
     assert app is not None
     client = TestClient(app)

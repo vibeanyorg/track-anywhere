@@ -127,8 +127,8 @@ class CredentialUseCases:
         return result
 
     def record_security_failure(self, operation: str, details: dict[str, Any] | None = None) -> None:
-        self.audit.record(operation=operation, actor=SYSTEM_ACTOR, entity_ref=None, details=details or {})
-        self._persist()
+        event = self.audit.record(operation=operation, actor=SYSTEM_ACTOR, entity_ref=None, details=details or {})
+        self.storage.save_audit_event(event)
 
 
 def _credential_public_dict(credential) -> dict[str, Any]:

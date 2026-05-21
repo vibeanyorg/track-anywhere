@@ -7,6 +7,7 @@ from sqlalchemy import delete
 from sqlalchemy.orm import sessionmaker
 
 from .assets import AssetDefinition
+from .audit import AuditEvent
 from .attachments import Attachment
 from .auth_identities import LinkedAuthIdentity
 from .categories import Category
@@ -41,6 +42,10 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, DomainStorageWriters, Sto
         self.engine = create_database_engine(self.database_url)
         run_migrations(self.engine, Base.metadata)
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False, future=True)
+
+    def save_audit_event(self, event: AuditEvent) -> None:
+        with self.session_factory.begin() as session:
+            self._save_audit_events(session, [event])
 
     def load_into(self, service: Any) -> None:
         with self.session_factory() as session:

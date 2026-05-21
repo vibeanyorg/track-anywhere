@@ -21,6 +21,7 @@ SENSITIVE_KEYS = {
     "note",
     "notes",
     "ocr_text",
+    "password",
     "raw_memo",
     "raw_note",
     "raw_text",
