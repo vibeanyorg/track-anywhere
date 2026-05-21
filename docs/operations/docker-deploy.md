@@ -52,7 +52,10 @@ docker compose --env-file deploy/env/dev.env -f compose.dev.yaml run --rm cli --
 Prepare `deploy/env/prod.env` on the host. It must include
 `TRACK_ANYWHERE_DATABASE_URL`; for public deployments also set
 `TRACK_ANYWHERE_ALLOWED_ORIGINS`, `TRACK_ANYWHERE_PUBLIC_BASE_URL`, and
-`TRACK_ANYWHERE_AUTH_SESSION_SECRET`.
+`TRACK_ANYWHERE_AUTH_SESSION_SECRET`. Non-local deployments must also keep the
+production security precondition flags enabled: `TRACK_ANYWHERE_TLS`,
+`TRACK_ANYWHERE_KEY_PROVIDER` or `TRACK_ANYWHERE_ENCRYPTED_VOLUME`,
+`TRACK_ANYWHERE_BACKUP_DOC`, and `TRACK_ANYWHERE_ATTACHMENT_SCANNER`.
 
 Deploy to the default VPS alias:
 
@@ -67,12 +70,14 @@ scripts/deploy-vps.sh root@example.com
 ```
 
 The script copies `compose.prod.yaml`, ensures a production env file exists,
-pulls the public image, disables the legacy `track-anywhere-api.service` if it
-exists, and starts the `track-anywhere-prod` Compose project.
+fills missing non-secret production defaults, pulls the configured image,
+disables the legacy `track-anywhere-api.service` if it exists, and starts the
+`track-anywhere-prod` Compose project. If the image is in a private registry,
+log in with `docker login` before running the script.
 
 ## Publishing
 
-Build and publish a public multi-arch image:
+Build and publish a multi-arch registry image:
 
 ```bash
 TRACK_ANYWHERE_IMAGE=ghcr.io/vibeanyorg/track-anywhere \

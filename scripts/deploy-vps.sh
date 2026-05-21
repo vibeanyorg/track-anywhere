@@ -11,8 +11,81 @@ ssh "$HOST" "mkdir -p '$REMOTE_DIR/deploy/env'"
 scp "$ROOT/compose.prod.yaml" "$HOST:$REMOTE_DIR/compose.prod.yaml"
 scp "$ROOT/deploy/env/prod.env.example" "$HOST:$REMOTE_DIR/deploy/env/prod.env.example"
 
-ssh "$HOST" "if [ ! -f '$REMOTE_DIR/deploy/env/prod.env' ]; then if [ -f '$ENV_SOURCE' ]; then cp '$ENV_SOURCE' '$REMOTE_DIR/deploy/env/prod.env'; else cp '$REMOTE_DIR/deploy/env/prod.env.example' '$REMOTE_DIR/deploy/env/prod.env'; fi; fi"
+ssh "$HOST" "REMOTE_DIR='$REMOTE_DIR' ENV_SOURCE='$ENV_SOURCE' sh -s" <<'REMOTE'
+set -eu
+
+env_file="$REMOTE_DIR/deploy/env/prod.env"
+if [ ! -f "$env_file" ]; then
+  if [ -f "$ENV_SOURCE" ]; then
+    cp "$ENV_SOURCE" "$env_file"
+  else
+    cp "$REMOTE_DIR/deploy/env/prod.env.example" "$env_file"
+  fi
+fi
+
+ensure_env() {
+  key=$1
+  value=$2
+  if ! grep -Eq "^${key}=" "$env_file"; then
+    printf '%s=%s\n' "$key" "$value" >> "$env_file"
+  fi
+}
+
+upsert_env() {
+  key=$1
+  value=$2
+  tmp_file="${env_file}.tmp"
+  awk -F= -v key="$key" '$1 != key' "$env_file" > "$tmp_file"
+  mv "$tmp_file" "$env_file"
+  printf '%s=%s\n' "$key" "$value" >> "$env_file"
+}
+
+first_origin=$(
+  awk -F= '$1 == "TRACK_ANYWHERE_ALLOWED_ORIGINS" { print $2; exit }' "$env_file" \
+    | cut -d, -f1 \
+    | tr -d "[:space:]'\""
+)
+if [ -z "$first_origin" ]; then
+  first_origin="https://ledger.example.com"
+fi
+
+public_base=$(
+  awk -F= '$1 == "TRACK_ANYWHERE_PUBLIC_BASE_URL" { print $2; exit }' "$env_file" \
+    | tr -d "[:space:]'\""
+)
+if [ -z "$public_base" ]; then
+  public_base="$first_origin"
+fi
+
+upsert_env TRACK_ANYWHERE_PUBLIC_BASE_URL "$public_base"
+ensure_env TRACK_ANYWHERE_TLS 1
+ensure_env TRACK_ANYWHERE_KEY_PROVIDER 1
+ensure_env TRACK_ANYWHERE_ENCRYPTED_VOLUME 1
+ensure_env TRACK_ANYWHERE_BACKUP_DOC 1
+ensure_env TRACK_ANYWHERE_ATTACHMENT_SCANNER 1
+ensure_env TRACK_ANYWHERE_API http://127.0.0.1:8000
+ensure_env TRACK_ANYWHERE_SERVICE_URL http://127.0.0.1:8000
+REMOTE
 ssh "$HOST" "cd '$REMOTE_DIR' && TRACK_ANYWHERE_IMAGE='$IMAGE' docker compose --env-file deploy/env/prod.env -f compose.prod.yaml pull"
 ssh "$HOST" "if systemctl list-unit-files track-anywhere-api.service >/dev/null 2>&1; then systemctl disable --now track-anywhere-api.service || true; fi"
 ssh "$HOST" "cd '$REMOTE_DIR' && TRACK_ANYWHERE_IMAGE='$IMAGE' docker compose --env-file deploy/env/prod.env -f compose.prod.yaml up -d"
-ssh "$HOST" "curl -fsS http://127.0.0.1:\${TRACK_ANYWHERE_PROD_API_PORT:-8000}/api/v1/health"
+ssh "$HOST" "REMOTE_DIR='$REMOTE_DIR' IMAGE='$IMAGE' sh -s" <<'REMOTE'
+set -eu
+cat > /usr/local/bin/ta <<EOF
+#!/usr/bin/env sh
+set -eu
+cd "$REMOTE_DIR"
+TRACK_ANYWHERE_IMAGE=\${TRACK_ANYWHERE_IMAGE:-$IMAGE} exec docker compose --env-file deploy/env/prod.env -f compose.prod.yaml run --rm cli "\$@"
+EOF
+chmod 0755 /usr/local/bin/ta
+ln -sf /usr/local/bin/ta /usr/local/bin/track-anywhere
+REMOTE
+attempt=1
+while ! ssh "$HOST" "curl -fsS http://127.0.0.1:\${TRACK_ANYWHERE_PROD_API_PORT:-8000}/api/v1/health"; do
+  if [ "$attempt" -ge 30 ]; then
+    ssh "$HOST" "docker logs --tail 80 track-anywhere-prod-api" || true
+    exit 1
+  fi
+  attempt=$((attempt + 1))
+  sleep 2
+done

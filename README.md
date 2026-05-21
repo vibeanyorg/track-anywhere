@@ -35,7 +35,7 @@ skills/    Codex/Hermes/OpenClaw skill for safe ledger operation
 
 ### Docker
 
-The public image includes both the API service and the `ta`/`track-anywhere`
+The registry image includes both the API service and the `ta`/`track-anywhere`
 CLI:
 
 ```text
