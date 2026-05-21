@@ -71,14 +71,14 @@ def _register_category(root: click.Group) -> None:
         _category_query_command(category, name)
 
     @category.command("create")
+    @click.argument("name")
     @click.option("--kind", type=click.Choice(["income", "expense"]), required=True)
-    @click.option("--primary", required=True)
-    @click.option("--secondary")
+    @click.option("--parent-id")
     @click.option("--idempotency-key")
     @output_options
     @pass_state
-    def create_category(state, json_mode, no_color, kind, primary, secondary, idempotency_key):
-        args = common_args(state, json_mode, no_color, command="category", category_command="create", kind=kind, primary=primary, secondary=secondary, idempotency_key=idempotency_key)
+    def create_category(state, json_mode, no_color, name, kind, parent_id, idempotency_key):
+        args = common_args(state, json_mode, no_color, command="category", category_command="create", name=name, kind=kind, parent_id=parent_id, idempotency_key=idempotency_key)
         return run_api(args, state=state, command_path="category.create")
 
     @category.command("show")
@@ -93,12 +93,12 @@ def _register_category(root: click.Group) -> None:
 def _category_query_command(group: click.Group, command_name: str) -> None:
     @group.command(command_name)
     @click.option("--kind", type=click.Choice(["income", "expense"]), required=command_name == "find")
-    @click.option("--primary", required=command_name == "find")
-    @click.option("--secondary")
+    @click.option("--name", required=command_name == "find")
+    @click.option("--parent-id")
     @output_options
     @pass_state
-    def query_category(state, json_mode, no_color, kind, primary, secondary):
-        args = common_args(state, json_mode, no_color, command="category", category_command=command_name, kind=kind, primary=primary, secondary=secondary)
+    def query_category(state, json_mode, no_color, kind, name, parent_id):
+        args = common_args(state, json_mode, no_color, command="category", category_command=command_name, kind=kind, name=name, parent_id=parent_id)
         return run_api(args, state=state, command_path=f"category.{command_name}")
 
 
@@ -240,6 +240,7 @@ def _account_show_update_balance(group: click.Group) -> None:
     @click.argument("account_id")
     @click.option("--amount", required=True)
     @click.option("--purpose", required=True)
+    @click.option("--memo", default="")
     @click.option("--occurred-at")
     @click.option("--currency", default="CNY")
     @click.option("--idempotency-key")

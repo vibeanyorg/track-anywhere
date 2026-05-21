@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -8,18 +7,6 @@ from .books import DEFAULT_BOOK_ID
 from .categories import Category
 from .commands import CreateCategoryCommand
 from .errors import ValidationError
-
-
-@dataclass(frozen=True)
-class CategoryLineProjection:
-    line_type: str
-    amount: Decimal
-    currency: str
-    category_id: str | None
-    category_path_snapshot: dict[str, str | None] | None = None
-    project_id: str | None = None
-    merchant_id: str | None = None
-    necessity: str = "unknown"
 
 
 class CategoryUseCases:
@@ -113,8 +100,8 @@ class CategoryUseCases:
         def run():
             category = self.categories.create(
                 kind=command.kind,
-                primary=command.primary,
-                secondary=command.secondary,
+                name=command.name,
+                parent_id=command.parent_id,
                 book_id=target_book_id,
             )
             self.audit.record(
@@ -140,15 +127,15 @@ class CategoryUseCases:
         token: str,
         *,
         kind: str | None = None,
-        primary: str | None = None,
-        secondary: str | None = None,
+        name: str | None = None,
+        parent_id: str | None = None,
         book_id: str | None = None,
     ) -> list[Category]:
         target_book_id = book_id or DEFAULT_BOOK_ID
         self.actor_for_book(token, target_book_id, "category:read")
         if kind is not None and kind not in {"income", "expense"}:
             raise ValidationError("category kind must be income or expense")
-        return self.categories.list(kind=kind, primary=primary, secondary=secondary, book_id=target_book_id)
+        return self.categories.list(kind=kind, name=name, parent_id=parent_id, book_id=target_book_id)
 
     def get_category(self, token: str, category_id: str) -> Category:
         category = self.categories.get(category_id)
@@ -167,28 +154,8 @@ class CategoryUseCases:
                 amounts[posting.currency] = amounts.get(posting.currency, Decimal("0")) - posting.amount
         return amounts
 
-    def _legacy_line_projection(self, transaction, category: Category):
-        amounts = self._category_amounts_for_transaction(transaction, category)
-        if not amounts:
-            return None
-        currency, amount = next(iter(amounts.items()))
-        if amount <= Decimal("0"):
-            return None
-        return CategoryLineProjection(
-            line_type=category.kind,
-            amount=amount,
-            currency=currency,
-            category_id=category.category_id,
-            category_path_snapshot=self.categories.path_snapshot(category.category_id),
-        )
-
     def _report_lines_for_transaction(self, transaction):
-        lines = transaction.lines or []
-        if lines or transaction.category_id is None:
-            return lines
-        category = self.categories.get(transaction.category_id)
-        projected = self._legacy_line_projection(transaction, category)
-        return [projected] if projected is not None else []
+        return transaction.lines or []
 
     def _add_category_line_for_transaction(self, transaction, category: Category):
         amounts = self._category_amounts_for_transaction(transaction, category)

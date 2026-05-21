@@ -24,11 +24,8 @@ def paid_support(service, token):
         },
         idempotency_key="account-usd-wallet",
     )
-    category, _ = service.create_category(
-        token,
-        {"kind": "expense", "primary": "Subscriptions", "secondary": "AI"},
-        idempotency_key="category-subscriptions-ai",
-    )
+    parent, _ = service.create_category(token, {"kind": "expense", "name": "Subscriptions"}, idempotency_key="category-subscriptions")
+    category, _ = service.create_category(token, {"kind": "expense", "name": "AI", "parent_id": parent.category_id}, idempotency_key="category-subscriptions-ai")
     return account, category
 
 
@@ -192,7 +189,7 @@ def test_due_paid_item_generates_explicit_draft_without_confirming(tmp_path):
         idempotency_key="confirm-chatgpt-june",
     )
     assert replay is False
-    assert transaction.category_id == category.category_id
+    assert transaction.lines[0].category_id == category.category_id
 
 
 def test_reminder_only_item_never_generates_money_draft(tmp_path):

@@ -127,11 +127,11 @@ def create_user(payload: CreateUserCommand, token: AuthToken, key: IdempotencyKe
 def list_categories(
     token: AuthToken,
     kind: str | None = None,
-    primary: str | None = None,
-    secondary: str | None = None,
+    name: str | None = None,
+    parent_id: str | None = None,
 ):
     try:
-        return {"categories": serialize(service.list_categories(token, kind=kind, primary=primary, secondary=secondary))}
+        return {"categories": serialize(service.list_categories(token, kind=kind, name=name, parent_id=parent_id))}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "category.list")
 

@@ -19,6 +19,8 @@ def _transaction_payload(args: Namespace) -> dict[str, Any]:
         "to_account_id": args.to_account_id,
         "purpose": args.purpose,
     }
+    if getattr(args, "memo", ""):
+        payload["memo"] = args.memo
     if args.occurred_at:
         payload["occurred_at"] = args.occurred_at
     if args.category_id:
@@ -68,6 +70,8 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
             "category_id": args.category_id,
             "purpose": args.purpose,
         }
+        if getattr(args, "memo", ""):
+            payload["memo"] = args.memo
         if args.occurred_at:
             payload["occurred_at"] = args.occurred_at
         return requester(config, "POST", "/api/v1/expenses", payload, key=command_idempotency_key(args, "expense-record"))
@@ -79,6 +83,8 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
             "category_id": args.category_id,
             "purpose": args.purpose,
         }
+        if getattr(args, "memo", ""):
+            payload["memo"] = args.memo
         if args.occurred_at:
             payload["occurred_at"] = args.occurred_at
         return requester(config, "POST", "/api/v1/incomes", payload, key=command_idempotency_key(args, "income-record"))
@@ -106,6 +112,8 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
             "currency": args.currency,
             "purpose": args.purpose,
         }
+        if getattr(args, "memo", ""):
+            payload["memo"] = args.memo
         if args.occurred_at:
             payload["occurred_at"] = args.occurred_at
         return requester(

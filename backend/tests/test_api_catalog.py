@@ -13,7 +13,6 @@ from track_anywhere.api import app, service
 
 
 def test_api_categories_expense_income_and_summary_flow():
-    assert app is not None
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {service.owner_token}"}
 
@@ -25,14 +24,26 @@ def test_api_categories_expense_income_and_summary_flow():
     assert cash_resp.status_code == 200
     cash_id = cash_resp.json()["account"]["account_id"]
 
+    expense_parent_resp = client.post(
+        "/api/v1/categories",
+        json={"kind": "expense", "name": "餐饮"},
+        headers={**headers, "X-Idempotency-Key": "api-category-expense-parent"},
+    )
+    assert expense_parent_resp.status_code == 200
     expense_category_resp = client.post(
         "/api/v1/categories",
-        json={"kind": "expense", "primary": "餐饮", "secondary": "外卖"},
+        json={"kind": "expense", "name": "外卖", "parent_id": expense_parent_resp.json()["category"]["category_id"]},
         headers={**headers, "X-Idempotency-Key": "api-category-expense"},
     )
+    income_parent_resp = client.post(
+        "/api/v1/categories",
+        json={"kind": "income", "name": "工资"},
+        headers={**headers, "X-Idempotency-Key": "api-category-income-parent"},
+    )
+    assert income_parent_resp.status_code == 200
     income_category_resp = client.post(
         "/api/v1/categories",
-        json={"kind": "income", "primary": "工资", "secondary": "主业"},
+        json={"kind": "income", "name": "主业", "parent_id": income_parent_resp.json()["category"]["category_id"]},
         headers={**headers, "X-Idempotency-Key": "api-category-income"},
     )
     assert expense_category_resp.status_code == 200
@@ -40,7 +51,7 @@ def test_api_categories_expense_income_and_summary_flow():
     expense_category_id = expense_category_resp.json()["category"]["category_id"]
     income_category_id = income_category_resp.json()["category"]["category_id"]
 
-    category_list = client.get("/api/v1/categories?kind=expense&primary=%E9%A4%90%E9%A5%AE", headers=headers)
+    category_list = client.get("/api/v1/categories?kind=expense&name=%E5%A4%96%E5%8D%96", headers=headers)
     assert category_list.status_code == 200
     assert any(item["category_id"] == expense_category_id for item in category_list.json()["categories"])
 
@@ -68,8 +79,8 @@ def test_api_categories_expense_income_and_summary_flow():
     )
     assert expense_resp.status_code == 200
     assert income_resp.status_code == 200
-    assert expense_resp.json()["transaction"]["category_id"] == expense_category_id
-    assert income_resp.json()["transaction"]["category_id"] == income_category_id
+    assert expense_resp.json()["transaction"]["lines"][0]["category_id"] == expense_category_id
+    assert income_resp.json()["transaction"]["lines"][0]["category_id"] == income_category_id
 
     expense_summary = client.get("/api/v1/summary/categories?kind=expense&currency=CNY", headers=headers)
     assert expense_summary.status_code == 200
@@ -80,11 +91,10 @@ def test_api_categories_expense_income_and_summary_flow():
 
     tx_list = client.get(f"/api/v1/ledger/transactions?category_id={expense_category_id}", headers=headers)
     assert tx_list.status_code == 200
-    assert tx_list.json()["transactions"][0]["category_id"] == expense_category_id
+    assert tx_list.json()["transactions"][0]["lines"][0]["category_id"] == expense_category_id
 
 
 def test_api_credit_card_profile_flow():
-    assert app is not None
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {service.owner_token}"}
 
@@ -122,7 +132,6 @@ def test_api_credit_card_profile_flow():
 
 
 def test_api_account_metadata_create_filter_and_update():
-    assert app is not None
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {service.owner_token}"}
 
@@ -163,7 +172,6 @@ def test_api_account_metadata_create_filter_and_update():
 
 
 def test_api_account_supports_crypto_wallet_asset_codes():
-    assert app is not None
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {service.owner_token}"}
 
@@ -194,7 +202,6 @@ def test_api_account_supports_crypto_wallet_asset_codes():
 
 
 def test_api_account_summary_groups_real_accounts_by_subtype():
-    assert app is not None
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {service.owner_token}"}
 
@@ -224,7 +231,6 @@ def test_api_account_summary_groups_real_accounts_by_subtype():
 
 
 def test_api_account_summary_separates_assets_and_liabilities():
-    assert app is not None
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {service.owner_token}"}
 
@@ -270,7 +276,6 @@ def test_api_account_summary_separates_assets_and_liabilities():
 
 
 def test_api_create_and_list_user():
-    assert app is not None
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {service.owner_token}"}
 

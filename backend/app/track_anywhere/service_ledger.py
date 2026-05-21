@@ -31,10 +31,9 @@ class LedgerUseCases:
 
         def run():
             transaction = self.ledger.create_transaction(
-                memo=command.purpose,
+                memo=command.memo,
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
-                category_id=command.category_id,
                 postings=[
                     Posting(command.from_account_id, -command.amount, command.currency),
                     Posting(command.to_account_id, command.amount, command.currency),
@@ -76,10 +75,9 @@ class LedgerUseCases:
         def run():
             expense_account_id = self._system_category_account_id("expense", command.currency, book_id=source.book_id)
             transaction = self.ledger.create_transaction(
-                memo=command.purpose,
+                memo=command.memo,
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
-                category_id=command.category_id,
                 postings=[
                     Posting(command.from_account_id, -command.amount, command.currency),
                     Posting(expense_account_id, command.amount, command.currency),
@@ -120,10 +118,9 @@ class LedgerUseCases:
         def run():
             income_account_id = self._system_category_account_id("income", command.currency, book_id=target.book_id)
             transaction = self.ledger.create_transaction(
-                memo=command.purpose,
+                memo=command.memo,
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
-                category_id=command.category_id,
                 postings=[
                     Posting(income_account_id, -command.amount, command.currency),
                     Posting(command.to_account_id, command.amount, command.currency),
@@ -177,8 +174,7 @@ class LedgerUseCases:
             transactions = [
                 transaction
                 for transaction in transactions
-                if transaction.category_id == category_id
-                or any(line.category_id == category_id for line in transaction.lines)
+                if any(line.category_id == category_id for line in transaction.lines)
             ]
         transactions.sort(key=lambda transaction: (transaction.occurred_at, transaction.transaction_id), reverse=True)
         return transactions[: max(0, min(limit, 200))]

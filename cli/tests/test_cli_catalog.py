@@ -24,12 +24,11 @@ def test_category_commands_and_category_summary_use_api(monkeypatch):
                 "token-1",
                 "category",
                 "create",
+                "外卖",
                 "--kind",
                 "expense",
-                "--primary",
-                "餐饮",
-                "--secondary",
-                "外卖",
+                "--parent-id",
+                "cat_food",
                 "--idempotency-key",
                 "cat-food-delivery",
                 "--json",
@@ -46,10 +45,10 @@ def test_category_commands_and_category_summary_use_api(monkeypatch):
                 "find",
                 "--kind",
                 "expense",
-                "--primary",
-                "餐饮",
-                "--secondary",
+                "--name",
                 "外卖",
+                "--parent-id",
+                "cat_food",
                 "--json",
             ]
         )
@@ -61,12 +60,12 @@ def test_category_commands_and_category_summary_use_api(monkeypatch):
         {
             "method": "POST",
             "path": "/api/v1/categories",
-            "payload": {"kind": "expense", "primary": "餐饮", "secondary": "外卖"},
+            "payload": {"kind": "expense", "name": "外卖", "parent_id": "cat_food"},
             "key": "cat-food-delivery",
         },
         {
             "method": "GET",
-            "path": "/api/v1/categories?kind=expense&primary=%E9%A4%90%E9%A5%AE&secondary=%E5%A4%96%E5%8D%96",
+            "path": "/api/v1/categories?kind=expense&name=%E5%A4%96%E5%8D%96&parent_id=cat_food",
             "payload": None,
             "key": None,
         },
@@ -187,7 +186,7 @@ def test_category_command_human_output_is_rich_table(monkeypatch, capsys):
                 "list",
                 "--kind",
                 "expense",
-                "--primary",
+                "--name",
                 "餐饮",
             ]
         )

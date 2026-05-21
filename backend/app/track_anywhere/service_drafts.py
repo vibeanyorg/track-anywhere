@@ -48,9 +48,9 @@ class DraftUseCases:
             if draft.state != "ready_to_confirm":
                 raise ValidationError("draft is not ready to confirm")
             transaction = self.ledger.create_transaction(
-                draft.memo,
-                draft.proposed_postings,
-                category_id=draft.category_id,
+                memo=draft.memo,
+                purpose="draft_confirmed",
+                postings=draft.proposed_postings,
                 book_id=draft.book_id,
             )
             if draft.category_id is not None:

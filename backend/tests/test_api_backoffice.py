@@ -33,9 +33,15 @@ def test_backoffice_read_models_are_available_from_fastapi():
         },
         headers={**headers, "X-Idempotency-Key": f"backoffice-account-{suffix}"},
     )
+    category_parent_response = client.post(
+        "/api/v1/categories",
+        json={"kind": "expense", "name": f"Backoffice {suffix}"},
+        headers={**headers, "X-Idempotency-Key": f"backoffice-category-parent-{suffix}"},
+    )
+    assert category_parent_response.status_code == 200
     category_response = client.post(
         "/api/v1/categories",
-        json={"kind": "expense", "primary": f"Backoffice {suffix}", "secondary": "Coffee"},
+        json={"kind": "expense", "name": "Coffee", "parent_id": category_parent_response.json()["category"]["category_id"]},
         headers={**headers, "X-Idempotency-Key": f"backoffice-category-{suffix}"},
     )
     assert account_response.status_code == 200

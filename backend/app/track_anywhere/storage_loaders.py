@@ -65,7 +65,6 @@ class StorageLoaders:
                 occurred_at=datetime.fromisoformat(row.occurred_at),
                 purpose=row.purpose,
                 postings=postings_by_transaction.get(row.transaction_id, []),
-                category_id=row.category_id,
                 lines=lines_by_transaction.get(row.transaction_id, []),
                 reversed_by=row.reversed_by,
                 version=row.version,

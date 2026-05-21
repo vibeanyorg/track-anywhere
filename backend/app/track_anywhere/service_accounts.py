@@ -38,6 +38,7 @@ class AccountUseCases:
                 )
                 self.ledger.create_transaction(
                     memo=f"Opening balance: {command.name}",
+                    purpose="opening_balance",
                     postings=[
                         Posting(account.account_id, command.opening_balance, command.currency),
                         Posting(equity.account_id, -command.opening_balance, command.currency),

@@ -96,9 +96,15 @@ def reverse_book_transaction(book_id: str, transaction_id: str, payload: Reverse
 
 
 @router.get("/{book_id}/categories", dependencies=protected)
-def list_book_categories(book_id: str, token: AuthToken, kind: str | None = None):
+def list_book_categories(
+    book_id: str,
+    token: AuthToken,
+    kind: str | None = None,
+    name: str | None = None,
+    parent_id: str | None = None,
+):
     try:
-        return {"categories": serialize(service.list_book_categories(token, book_id, kind=kind))}
+        return {"categories": serialize(service.list_book_categories(token, book_id, kind=kind, name=name, parent_id=parent_id))}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "book.category.list")
 

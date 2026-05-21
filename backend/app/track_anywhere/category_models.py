@@ -10,7 +10,7 @@ from .books import DEFAULT_BOOK_ID, DEFAULT_OWNER_ID
 class Category:
     category_id: str
     kind: str
-    primary: str
+    primary: str = ""
     secondary: str | None = None
     book_id: str = DEFAULT_BOOK_ID
     parent_id: str | None = None
@@ -26,6 +26,8 @@ class Category:
 
     def __post_init__(self) -> None:
         self.name = self.name or self.secondary or self.primary
+        if not self.primary:
+            self.primary = self.name
         self.normalized_name = self.normalized_name or normalize_key(self.name)
         self.level = 2 if self.parent_id else 1
         self.path_cache = self.path_cache or self.primary if self.secondary is None else f"{self.primary} / {self.secondary}"

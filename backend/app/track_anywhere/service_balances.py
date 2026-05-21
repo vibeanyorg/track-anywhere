@@ -21,7 +21,7 @@ class BalanceUseCases:
                 raise ValidationError("balance adjustment currency must match account currency")
             adjustment_account_id = self._system_adjustment_account_id(command.currency, book_id=account.book_id)
             transaction = self.ledger.create_transaction(
-                memo=command.purpose,
+                memo=command.memo,
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
                 postings=[

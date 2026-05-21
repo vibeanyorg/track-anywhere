@@ -77,7 +77,6 @@ class TransactionRecord(Base):
     memo: Mapped[str] = mapped_column(String(256))
     occurred_at: Mapped[str] = mapped_column(String(80))
     purpose: Mapped[str] = mapped_column(String(256))
-    category_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     reversed_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
     version: Mapped[int] = mapped_column(Integer)
 
@@ -178,8 +177,6 @@ class CategoryRecord(Base):
     category_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     book_id: Mapped[str] = mapped_column(String(80), default="book_default")
     kind: Mapped[str] = mapped_column(String(20))
-    primary: Mapped[str] = mapped_column(String(80))
-    secondary: Mapped[str | None] = mapped_column(String(80), nullable=True)
     parent_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     name: Mapped[str] = mapped_column(String(80), default="")
     normalized_name: Mapped[str] = mapped_column(String(80), default="")
@@ -190,6 +187,18 @@ class CategoryRecord(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(40), default="active")
     version: Mapped[int] = mapped_column(Integer)
+
+
+class TransactionCategoryMigrationAuditRecord(Base):
+    __tablename__ = "transaction_category_migration_audit"
+
+    audit_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    transaction_id: Mapped[str] = mapped_column(String(80))
+    book_id: Mapped[str] = mapped_column(String(80))
+    legacy_category_id: Mapped[str] = mapped_column(String(80))
+    created_line_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    status: Mapped[str] = mapped_column(String(40))
+    reason: Mapped[str] = mapped_column(String(256))
 
 
 class CreditCardProfileRecord(Base):

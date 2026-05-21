@@ -56,7 +56,6 @@ class Transaction:
     occurred_at: datetime
     purpose: str
     postings: list[Posting]
-    category_id: str | None = None
     book_id: str = DEFAULT_BOOK_ID
     lines: list[TransactionLine] = field(default_factory=list)
     reversed_by: str | None = None
@@ -105,7 +104,6 @@ class Ledger:
         *,
         occurred_at: datetime | None = None,
         purpose: str | None = None,
-        category_id: str | None = None,
         book_id: str | None = None,
     ) -> Transaction:
         if len(postings) < 2:
@@ -133,7 +131,6 @@ class Ledger:
             occurred_at=occurred_at or datetime.now(timezone.utc),
             purpose=purpose or memo,
             postings=postings,
-            category_id=category_id,
             book_id=posting_book_id or DEFAULT_BOOK_ID,
             lines=[],
         )
@@ -191,6 +188,7 @@ class Ledger:
             raise ValidationError("transaction is already reversed")
         reversal = self.create_transaction(
             memo=memo,
+            purpose="reversal",
             postings=[
                 Posting(account_id=posting.account_id, amount=-posting.amount, currency=posting.currency)
                 for posting in transaction.postings

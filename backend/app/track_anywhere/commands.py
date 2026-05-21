@@ -98,15 +98,16 @@ class RecordTransactionCommand(StrictCommand):
     from_account_id: str
     to_account_id: str
     purpose: str = Field(min_length=1, max_length=256)
+    memo: str = Field(default="", max_length=256)
     category_id: str | None = None
 
 
 class CreateCategoryCommand(StrictCommand):
     kind: CATEGORY_KINDS
-    primary: str = Field(min_length=1, max_length=80)
-    secondary: str | None = Field(default=None, min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=80)
+    parent_id: str | None = None
 
-    @field_validator("primary", "secondary")
+    @field_validator("name")
     @classmethod
     def normalize_category_label(cls, value: str | None) -> str | None:
         if value is None:
@@ -181,6 +182,7 @@ class RecordExpenseCommand(StrictCommand):
     from_account_id: str
     category_id: str
     purpose: str = Field(min_length=1, max_length=256)
+    memo: str = Field(default="", max_length=256)
 
 
 class RecordIncomeCommand(StrictCommand):
@@ -190,6 +192,7 @@ class RecordIncomeCommand(StrictCommand):
     to_account_id: str
     category_id: str
     purpose: str = Field(min_length=1, max_length=256)
+    memo: str = Field(default="", max_length=256)
 
 
 class UpdateCreditCardProfileCommand(StrictCommand):
@@ -206,6 +209,7 @@ class BalanceAdjustmentCommand(StrictCommand):
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     purpose: str = Field(min_length=1, max_length=256)
+    memo: str = Field(default="", max_length=256)
 
     @field_validator("amount")
     @classmethod

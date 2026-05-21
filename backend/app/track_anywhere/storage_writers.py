@@ -33,7 +33,11 @@ IDEMPOTENCY_SECRET_KEYS = {
     "credential",
     "csrf_token",
     "idempotency_key",
+    "memo",
+    "note",
+    "notes",
     "password",
+    "raw_memo",
     "refresh_token",
     "target_token",
     "token",
@@ -52,17 +56,20 @@ def _is_idempotency_secret_key(key: str) -> bool:
 
 
 def redact_idempotency_result(value: Any) -> Any:
-    """Redact credentials without applying audit-log redaction to replay data.
+    """Redact secrets and free-text notes from persisted replay data.
 
-    Audit events intentionally redact human memo/note fields.  Idempotency
-    receipts need a replay snapshot of the business response, so applying the
-    audit redactor there makes replayed transactions lose their memo/purpose
-    after restart.  Receipts still must never persist bearer tokens or secrets.
+    Receipts need enough response shape for retry diagnostics, but memo/note
+    fields are user free text and may contain PII.  Keep structured purpose
+    values available while avoiding a second plaintext copy of private notes.
     """
 
     if isinstance(value, dict):
         return {
-            key: ("[REDACTED]" if _is_idempotency_secret_key(key) else redact_idempotency_result(item))
+            key: (
+                "[REDACTED]"
+                if _is_idempotency_secret_key(key) and item not in ("", None)
+                else redact_idempotency_result(item)
+            )
             for key, item in value.items()
         }
     if isinstance(value, list):
@@ -130,7 +137,6 @@ class StorageWriters:
                     memo=transaction.memo,
                     occurred_at=transaction.occurred_at.isoformat(),
                     purpose=transaction.purpose,
-                    category_id=transaction.category_id,
                     reversed_by=transaction.reversed_by,
                     version=transaction.version,
                 )

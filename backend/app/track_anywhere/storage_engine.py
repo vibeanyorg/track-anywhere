@@ -9,7 +9,7 @@ from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.pool import StaticPool
 
 
-DEFAULT_DATABASE_URL = "sqlite:///./.local/track-anywhere.sqlite3"
+DEFAULT_DATABASE_URL = "postgresql+psycopg://track_anywhere:track_anywhere@localhost:55432/track_anywhere"
 
 
 def database_url_from_env() -> str:

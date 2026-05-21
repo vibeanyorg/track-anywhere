@@ -146,8 +146,9 @@ class FinancialUseCases:
         def run():
             current_fund = self.budgets.require_current(command.fund_id, command.expected_version)
             transaction = self.ledger.create_transaction(
-                command.memo or f"Allocate to {current_fund.name}",
-                [
+                memo=command.memo,
+                purpose="fund_allocation",
+                postings=[
                     Posting(command.source_account_id, -command.amount, command.currency),
                     Posting(current_fund.account_id, command.amount, command.currency),
                 ],
@@ -187,8 +188,9 @@ class FinancialUseCases:
         def run():
             current_fund = self.budgets.require_current(command.fund_id, command.expected_version)
             transaction = self.ledger.create_transaction(
-                command.memo or f"Spend from {current_fund.name}",
-                [
+                memo=command.memo,
+                purpose="fund_spend",
+                postings=[
                     Posting(current_fund.account_id, -command.amount, command.currency),
                     Posting(command.expense_account_id, command.amount, command.currency),
                 ],

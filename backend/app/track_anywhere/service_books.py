@@ -84,9 +84,17 @@ class BookUseCases:
         command = CreateCategoryCommand.model_validate(payload)
         return self._create_category(token, command, idempotency_key=idempotency_key, book_id=book_id)
 
-    def list_book_categories(self, token: str, book_id: str, *, kind: str | None = None) -> list[Any]:
+    def list_book_categories(
+        self,
+        token: str,
+        book_id: str,
+        *,
+        kind: str | None = None,
+        name: str | None = None,
+        parent_id: str | None = None,
+    ) -> list[Any]:
         self.actor_for_book(token, book_id, "category:read")
-        return self.list_categories(token, kind=kind, book_id=book_id)
+        return self.list_categories(token, kind=kind, name=name, parent_id=parent_id, book_id=book_id)
 
     def update_book_category(self, token: str, book_id: str, category_id: str, payload: dict[str, Any], *, idempotency_key: str):
         actor = self.actor_from_token(token, "category:write")

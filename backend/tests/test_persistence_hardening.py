@@ -49,8 +49,51 @@ def test_record_transaction_idempotency_replays_without_occurred_at_after_restar
 
     assert replay is True
     assert replayed["transaction_id"] == transaction.transaction_id
-    assert replayed["memo"] == "secret lunch"
+    assert replayed["purpose"] == "secret lunch"
+    assert replayed["memo"] == ""
     assert second.account_balance(token, cash.account_id)["official_balance"]["amount"] == "90"
+
+
+def test_idempotency_receipts_redact_transaction_memo_snapshots(tmp_path):
+    database_path = tmp_path / "track-anywhere.sqlite3"
+    database_url = f"sqlite:///{database_path}"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Receipt Cash", "type": "asset", "currency": "CNY", "opening_balance": "100"},
+        idempotency_key="receipt-cash",
+    )
+    food, _ = service.create_account(
+        token,
+        {"name": "Receipt Food", "type": "expense", "currency": "CNY"},
+        idempotency_key="receipt-food",
+    )
+
+    service.record_transaction(
+        token,
+        {
+            "amount": "10",
+            "currency": "CNY",
+            "from_account_id": cash.account_id,
+            "to_account_id": food.account_id,
+            "purpose": "meal",
+            "memo": "Alice card ending 1234",
+        },
+        idempotency_key="receipt-lunch",
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        receipt_json = connection.execute(
+            """
+            select result
+            from idempotency_receipts
+            where operation = 'ledger.transaction.record'
+            """
+        ).fetchone()[0]
+
+    assert "Alice card ending 1234" not in receipt_json
+    assert '"memo": "[REDACTED]"' in receipt_json
 
 
 def test_fund_flows_replay_before_stale_version_checks(tmp_path):

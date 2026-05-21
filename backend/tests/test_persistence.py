@@ -44,6 +44,56 @@ def test_sqlite_persistence_survives_service_restart(tmp_path):
     assert second.account_balance(token, cash.account_id)["official_balance"]["amount"] == "75"
 
 
+def test_confirmed_transactions_keep_memo_separate_from_purpose(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
+    token = service.owner_token
+
+    cash, _ = service.create_account(
+        token,
+        {"name": "Memo Cash", "type": "asset", "currency": "CNY", "opening_balance": "100"},
+        idempotency_key="memo-cash",
+    )
+    food, _ = service.create_account(
+        token,
+        {"name": "Memo Food", "type": "expense", "currency": "CNY"},
+        idempotency_key="memo-food",
+    )
+
+    transaction, _ = service.record_transaction(
+        token,
+        {
+            "amount": "25",
+            "currency": "CNY",
+            "from_account_id": cash.account_id,
+            "to_account_id": food.account_id,
+            "purpose": "meal",
+            "memo": "Lunch with Alice, card ending 1234",
+        },
+        idempotency_key="memo-lunch",
+    )
+    no_memo_transaction, _ = service.record_transaction(
+        token,
+        {
+            "amount": "5",
+            "currency": "CNY",
+            "from_account_id": cash.account_id,
+            "to_account_id": food.account_id,
+            "purpose": "snack",
+        },
+        idempotency_key="memo-snack",
+    )
+
+    restarted = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
+
+    assert transaction.purpose == "meal"
+    assert transaction.memo == "Lunch with Alice, card ending 1234"
+    assert no_memo_transaction.purpose == "snack"
+    assert no_memo_transaction.memo == ""
+    assert restarted.ledger.transactions[transaction.transaction_id].memo == "Lunch with Alice, card ending 1234"
+    assert restarted.ledger.transactions[no_memo_transaction.transaction_id].memo == ""
+
+
 def test_idempotency_receipts_persist_across_restart(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}"
     first = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
@@ -166,10 +216,7 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
     FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
 
     with sqlite3.connect(database_path) as connection:
-        tables = {
-            row[0]
-            for row in connection.execute("select name from sqlite_master where type = 'table'").fetchall()
-        }
+        tables = {row[0] for row in connection.execute("select name from sqlite_master where type = 'table'").fetchall()}
         version = connection.execute("select version_num from alembic_version").fetchone()[0]
         account_columns = {
             row[1]: row[2]
@@ -182,7 +229,7 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
     assert "transactions" in tables
     assert "postings" in tables
     assert "recurring_items" in tables
-    assert version == "0005_password_accounts"
+    assert version == "0008_retire_legacy_categories"
     assert account_columns["currency"].upper() == "VARCHAR(16)"
     assert account_columns["book_id"].upper() == "VARCHAR(80)"
     assert {"category_id", "metadata"} <= draft_columns
@@ -232,9 +279,10 @@ def test_alembic_adopts_legacy_sqlite_schema_without_destroying_data(tmp_path):
             for row in connection.execute("select name from sqlite_master where type = 'table'").fetchall()
         }
 
-    assert version == "0005_password_accounts"
+    assert version == "0008_retire_legacy_categories"
     assert {"institution_type", "subtype", "institution", "book_id"} <= account_columns
-    assert {"category_id", "book_id"} <= transaction_columns
+    assert "book_id" in transaction_columns
+    assert "category_id" not in transaction_columns
     assert {"recurring_items", "ledger_books", "transaction_lines", "auth_identities", "password_accounts"} <= tables
 
 
@@ -248,4 +296,4 @@ def test_alembic_migrations_are_idempotent_across_restart(tmp_path):
     with sqlite3.connect(database_path) as connection:
         versions = connection.execute("select version_num from alembic_version").fetchall()
 
-    assert versions == [("0005_password_accounts",)]
+    assert versions == [("0008_retire_legacy_categories",)]

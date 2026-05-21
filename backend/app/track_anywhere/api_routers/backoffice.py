@@ -185,14 +185,21 @@ def list_transactions(
 ):
     try:
         _require_backoffice(token)
-        items = serialize(list(service.ledger.transactions.values()))
+        transactions = list(service.ledger.transactions.values())
+        if category_id is not None:
+            transactions = [
+                transaction
+                for transaction in transactions
+                if any(line.category_id == category_id for line in transaction.lines)
+            ]
+        items = serialize(transactions)
         return _filter_rows(
             items,
-            exact={"book_id": book_id, "category_id": category_id, "reversed_by": reversed_by},
+            exact={"book_id": book_id, "reversed_by": reversed_by},
             search=search,
             search_fields=("transaction_id", "purpose", "memo"),
             ordering=ordering,
-            ordering_fields=("transaction_id", "book_id", "occurred_at", "purpose", "category_id"),
+            ordering_fields=("transaction_id", "book_id", "occurred_at", "purpose"),
         )
     except TrackAnywhereError as exc:
         raise_command_error(exc, "backoffice.transaction.list")

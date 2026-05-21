@@ -218,7 +218,7 @@ def test_complete_draft_rejects_cross_currency_accounts():
         )
 
 
-def test_category_summary_does_not_mutate_legacy_transaction_lines(tmp_path):
+def test_category_summary_uses_persisted_lines_only(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}"
     service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
     token = service.owner_token
@@ -234,7 +234,7 @@ def test_category_summary_does_not_mutate_legacy_transaction_lines(tmp_path):
     )
     category, _ = service.create_category(
         token,
-        {"kind": "expense", "primary": "Food"},
+        {"kind": "expense", "name": "Food"},
         idempotency_key="legacy-line-category",
     )
     budget, _ = service.create_budget(
@@ -251,35 +251,34 @@ def test_category_summary_does_not_mutate_legacy_transaction_lines(tmp_path):
         idempotency_key="legacy-line-budget-target",
     )
     transaction = service.ledger.create_transaction(
-        "legacy categorized tx",
+        "line-only categorized tx",
         [
             Posting(cash.account_id, Decimal("-12"), "CNY"),
             Posting(expense_account.account_id, Decimal("12"), "CNY"),
         ],
-        category_id=category.category_id,
     )
     service._persist()
 
     assert transaction.lines == []
     summary = service.category_summary(token, kind="expense", currency="CNY")
 
-    assert summary["groups"][0]["amount"] == "12"
+    assert summary["groups"] == []
     assert transaction.lines == []
+    service._add_category_line_for_transaction(transaction, category)
     service._persist()
 
     restarted = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
-    assert restarted.ledger.transactions[transaction.transaction_id].lines == []
     restarted_summary = restarted.category_summary(token, kind="expense", currency="CNY")
     assert restarted_summary["groups"][0]["amount"] == "12"
     spending = restarted.spending_report(token, "book_default", group_by="category_parent", currency="CNY")
     execution = restarted.budget_execution_report(token, "book_default", budget.budget_id)
     assert spending["groups"] == [{"key": "Food", "currency": "CNY", "amount": "12", "line_count": 1}]
     assert execution["spent"] == "12"
-    assert restarted.ledger.transactions[transaction.transaction_id].lines == []
+    assert restarted.ledger.transactions[transaction.transaction_id].lines[0].category_id == category.category_id
 
     with sqlite3.connect(tmp_path / "track-anywhere.sqlite3") as connection:
         line_count = connection.execute(
             "select count(*) from transaction_lines where transaction_id = ?",
             (transaction.transaction_id,),
         ).fetchone()[0]
-    assert line_count == 0
+    assert line_count == 1

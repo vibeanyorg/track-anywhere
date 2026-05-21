@@ -7,6 +7,13 @@ from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
 
+def category_payload(kind: str, name: str, parent_id: str | None = None) -> dict[str, str]:
+    payload = {"kind": kind, "name": name}
+    if parent_id is not None:
+        payload["parent_id"] = parent_id
+    return payload
+
+
 def test_books_scope_accounts_to_separate_ledgers(tmp_path):
     service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
     token = service.owner_token
@@ -86,16 +93,9 @@ def test_category_tree_versions_preserve_line_snapshot_after_rename(tmp_path):
         {"name": "Cash", "type": "asset", "currency": "CNY", "opening_balance": "200"},
         idempotency_key="snapshot-cash",
     )
-    delivery, _ = service.create_category(
-        token,
-        {"kind": "expense", "primary": "餐饮", "secondary": "外卖"},
-        idempotency_key="snapshot-delivery",
-    )
-    parent = next(
-        category
-        for category in service.list_categories(token, kind="expense", primary="餐饮")
-        if category.secondary is None
-    )
+    food, _ = service.create_category(token, category_payload("expense", "餐饮"), idempotency_key="snapshot-food")
+    delivery, _ = service.create_category(token, category_payload("expense", "外卖", food.category_id), idempotency_key="snapshot-delivery")
+    parent = next(category for category in service.list_categories(token, kind="expense", name="餐饮") if category.level == 1)
     transaction, _ = service.record_expense(
         token,
         {
@@ -130,12 +130,9 @@ def test_budget_targets_and_spending_report_use_lines(tmp_path):
         {"name": "Budget Cash", "type": "asset", "currency": "CNY", "opening_balance": "500"},
         idempotency_key="budget-cash",
     )
-    lunch, _ = service.create_category(
-        token,
-        {"kind": "expense", "primary": "餐饮", "secondary": "午餐"},
-        idempotency_key="budget-lunch",
-    )
-    parent = next(category for category in service.list_categories(token, kind="expense", primary="餐饮") if category.level == 1)
+    food, _ = service.create_category(token, category_payload("expense", "餐饮"), idempotency_key="budget-food-parent")
+    lunch, _ = service.create_category(token, category_payload("expense", "午餐", food.category_id), idempotency_key="budget-lunch")
+    parent = next(category for category in service.list_categories(token, kind="expense", name="餐饮") if category.level == 1)
     budget, _ = service.create_budget(
         token,
         book.book_id,
@@ -173,11 +170,8 @@ def test_budget_execution_supports_project_and_merchant_targets(tmp_path):
         {"name": "Dimension Cash", "type": "asset", "currency": "CNY", "opening_balance": "500"},
         idempotency_key="dimension-cash",
     )
-    category, _ = service.create_category(
-        token,
-        {"kind": "expense", "primary": "交通", "secondary": "打车"},
-        idempotency_key="dimension-taxi",
-    )
+    traffic, _ = service.create_category(token, category_payload("expense", "交通"), idempotency_key="dimension-traffic")
+    category, _ = service.create_category(token, category_payload("expense", "打车", traffic.category_id), idempotency_key="dimension-taxi")
     budget, _ = service.create_budget(
         token,
         book.book_id,
@@ -229,12 +223,8 @@ def test_book_scoped_recurring_generates_drafts_in_book(tmp_path):
         {"name": "Travel Cash", "type": "asset", "currency": "CNY", "opening_balance": "300"},
         idempotency_key="recurring-travel-cash",
     )
-    category, _ = service.create_book_category(
-        token,
-        travel_book.book_id,
-        {"kind": "expense", "primary": "交通", "secondary": "地铁"},
-        idempotency_key="recurring-travel-category",
-    )
+    traffic, _ = service.create_book_category(token, travel_book.book_id, category_payload("expense", "交通"), idempotency_key="recurring-travel-parent")
+    category, _ = service.create_book_category(token, travel_book.book_id, category_payload("expense", "地铁", traffic.category_id), idempotency_key="recurring-travel-category")
     item, _ = service.create_recurring_item(
         token,
         {

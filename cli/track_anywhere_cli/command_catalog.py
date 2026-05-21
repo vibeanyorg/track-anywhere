@@ -28,7 +28,7 @@ def handle_catalog_command(args: Namespace, config: CliConfig, requester: Reques
     if args.command == "user" and args.user_command == "list":
         return requester(config, "GET", "/api/v1/users")
     if args.command == "category" and args.category_command == "create":
-        payload = compact_payload({"kind": args.kind, "primary": args.primary, "secondary": args.secondary})
+        payload = compact_payload({"kind": args.kind, "name": args.name, "parent_id": args.parent_id})
         return requester(
             config,
             "POST",
@@ -39,7 +39,7 @@ def handle_catalog_command(args: Namespace, config: CliConfig, requester: Reques
     if args.command == "category" and args.category_command in {"list", "find"}:
         path = with_query(
             "/api/v1/categories",
-            {"kind": args.kind, "primary": args.primary, "secondary": args.secondary},
+            {"kind": args.kind, "name": args.name, "parent_id": args.parent_id},
         )
         return requester(config, "GET", path)
     if args.command == "category" and args.category_command == "show":

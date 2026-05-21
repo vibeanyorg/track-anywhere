@@ -53,7 +53,7 @@ Security is a prerequisite for high-authority Agent/OCR flows, not a final harde
 
 ## Persistence
 
-Local development uses SQLite at `.local/track-anywhere.sqlite3` by default. Override storage with `TRACK_ANYWHERE_DATABASE_URL`; for Postgres use a SQLAlchemy URL such as `postgresql+psycopg://user:password@localhost:5432/track_anywhere` and install the `postgres` extra.
+Local development uses PostgreSQL by default. Start the local database with `docker compose up -d postgres`; the default SQLAlchemy URL is `postgresql+psycopg://track_anywhere:track_anywhere@localhost:55432/track_anywhere`. Override storage with `TRACK_ANYWHERE_DATABASE_URL` for Neon or any other Postgres target. SQLite remains available for focused tests by passing an explicit `sqlite:///...` URL.
 
 Database schema changes are applied through Alembic migrations in `alembic/versions`. Service startup runs `alembic upgrade head` programmatically before the ORM snapshot layer loads data, and Alembic records the active revision in `alembic_version`.
 

@@ -110,13 +110,7 @@ class FinanceService(
             account.book_id = account.book_id or DEFAULT_BOOK_ID
         for category in list(self.categories.categories.values()):
             category.book_id = category.book_id or DEFAULT_BOOK_ID
-            if category.secondary is not None and category.parent_id is None:
-                parent = self.categories.find(kind=category.kind, primary=category.primary, book_id=category.book_id)
-                if parent is None:
-                    parent = self.categories.create(kind=category.kind, primary=category.primary, book_id=category.book_id)
-                category.parent_id = parent.category_id
-                category.name = category.secondary
-                self.categories._sync_legacy_fields(category)
+            self.categories._sync_display_fields(category)
             if not any(version.category_id == category.category_id for version in self.categories.versions.values()):
                 self.categories._record_version(category, "migration")
         for transaction in self.ledger.transactions.values():

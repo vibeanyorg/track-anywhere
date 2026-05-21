@@ -29,6 +29,19 @@ def _money_amounts(rows: Any) -> str:
     return ", ".join(parts)
 
 
+def _transaction_category(transaction: dict[str, Any]) -> Any:
+    lines = transaction.get("lines")
+    if isinstance(lines, list):
+        categories = [
+            line.get("category_id")
+            for line in lines
+            if isinstance(line, dict) and line.get("category_id") is not None
+        ]
+        if categories:
+            return ", ".join(str(category_id) for category_id in categories)
+    return transaction.get("category_id")
+
+
 def transaction_summary(data: Any, *, title: str) -> Table:
     transaction = _as_dict(_as_dict(data).get("transaction"))
     if not transaction:
@@ -40,7 +53,7 @@ def transaction_summary(data: Any, *, title: str) -> Table:
         ("Memo", transaction.get("memo")),
         ("Purpose", transaction.get("purpose")),
         ("Occurred at", transaction.get("occurred_at")),
-        ("Category", transaction.get("category_id")),
+        ("Category", _transaction_category(transaction)),
         ("Version", transaction.get("version")),
         ("Reversed by", transaction.get("reversed_by")),
         ("Amount row count", amount_row_count),
@@ -71,7 +84,7 @@ def transaction_list_summary(data: Any) -> Table | Panel:
             _stringify(tx.get("memo")),
             _stringify(tx.get("purpose")),
             _stringify(tx.get("occurred_at")),
-            _stringify(tx.get("category_id")),
+            _stringify(_transaction_category(tx)),
             _money_amounts(tx.get("postings") or tx.get("lines")),
             _stringify(tx.get("version")),
         )

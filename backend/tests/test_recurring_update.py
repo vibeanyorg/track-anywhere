@@ -20,7 +20,7 @@ def test_failed_recurring_update_does_not_mutate_item(tmp_path):
     )
     category, _ = service.create_category(
         token,
-        {"kind": "expense", "primary": "Subscriptions"},
+        {"kind": "expense", "name": "Subscriptions"},
         idempotency_key="rec-update-category",
     )
     item, _ = service.create_recurring_item(

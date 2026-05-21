@@ -19,24 +19,22 @@ class CategoryBook(CategoryHistoryMixin):
         self,
         *,
         kind: str,
-        primary: str,
-        secondary: str | None = None,
+        name: str,
+        parent_id: str | None = None,
         book_id: str = DEFAULT_BOOK_ID,
     ) -> Category:
-        primary = _normalize_label(primary, "primary")
-        secondary = _normalize_label(secondary, "secondary") if secondary is not None else None
+        name = _normalize_label(name, "name")
         self._validate_kind(kind)
-        parent = self._find_node(book_id=book_id, kind=kind, parent_id=None, name=primary)
-        if secondary is None:
-            if parent is not None and parent.status == "active":
-                raise ValidationError("category already exists")
-            return self._create_node(book_id=book_id, kind=kind, name=primary, parent=None)
-        if parent is None:
-            parent = self._create_node(book_id=book_id, kind=kind, name=primary, parent=None)
-        existing = self._find_node(book_id=book_id, kind=kind, parent_id=parent.category_id, name=secondary)
+        parent = self.get(parent_id) if parent_id is not None else None
+        if parent is not None:
+            if parent.book_id != book_id or parent.kind != kind:
+                raise ValidationError("category parent must belong to the same book and kind")
+            if parent.level != 1:
+                raise ValidationError("category parent must be a first-level category")
+        existing = self._find_node(book_id=book_id, kind=kind, parent_id=parent_id, name=name)
         if existing is not None and existing.status == "active":
             raise ValidationError("category already exists")
-        return self._create_node(book_id=book_id, kind=kind, name=secondary, parent=parent)
+        return self._create_node(book_id=book_id, kind=kind, name=name, parent=parent)
 
     def get(self, category_id: str) -> Category:
         try:
@@ -44,28 +42,12 @@ class CategoryBook(CategoryHistoryMixin):
         except KeyError as exc:
             raise NotFound(f"category not found: {category_id}") from exc
 
-    def find(
-        self,
-        *,
-        kind: str,
-        primary: str,
-        secondary: str | None = None,
-        book_id: str = DEFAULT_BOOK_ID,
-    ) -> Category | None:
-        self._validate_kind(kind)
-        parent = self._find_node(book_id=book_id, kind=kind, parent_id=None, name=primary)
-        if secondary is None:
-            return parent
-        if parent is None:
-            return None
-        return self._find_node(book_id=book_id, kind=kind, parent_id=parent.category_id, name=secondary)
-
     def list(
         self,
         *,
         kind: str | None = None,
-        primary: str | None = None,
-        secondary: str | None = None,
+        name: str | None = None,
+        parent_id: str | None = None,
         book_id: str | None = None,
         status: str | None = "active",
     ) -> list[Category]:
@@ -76,10 +58,11 @@ class CategoryBook(CategoryHistoryMixin):
             categories = [category for category in categories if category.status == status]
         if kind is not None:
             categories = [category for category in categories if category.kind == kind]
-        if primary is not None:
-            categories = [category for category in categories if category.primary == primary]
-        if secondary is not None:
-            categories = [category for category in categories if category.secondary == secondary]
+        if name is not None:
+            normalized_name = normalize_key(name)
+            categories = [category for category in categories if category.normalized_name == normalized_name]
+        if parent_id is not None:
+            categories = [category for category in categories if category.parent_id == parent_id]
         return sorted(
             categories,
             key=lambda category: (
@@ -108,7 +91,7 @@ class CategoryBook(CategoryHistoryMixin):
         self._set_node_name(category, name)
         self._record_version(category, "rename")
         for child in self._children(category.category_id):
-            self._sync_legacy_fields(child)
+            self._sync_display_fields(child)
             self._record_version(child, "parent_rename")
         self._record_event("rename", category.book_id, category.category_id, before=before, after=self._snapshot(category), actor_id=actor_id)
         return category
@@ -125,7 +108,7 @@ class CategoryBook(CategoryHistoryMixin):
             raise ValidationError("category already exists under target parent")
         before = self._snapshot(category)
         category.parent_id = parent.category_id
-        self._sync_legacy_fields(category)
+        self._sync_display_fields(category)
         category.version += 1
         self._record_version(category, "move")
         self._record_event("move", category.book_id, category.category_id, target_id=parent.category_id, before=before, after=self._snapshot(category), actor_id=actor_id)
@@ -203,7 +186,7 @@ class CategoryBook(CategoryHistoryMixin):
             name=name,
         )
         self.categories[category.category_id] = category
-        self._sync_legacy_fields(category)
+        self._sync_display_fields(category)
         self._record_version(category, "create")
         self._record_event("create", category.book_id, category.category_id, after=self._snapshot(category))
         return category
@@ -228,9 +211,9 @@ class CategoryBook(CategoryHistoryMixin):
         category.name = name
         category.normalized_name = normalize_key(name)
         category.version += 1
-        self._sync_legacy_fields(category)
+        self._sync_display_fields(category)
 
-    def _sync_legacy_fields(self, category: Category) -> None:
+    def _sync_display_fields(self, category: Category) -> None:
         parent = self.categories.get(category.parent_id) if category.parent_id else None
         if parent is None:
             category.primary = category.name

@@ -94,12 +94,14 @@ def test_api_local_auth_record_transaction_and_adjust_balance_mvp():
             "from_account_id": cash_id,
             "to_account_id": food_id,
             "purpose": "lunch",
+            "memo": "Lunch with Alice, card ending 1234",
         },
         headers={**headers, "X-Idempotency-Key": "api-mvp-record"},
     )
     assert tx_resp.status_code == 200
     tx = tx_resp.json()["transaction"]
     assert tx["purpose"] == "lunch"
+    assert tx["memo"] == "Lunch with Alice, card ending 1234"
     assert tx["occurred_at"] == "2026-05-16T12:30:00+08:00"
 
     adjust_resp = client.post(

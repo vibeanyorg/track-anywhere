@@ -20,9 +20,15 @@ def test_api_recurring_create_remind_and_generate_draft_flow():
         json={"name": "Recurring API USD", "type": "asset", "currency": "USD", "opening_balance": "100"},
         headers={**headers, "X-Idempotency-Key": "api-recurring-usd"},
     )
+    parent_resp = client.post(
+        "/api/v1/categories",
+        json={"kind": "expense", "name": "Subscriptions"},
+        headers={**headers, "X-Idempotency-Key": "api-recurring-category-parent"},
+    )
+    assert parent_resp.status_code == 200
     category_resp = client.post(
         "/api/v1/categories",
-        json={"kind": "expense", "primary": "Subscriptions", "secondary": "API"},
+        json={"kind": "expense", "name": "API", "parent_id": parent_resp.json()["category"]["category_id"]},
         headers={**headers, "X-Idempotency-Key": "api-recurring-category"},
     )
     assert account_resp.status_code == 200

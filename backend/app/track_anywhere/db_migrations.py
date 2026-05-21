@@ -23,7 +23,6 @@ LEGACY_SQLITE_COLUMNS = {
     },
     "transactions": {
         "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
-        "category_id": "VARCHAR(80)",
     },
     "drafts": {
         "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
@@ -63,7 +62,7 @@ def run_migrations(engine: Engine, metadata: MetaData | None = None) -> None:
         if metadata is not None and _needs_legacy_sqlite_adoption(connection):
             metadata.create_all(connection)
             _apply_legacy_sqlite_columns(connection)
-            command.stamp(config, "head")
+            command.stamp(config, "0007_drop_django_tables")
         command.upgrade(config, "head")
 
 
