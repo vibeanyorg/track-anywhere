@@ -10,7 +10,8 @@ from .config import CliConfig, TokenStore, resolve_token_with_diagnostics
 from .device_login import run_device_login
 from .exit_codes import EXIT_VALIDATION
 from .interaction import ClickInteraction, Interaction, inform
-from .oauth_login import DEFAULT_CLI_SCOPE, DEFAULT_WEB_URL, create_browser_login_request, exchange_callback_for_token
+from .browser_login import capture_browser_callback
+from .oauth_login import DEFAULT_CLI_SCOPE, DEFAULT_WEB_URL, exchange_callback_for_token
 from .output import CliDiagnostic
 from .renderers import emit_outcome
 from .runtime import build_outcome
@@ -206,16 +207,17 @@ def run_login(
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
 
-    login_request = create_browser_login_request(web_url=web_url or state.base_url or DEFAULT_WEB_URL, client_id=client_id, scope=scope)
-    if not callback_value:
-        interaction.open_url(login_request.auth_url)
-        inform(interaction, "Open this URL to authorize Track Anywhere CLI:")
-        inform(interaction, login_request.auth_url)
-    callback = callback_value or interaction.prompt("Paste the callback URL")
+    callback_capture = capture_browser_callback(
+        web_url=web_url or state.base_url or DEFAULT_WEB_URL,
+        client_id=client_id,
+        scope=scope,
+        callback_value=callback_value,
+        interaction=interaction,
+    )
     try:
         status, data = exchange_callback_for_token(
-            request=login_request,
-            callback_value=callback,
+            request=callback_capture.request,
+            callback_value=callback_capture.callback_value,
             config=CliConfig(base_url=state.base_url, token=None, insecure_automation=state.insecure_automation),
             requester=state.requester,
         )

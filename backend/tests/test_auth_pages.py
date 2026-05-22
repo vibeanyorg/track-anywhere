@@ -159,6 +159,33 @@ def test_fastapi_cli_callback_page_can_select_available_scopes():
     assert token.json()["scope"] == "account:read account:write book:read"
 
 
+def test_fastapi_cli_callback_redirects_to_local_pkce_listener():
+    assert app is not None
+    client = TestClient(app)
+    query = {
+        "client_id": "track-anywhere-web",
+        "redirect_uri": "http://127.0.0.1:65123/callback",
+        "scope": "account:read book:read ledger:read",
+        "state": "state-local-listener",
+        "code_challenge": _pkce_challenge("f" * 64),
+        "code_challenge_method": "S256",
+    }
+
+    client.post("/api/v1/session/dev-local")
+    approved = client.post(
+        "/api/v1/auth/callback",
+        data={**query, "action": "approve", "csrf_token": client.cookies.get("ta_csrf")},
+        follow_redirects=False,
+    )
+
+    location = approved.headers["location"]
+    params = parse_qs(urlparse(location).query)
+    assert approved.status_code == 303
+    assert location.startswith("http://127.0.0.1:65123/callback?")
+    assert params["state"] == ["state-local-listener"]
+    assert params["code"][0]
+
+
 def test_fastapi_cli_callback_rejects_disallowed_scope_selection():
     assert app is not None
     client = TestClient(app)

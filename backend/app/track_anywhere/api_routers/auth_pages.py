@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from html import escape
 from typing import Annotated
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -154,7 +154,7 @@ def cli_callback_approve(
         )
     except (PolicyDenied, ValidationError, ValueError) as exc:
         return _approval_form(request, identity=identity, csrf_token=csrf_token, error=str(exc), status_code=400, values=form_values, available_scope_text=available_scope_text)
-    return _callback_result(result["redirect_uri"])
+    return _callback_delivery(result["redirect_uri"])
 
 
 def _issue_password_session(*, email: str, display_name: str, role: str, next_path: str):
@@ -245,6 +245,13 @@ def _callback_result(callback_url: str) -> HTMLResponse:
       </section>
     """
     return _page("CLI callback", body)
+
+
+def _callback_delivery(callback_url: str) -> HTMLResponse | RedirectResponse:
+    parsed = urlparse(callback_url)
+    if parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"} and parsed.path == "/callback":
+        return RedirectResponse(callback_url, status_code=303)
+    return _callback_result(callback_url)
 
 
 def _page(title: str, body: str, status_code: int = 200) -> HTMLResponse:

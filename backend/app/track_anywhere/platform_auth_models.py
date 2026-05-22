@@ -139,7 +139,7 @@ def redirect_uri_allowed(client: PlatformClient, redirect_uri: str) -> bool:
         client.client_id == DEFAULT_PLATFORM_CLIENT_ID
         and parsed.scheme == "http"
         and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
-        and parsed.path in {"/auth/callback", "/api/v1/auth/callback"}
+        and parsed.path in {"/auth/callback", "/api/v1/auth/callback", "/callback"}
     )
 
 

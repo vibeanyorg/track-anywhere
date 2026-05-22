@@ -42,9 +42,11 @@ def create_browser_login_request(
     web_url: str = DEFAULT_WEB_URL,
     client_id: str = DEFAULT_PLATFORM_CLIENT_ID,
     scope: str = DEFAULT_CLI_SCOPE,
+    redirect_uri: str | None = None,
 ) -> BrowserLoginRequest:
     base_web_url = web_url.rstrip("/")
-    redirect_uri = f"{base_web_url}/api/v1/auth/callback"
+    auth_endpoint = f"{base_web_url}/api/v1/auth/callback"
+    redirect_uri = redirect_uri or auth_endpoint
     state = _random_base64_url(18)
     verifier = _random_base64_url(48)
     query = urlencode(
@@ -58,7 +60,7 @@ def create_browser_login_request(
         }
     )
     return BrowserLoginRequest(
-        auth_url=f"{redirect_uri}?{query}",
+        auth_url=f"{auth_endpoint}?{query}",
         client_id=client_id,
         redirect_uri=redirect_uri,
         scope=scope,
