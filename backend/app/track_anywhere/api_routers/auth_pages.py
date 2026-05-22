@@ -74,6 +74,7 @@ def session_view(request: Request) -> HTMLResponse:
         <p class="eyebrow">Track Anywhere</p>
         <h1>{escape(str(name))}</h1>
         <p class="muted">You are signed in. You can return to the CLI or continue using the API.</p>
+        <a class="secondary" href="/api/v1/auth/machine-tokens">Manage machine tokens</a>
         <form method="post" action="/api/v1/auth/logout"><button type="submit">Sign out</button></form>
       </section>
     """

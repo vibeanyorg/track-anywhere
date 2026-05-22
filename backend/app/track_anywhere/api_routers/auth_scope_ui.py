@@ -26,7 +26,7 @@ def scope_controls(scope_text: str, available_scope_text: str | None = None) -> 
     return f"""
       <fieldset class="scope-panel">
         <legend>Token permissions</legend>
-        <p class="muted">The CLI default request is preselected. Add or remove permissions for this token.</p>
+        <p class="muted">The token default request is preselected. Add or remove permissions for this token.</p>
         <label class="scope-option scope-all">
           <input type="checkbox" data-scope-all>
           <span>All available permissions</span>
