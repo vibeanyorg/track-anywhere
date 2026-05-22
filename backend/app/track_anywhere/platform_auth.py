@@ -129,7 +129,7 @@ class PlatformKeyExchange:
             "interval": grant.interval_seconds,
         }
 
-    def approve_device_user_code(self, user_code: str, actor: Actor, action: str, storage=None) -> DeviceGrant:
+    def approve_device_user_code(self, user_code: str, actor: Actor, action: str, storage=None, approved_scopes: list[str] | None = None) -> DeviceGrant:
         user_hash = hash_secret(normalize_user_code(user_code))
         grant = (storage.load_device_grant_by_user_hash(user_hash) if storage is not None else None) or self._device_by_user_hash(user_hash)
         if grant is None or grant.expires_at <= utcnow() or grant.status != "pending":
@@ -137,7 +137,14 @@ class PlatformKeyExchange:
         if action == "deny":
             grant.status = "denied"
         else:
-            self._ensure_actor_can_approve(grant.scopes, actor)
+            scopes = tuple(dict.fromkeys(approved_scopes)) if approved_scopes is not None else grant.scopes
+            if not scopes:
+                raise ValidationError("select at least one scope")
+            unexpected_scopes = set(scopes) - set(grant.scopes)
+            if unexpected_scopes:
+                raise ValidationError(f"approved scopes were not requested: {sorted(unexpected_scopes)}")
+            self._ensure_actor_can_approve(scopes, actor)
+            grant.scopes = scopes
             grant.status = "approved"
             grant.approved_actor = actor
             grant.approved_at = utcnow()

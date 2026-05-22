@@ -174,7 +174,7 @@ def run_login(
         return outcome.exit_code
 
     if device:
-        return _run_device_login(
+        return run_device_login(
             state,
             output_json=output_json,
             output_no_color=output_no_color,

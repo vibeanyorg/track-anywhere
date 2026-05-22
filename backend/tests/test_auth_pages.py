@@ -21,6 +21,15 @@ def _pkce_challenge(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
+def _create_device_authorization(client: TestClient, scope: str) -> dict:
+    response = client.post(
+        "/api/v1/oauth/device/authorize",
+        json={"client_id": "track-anywhere-web", "scope": scope},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
 def test_fastapi_login_page_renders_password_form():
     assert app is not None
     response = TestClient(app).get("/api/v1/auth/login")
@@ -96,3 +105,135 @@ def test_fastapi_cli_callback_requires_login_then_approves_code():
     assert "state-fastapi-page" in callback_url
     assert token.status_code == 200
     assert token.json()["token_type"] == "Bearer"
+
+
+def test_fastapi_cli_callback_page_can_downscope_requested_scopes():
+    assert app is not None
+    client = TestClient(app)
+    verifier = "d" * 64
+    query = {
+        "client_id": "track-anywhere-web",
+        "redirect_uri": "http://127.0.0.1:8000/api/v1/auth/callback",
+        "scope": "account:read book:read ledger:read",
+        "state": "state-downscope",
+        "code_challenge": _pkce_challenge(verifier),
+        "code_challenge_method": "S256",
+    }
+
+    client.post("/api/v1/session/dev-local")
+    page = client.get("/api/v1/auth/callback", params=query)
+    approved = client.post(
+        "/api/v1/auth/callback",
+        data={
+            **query,
+            "action": "approve",
+            "csrf_token": client.cookies.get("ta_csrf"),
+            "scope_selection_present": "1",
+            "approved_scope": ["account:read", "book:read"],
+        },
+    )
+
+    callback_url = unescape(approved.text.split("<textarea readonly>", 1)[1].split("</textarea>", 1)[0])
+    code = parse_qs(urlparse(callback_url).query)["code"][0]
+    token = client.post(
+        "/api/v1/oauth/token",
+        json={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": "track-anywhere-web",
+            "redirect_uri": query["redirect_uri"],
+            "code_verifier": verifier,
+        },
+    )
+
+    assert page.status_code == 200
+    assert "Requested access" in page.text
+    assert 'name="approved_scope" value="account:read"' in page.text
+    assert 'name="approved_scope" value="ledger:read"' in page.text
+    assert approved.status_code == 200
+    assert token.status_code == 200
+    assert token.json()["scope"] == "account:read book:read"
+
+
+def test_fastapi_cli_callback_rejects_scope_expansion_from_form_tampering():
+    assert app is not None
+    client = TestClient(app)
+    query = {
+        "client_id": "track-anywhere-web",
+        "redirect_uri": "http://127.0.0.1:8000/api/v1/auth/callback",
+        "scope": "account:read",
+        "state": "state-tamper",
+        "code_challenge": _pkce_challenge("e" * 64),
+        "code_challenge_method": "S256",
+    }
+
+    client.post("/api/v1/session/dev-local")
+    approved = client.post(
+        "/api/v1/auth/callback",
+        data={
+            **query,
+            "action": "approve",
+            "csrf_token": client.cookies.get("ta_csrf"),
+            "scope_selection_present": "1",
+            "approved_scope": ["account:read", "ledger:read"],
+        },
+    )
+
+    assert approved.status_code == 400
+    assert "approved scopes were not requested" in approved.text
+
+
+def test_fastapi_device_page_can_downscope_requested_scopes():
+    assert app is not None
+    client = TestClient(app)
+    authorization = _create_device_authorization(client, "account:read book:read ledger:read")
+
+    client.post("/api/v1/session/dev-local")
+    page = client.get("/api/v1/auth/device", params={"user_code": authorization["user_code"]})
+    approved = client.post(
+        "/api/v1/auth/device",
+        data={
+            "user_code": authorization["user_code"],
+            "action": "approve",
+            "csrf_token": client.cookies.get("ta_csrf"),
+            "scope_selection_present": "1",
+            "approved_scope": ["account:read", "book:read"],
+        },
+    )
+    token = client.post(
+        "/api/v1/oauth/token",
+        json={
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": authorization["device_code"],
+            "client_id": "track-anywhere-web",
+        },
+    )
+
+    assert page.status_code == 200
+    assert "Requested access" in page.text
+    assert 'name="approved_scope" value="account:read"' in page.text
+    assert 'name="approved_scope" value="ledger:read"' in page.text
+    assert approved.status_code == 200
+    assert token.status_code == 200
+    assert token.json()["scope"] == "account:read book:read"
+
+
+def test_fastapi_device_page_rejects_scope_expansion_from_form_tampering():
+    assert app is not None
+    client = TestClient(app)
+    authorization = _create_device_authorization(client, "account:read")
+
+    client.post("/api/v1/session/dev-local")
+    approved = client.post(
+        "/api/v1/auth/device",
+        data={
+            "user_code": authorization["user_code"],
+            "action": "approve",
+            "csrf_token": client.cookies.get("ta_csrf"),
+            "scope_selection_present": "1",
+            "approved_scope": ["account:read", "ledger:read"],
+        },
+    )
+
+    assert approved.status_code == 400
+    assert "approved scopes were not requested" in approved.text

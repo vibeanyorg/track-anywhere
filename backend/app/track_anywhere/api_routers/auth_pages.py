@@ -13,6 +13,7 @@ from ..auth_identities import OAuthIdentity
 from ..errors import PolicyDenied, ValidationError
 from ..password_auth import PasswordSignupCommand
 from ..platform_auth import OAuthAuthorizeCommand
+from .auth_scope_ui import approved_scope_text, requested_scope_text, scope_controls
 
 
 router = APIRouter(prefix="/auth", tags=["auth-ui"], include_in_schema=False)
@@ -107,6 +108,8 @@ def cli_callback_approve(
     code_challenge_method: Annotated[str, Form()] = "S256",
     action: Annotated[str, Form()] = "approve",
     csrf_token: Annotated[str, Form()] = "",
+    approved_scope: Annotated[list[str] | None, Form()] = None,
+    scope_selection_present: Annotated[str | None, Form()] = None,
 ) -> HTMLResponse:
     session_id = request.cookies.get(SESSION_COOKIE)
     credential = browser_sessions.credential_for(session_id)
@@ -116,13 +119,26 @@ def cli_callback_approve(
     if not browser_sessions.verify_csrf(session_id, csrf_token):
         raise HTTPException(status_code=400, detail="missing or invalid CSRF token")
 
+    form_values = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "scope": scope,
+        "state": state or "",
+        "code_challenge": code_challenge,
+        "code_challenge_method": code_challenge_method,
+    }
     try:
+        approved_scope_value = approved_scope_text(
+            requested_scope_text=scope,
+            approved_scopes=approved_scope,
+            selection_present=scope_selection_present is not None,
+        )
         actor = service.actor_from_token(credential)
         result = platform_key_exchange.authorize(
             OAuthAuthorizeCommand(
                 client_id=client_id,
                 redirect_uri=redirect_uri,
-                scope=scope,
+                scope=approved_scope_value,
                 state=state,
                 code_challenge=code_challenge,
                 code_challenge_method=code_challenge_method,
@@ -132,7 +148,7 @@ def cli_callback_approve(
             service.storage,
         )
     except (PolicyDenied, ValidationError, ValueError) as exc:
-        return _approval_form(request, identity=identity, csrf_token=csrf_token, error=str(exc), status_code=400)
+        return _approval_form(request, identity=identity, csrf_token=csrf_token, error=str(exc), status_code=400, values=form_values)
     return _callback_result(result["redirect_uri"])
 
 
@@ -179,21 +195,33 @@ def _auth_form(request: Request, *, mode: str, next_path: str, error: str | None
     return _page(title, body, status_code)
 
 
-def _approval_form(request: Request, *, identity: dict, csrf_token: str, error: str | None, status_code: int = 200) -> HTMLResponse:
+def _approval_form(
+    request: Request,
+    *,
+    identity: dict,
+    csrf_token: str,
+    error: str | None,
+    status_code: int = 200,
+    values: dict[str, str] | None = None,
+) -> HTMLResponse:
     name = identity.get("name") or identity.get("display_name") or identity.get("email") or "this account"
+    field_values = values or {key: request.query_params.get(key, "") for key in ("client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method")}
     hidden = "".join(
-        _hidden(name, request.query_params.get(name, ""))
+        _hidden(name, field_values.get(name, ""))
         for name in ("client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method")
     )
+    scope_options = scope_controls(requested_scope_text(field_values.get("scope")))
     body = f"""
       <section class="panel">
         <p class="eyebrow">Track Anywhere CLI</p>
         <h1>Connect command line</h1>
-        <p class="muted">Signed in as {escape(str(name))}. Approve this request, then paste the generated callback URL into the CLI.</p>
+        <p class="muted">Signed in as {escape(str(name))}. Choose the access this CLI token should receive, then approve the request.</p>
         {_error(error)}
         <form method="post" action="/api/v1/auth/callback">
           {hidden}
           {_hidden('csrf_token', csrf_token)}
+          {_hidden('scope_selection_present', '1')}
+          {scope_options}
           <button name="action" value="approve" type="submit">Approve</button>
           <button class="secondary" name="action" value="deny" type="submit">Deny</button>
         </form>
@@ -223,6 +251,8 @@ h1{{margin:0;font-size:32px;line-height:1.05}}form,.stack{{display:grid;gap:12px
 input,textarea{{box-sizing:border-box;width:100%;border:1px solid #c8d0ca;border-radius:8px;background:#fff;padding:11px 12px;font:inherit;color:#16201d}}
 textarea{{min-height:140px;resize:vertical}}button,.secondary{{border:1px solid #16201d;border-radius:8px;background:#16201d;color:#fff;padding:11px 14px;font:inherit;text-align:center;text-decoration:none;cursor:pointer}}
 .secondary{{background:#fff;color:#16201d}}.link{{color:#16201d}}.muted{{color:#59645f;line-height:1.5}}.error{{color:#a3332a}}
+.scope-panel{{border:1px solid #d7ddd8;border-radius:8px;padding:14px;display:grid;gap:10px}}.scope-panel legend{{padding:0 6px;font-weight:650}}
+.scope-list{{display:grid;gap:8px}}.scope-option{{display:flex;align-items:center;gap:9px}}.scope-option input{{width:auto;margin:0}}.scope-name{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}}
 </style></head><body>{body}</body></html>""", status_code=status_code)
 
 
