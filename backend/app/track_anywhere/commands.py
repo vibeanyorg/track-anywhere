@@ -277,18 +277,7 @@ class ReverseTransactionCommand(StrictCommand):
     memo: str = Field(min_length=1, max_length=256)
 
 
-class IssueCredentialCommand(StrictCommand):
-    scopes: list[str] = Field(min_length=1, max_length=12)
-    ttl_minutes: int = Field(default=30, ge=1, le=24 * 60)
-
-
-class RevokeCredentialCommand(StrictCommand):
-    target_token: str = Field(min_length=1, max_length=256)
-    reason: str = Field(default="", max_length=240)
-
-
-class RevokeCredentialByIdCommand(StrictCommand):
-    reason: str = Field(default="", max_length=240)
+from .credential_commands import IssueCredentialCommand, RevokeCredentialByIdCommand, RevokeCredentialCommand
 
 
 class ReconciliationActionCommand(StrictCommand):

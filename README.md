@@ -4,7 +4,7 @@ Track Anywhere is a local-first personal ledger. It keeps official balances stri
 
 It ships a FastAPI backend, a `ta`/`track-anywhere` CLI usable by humans and agents, SQLite persistence by default, PostgreSQL-compatible storage URLs, and a Next.js frontend.
 
-Status: MVP. The CLI and backend are usable locally. The frontend now owns the separated login/signup flow and platform OAuth connection surface.
+Status: MVP. The CLI and backend are usable locally. FastAPI owns the login/signup flow and platform OAuth connection surface; the Next.js frontend is optional.
 
 ## Typical use
 
@@ -35,11 +35,11 @@ skills/    Codex/Hermes/OpenClaw skill for safe ledger operation
 
 ### Docker
 
-The registry image includes both the API service and the `ta`/`track-anywhere`
-CLI:
+The registry publishes a split API/CLI image and production web image:
 
 ```text
-ghcr.io/vibeanyorg/track-anywhere:latest
+ghcr.io/vibeanyorg/track-anywhere-api:latest
+ghcr.io/vibeanyorg/track-anywhere-web:latest
 ```
 
 Start an isolated local development stack:

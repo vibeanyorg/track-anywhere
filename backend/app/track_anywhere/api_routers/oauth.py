@@ -6,7 +6,16 @@ from fastapi.responses import JSONResponse
 from ..api_dependencies import AuthToken
 from ..api_runtime import platform_key_exchange, service
 from ..errors import PolicyDenied, ValidationError
-from ..platform_auth import OAuthAuthorizeCommand, OAuthRegisterCommand, OAuthRevokeCommand, OAuthTokenCommand
+from ..platform_auth import (
+    DEVICE_GRANT_TYPE,
+    OAuthAuthorizeCommand,
+    OAuthDeviceAuthorizeCommand,
+    OAuthDeviceTokenCommand,
+    OAuthRegisterCommand,
+    OAuthRevokeCommand,
+    OAuthTokenCommand,
+    OAuthTokenError,
+)
 from ..platform_auth_http import form_or_json_payload
 from .common import protected
 
@@ -60,7 +69,7 @@ def register_client(payload: OAuthRegisterCommand):
 def authorize(payload: OAuthAuthorizeCommand, token: AuthToken):
     try:
         actor = service.actor_from_token(token)
-        return platform_key_exchange.authorize(payload, actor)
+        return platform_key_exchange.authorize(payload, actor, service.storage)
     except PolicyDenied as exc:
         service.record_security_failure("oauth.authorize_denied", {"client_id": payload.client_id, "reason": str(exc)})
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -72,7 +81,15 @@ def authorize(payload: OAuthAuthorizeCommand, token: AuthToken):
 async def token(request: Request):
     try:
         payload = form_or_json_payload(request.headers.get("content-type", ""), await request.body())
-        result = platform_key_exchange.exchange_code(OAuthTokenCommand.model_validate(payload), service)
+        if payload.get("grant_type") == DEVICE_GRANT_TYPE:
+            result = platform_key_exchange.exchange_device_code(OAuthDeviceTokenCommand.model_validate(payload), service)
+        else:
+            result = platform_key_exchange.exchange_code(OAuthTokenCommand.model_validate(payload), service)
+    except OAuthTokenError as exc:
+        service.record_security_failure("oauth.token_denied", {"reason": exc.error})
+        response = JSONResponse({"error": exc.error, "error_description": exc.description, **exc.extra}, status_code=400)
+        response.headers["Cache-Control"] = "no-store"
+        return response
     except PolicyDenied as exc:
         service.record_security_failure("oauth.token_denied", {"reason": str(exc)})
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -81,6 +98,16 @@ async def token(request: Request):
     response = JSONResponse(result)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+    return response
+
+
+@router.post("/device/authorize")
+def device_authorize(payload: OAuthDeviceAuthorizeCommand, request: Request):
+    try:
+        response = JSONResponse(platform_key_exchange.create_device_authorization(payload, _issuer_for(request), service.storage))
+    except (PolicyDenied, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 

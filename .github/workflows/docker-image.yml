@@ -13,6 +13,13 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: api-runtime
+            image: ghcr.io/vibeanyorg/track-anywhere-api
+          - target: web-runtime
+            image: ghcr.io/vibeanyorg/track-anywhere-web
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -24,7 +31,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/vibeanyorg/track-anywhere
+          images: ${{ matrix.image }}
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -33,6 +40,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

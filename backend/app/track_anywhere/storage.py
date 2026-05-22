@@ -15,6 +15,7 @@ from .credit_cards import CreditCardProfile
 from .db_migrations import run_migrations
 from .domain_storage_loaders import DomainStorageLoaders
 from .domain_storage_writers import DomainStorageWriters
+from . import storage_auth_models as _storage_auth_models
 from .ledger import Account
 from .storage_auth import AuthStorageWriters
 from .storage_engine import create_database_engine, database_url_from_env
@@ -35,6 +36,8 @@ from .storage_models import (
 )
 from .storage_writers import StorageWriters
 from .users import AppUser
+
+_storage_auth_models.CredentialRecord
 
 
 class OrmStorage(DomainStorageLoaders, StorageLoaders, AuthStorageWriters, DomainStorageWriters, StorageWriters):

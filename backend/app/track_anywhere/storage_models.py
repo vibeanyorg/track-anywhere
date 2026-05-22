@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Any
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 ASSET_CODE_LENGTH = 16
@@ -27,6 +27,7 @@ class AppStateRecord(Base):
 
 class AccountRecord(Base):
     __tablename__ = "accounts"
+    __table_args__ = (Index("ix_accounts_book_type_currency", "book_id", "type", "currency"),)
 
     account_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     book_id: Mapped[str] = mapped_column(String(80), default="book_default")
@@ -76,6 +77,7 @@ class PasswordAccountRecord(Base):
 
 class TransactionRecord(Base):
     __tablename__ = "transactions"
+    __table_args__ = (Index("ix_transactions_book_occurred", "book_id", "occurred_at", "transaction_id"),)
 
     transaction_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     book_id: Mapped[str] = mapped_column(String(80), default="book_default")
@@ -89,6 +91,7 @@ class TransactionRecord(Base):
 
 class PostingRecord(Base):
     __tablename__ = "postings"
+    __table_args__ = (Index("ix_postings_account_transaction", "account_id", "transaction_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.transaction_id"))
@@ -164,6 +167,7 @@ class RecurringItemRecord(Base):
 
 class InvestmentEventRecord(Base):
     __tablename__ = "investment_events"
+    __table_args__ = (Index("ix_investment_events_book_account_occurred", "book_id", "account_id", "occurred_at"),)
 
     event_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     book_id: Mapped[str] = mapped_column(String(80), default="book_default")
@@ -181,6 +185,7 @@ class InvestmentEventRecord(Base):
 
 class InvestmentValuationRecord(Base):
     __tablename__ = "investment_valuations"
+    __table_args__ = (Index("ix_investment_valuations_book_account_observed", "book_id", "account_id", "observed_at"),)
 
     valuation_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     book_id: Mapped[str] = mapped_column(String(80), default="book_default")
@@ -244,19 +249,6 @@ class AttachmentRecord(Base):
     mime_type: Mapped[str] = mapped_column(String(80))
     original_filename: Mapped[str] = mapped_column(String(240))
     scanner_status: Mapped[str] = mapped_column(String(80))
-
-
-class CredentialRecord(Base):
-    __tablename__ = "credentials"
-
-    token_hash: Mapped[str] = mapped_column(String(80), primary_key=True)
-    actor_id: Mapped[str] = mapped_column(String(80))
-    actor_type: Mapped[str] = mapped_column(String(40))
-    scopes: Mapped[list[str]] = mapped_column(JSON)
-    issued_at: Mapped[str] = mapped_column(String(80))
-    expires_at: Mapped[str] = mapped_column(String(80))
-    jti: Mapped[str] = mapped_column(String(80))
-    revoked_at: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
 
 class AuditEventRecord(Base):

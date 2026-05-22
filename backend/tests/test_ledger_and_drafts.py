@@ -146,7 +146,7 @@ def test_agent_scope_and_audit_redaction():
     assert last_event.details["command"]["memo"] == "[REDACTED]"
 
     issue_event = service.audit.events[-2]
-    assert issue_event.details["token"] == "[REDACTED]"
+    assert issue_event.details == {"scopes": ["capture:draft"], "auth_kind": "api_key", "key_prefix": None}
 
 
 def test_posting_currency_must_match_account_currency():

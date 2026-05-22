@@ -41,6 +41,9 @@
     "/api/v1/auth/session/api-key": [
       "post"
     ],
+    "/api/v1/auth/token-status": [
+      "get"
+    ],
     "/api/v1/backoffice/accounts": [
       "get"
     ],
@@ -142,6 +145,10 @@
     "/api/v1/credentials/agent": [
       "post"
     ],
+    "/api/v1/credentials/machine": [
+      "get",
+      "post"
+    ],
     "/api/v1/credentials/revoke": [
       "post"
     ],
@@ -221,6 +228,9 @@
     ],
     "/api/v1/oauth/clients": [
       "get"
+    ],
+    "/api/v1/oauth/device/authorize": [
+      "post"
     ],
     "/api/v1/oauth/protected-resource": [
       "get"

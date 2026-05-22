@@ -7,7 +7,6 @@ from pydantic import ValidationError as PydanticValidationError
 
 from ..api_dependencies import SessionGuard
 from ..attachments import MAX_ATTACHMENT_BYTES
-from ..commands import StrictCommand
 from ..errors import TrackAnywhereError, ValidationError
 
 
@@ -15,7 +14,7 @@ COMMAND_ERRORS = (TrackAnywhereError, PydanticValidationError)
 protected = [SessionGuard]
 
 
-def command_payload(command: StrictCommand) -> dict[str, Any]:
+def command_payload(command) -> dict[str, Any]:
     return command.model_dump(mode="python", exclude_unset=True)
 
 

@@ -2,7 +2,7 @@ name: track-anywhere-prod
 
 services:
   api:
-    image: ${TRACK_ANYWHERE_IMAGE:-ghcr.io/vibeanyorg/track-anywhere:latest}
+    image: ${TRACK_ANYWHERE_API_IMAGE:-ghcr.io/vibeanyorg/track-anywhere-api:latest}
     container_name: track-anywhere-prod-api
     env_file:
       - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
@@ -21,7 +21,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${TRACK_ANYWHERE_IMAGE:-ghcr.io/vibeanyorg/track-anywhere:latest}
+    image: ${TRACK_ANYWHERE_WEB_IMAGE:-ghcr.io/vibeanyorg/track-anywhere-web:latest}
     container_name: track-anywhere-prod-web
     env_file:
       - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
@@ -30,7 +30,6 @@ services:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
       NEXT_TELEMETRY_DISABLED: "1"
-    command: ["node", "frontend/server.js"]
     healthcheck:
       disable: true
     depends_on:
@@ -48,7 +47,7 @@ services:
     restart: unless-stopped
 
   cli:
-    image: ${TRACK_ANYWHERE_IMAGE:-ghcr.io/vibeanyorg/track-anywhere:latest}
+    image: ${TRACK_ANYWHERE_API_IMAGE:-ghcr.io/vibeanyorg/track-anywhere-api:latest}
     profiles: ["cli"]
     env_file:
       - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}

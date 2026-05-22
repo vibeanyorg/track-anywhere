@@ -1,208 +1,79 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useAuth } from "./auth-provider";
 import { accountUrl } from "./auth-links";
 import { readJson, responseError } from "../lib/http";
 
-type Identity = {
-  provider?: string;
-  email?: string | null;
-  name?: string | null;
-  display_name?: string | null;
-  role?: string | null;
-};
-
-type SessionResponse = {
-  authenticated: boolean;
-  identity: Identity | null;
-  csrf_token?: string;
-};
-
-type TokenResponse = {
-  access_token?: string;
-  token_type?: string;
-  expires_in?: number;
-  scope?: string;
-};
-
-const sessionEndpoint = "/api/v1/auth/session";
-const apiKeySessionEndpoint = "/api/v1/auth/session/api-key";
-const authorizeEndpoint = "/api/v1/oauth/authorize";
-const tokenEndpoint = "/api/v1/oauth/token";
-const defaultScope = "account:read book:read ledger:read";
-const defaultClientId = "track-anywhere-web";
-
 export function AuthHeader() {
-  const [session, setSession] = useState<SessionResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isBusy, setIsBusy] = useState(false);
+  const { session, loading, offline, notifyChanged } = useAuth();
   const [apiKey, setApiKey] = useState("");
-  const [status, setStatus] = useState<string>("Connecting");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   const displayName = useMemo(() => {
-    const identity = session?.identity;
-    return identity?.display_name || identity?.name || identity?.email || "Signed in";
+    const identity = session.identity;
+    return identity?.display_name || identity?.name || identity?.email || "You";
   }, [session]);
 
-  async function refreshAuth(nextStatus?: string) {
-    setIsLoading(true);
-    try {
-      const response = await fetch(sessionEndpoint, { credentials: "include", cache: "no-store" });
-      const nextSession = await readJson<SessionResponse>(response);
-      setSession(nextSession);
-      setStatus(nextStatus ?? (nextSession.authenticated ? "Session active" : "Ready"));
-    } catch {
-      setSession({ authenticated: false, identity: null });
-      setStatus("Backend offline");
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  async function createSessionFromKey(key: string, nextStatus: string) {
-    const response = await fetch(apiKeySessionEndpoint, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ api_key: key })
-    });
-    const payload = await readJson<{ detail?: string }>(response);
-    if (!response.ok) {
-      throw new Error(responseError(payload, "key rejected"));
-    }
-    setApiKey("");
-    await refreshAuth(nextStatus);
-    notifyAuthChanged();
-  }
-
-  async function loginWithApiKey() {
+  async function signInWithKey() {
     const key = apiKey.trim();
     if (!key) {
-      setStatus("API key required");
+      setError("Paste your key first.");
       return;
     }
-    setIsBusy(true);
-    setStatus("Checking key");
+    setBusy(true);
+    setError("");
     try {
-      await createSessionFromKey(key, "API key accepted");
-    } catch {
-      setStatus("API key rejected");
+      const response = await fetch("/api/v1/auth/session/api-key", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: key })
+      });
+      const payload = await readJson<{ detail?: string }>(response);
+      if (!response.ok) {
+        throw new Error(responseError(payload, "That key didn't work."));
+      }
+      setApiKey("");
+      notifyChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "That key didn't work.");
     } finally {
-      setIsBusy(false);
+      setBusy(false);
     }
   }
 
-  async function startLocalSession() {
-    setIsBusy(true);
-    setStatus("Opening local session");
+  async function tryItOut() {
+    setBusy(true);
+    setError("");
     try {
       const response = await fetch("/api/v1/session/dev-local", {
         method: "POST",
         credentials: "include"
       });
-      const payload = await readJson<{ detail?: string }>(response);
       if (!response.ok) {
-        throw new Error(responseError(payload, "local session failed"));
+        const payload = await readJson<{ detail?: string }>(response);
+        throw new Error(responseError(payload, "Couldn't open a guest session."));
       }
-      await refreshAuth();
-      notifyAuthChanged();
-    } catch {
-      setStatus("Local session unavailable");
+      notifyChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't open a guest session.");
     } finally {
-      setIsBusy(false);
+      setBusy(false);
     }
   }
 
-  async function exchangePlatformToken() {
-    if (!session?.authenticated) {
-      setStatus("Session required");
-      return;
-    }
-
-    setIsBusy(true);
-    setStatus("Authorizing");
+  async function signOut() {
+    setBusy(true);
+    setError("");
     try {
-      const redirectUri = `${window.location.origin}/auth/callback`;
-      const state = randomBase64Url(18);
-      const verifier = randomBase64Url(48);
-      const challenge = await pkceChallenge(verifier);
-      const csrfToken = readCookie("ta_csrf");
-      const authorizeResponse = await fetch(authorizeEndpoint, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {})
-        },
-        body: JSON.stringify({
-          client_id: defaultClientId,
-          redirect_uri: redirectUri,
-          scope: defaultScope,
-          state,
-          code_challenge: challenge,
-          code_challenge_method: "S256",
-          action: "approve"
-        })
-      });
-      const authorizePayload = await readJson<{ redirect_uri?: string; detail?: string }>(authorizeResponse);
-      if (!authorizeResponse.ok || !authorizePayload.redirect_uri) {
-        throw new Error(responseError(authorizePayload, "authorization failed"));
-      }
-
-      const callbackUrl = new URL(authorizePayload.redirect_uri);
-      const code = callbackUrl.searchParams.get("code");
-      if (!code || callbackUrl.searchParams.get("state") !== state) {
-        throw new Error("callback rejected");
-      }
-
-      setStatus("Exchanging code");
-      const tokenResponse = await fetch(tokenEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          grant_type: "authorization_code",
-          code,
-          client_id: defaultClientId,
-          redirect_uri: redirectUri,
-          code_verifier: verifier
-        })
-      });
-      const tokenPayload = await readJson<TokenResponse & { detail?: string }>(tokenResponse);
-      if (!tokenResponse.ok || !tokenPayload.access_token) {
-        throw new Error(responseError(tokenPayload, "token exchange failed"));
-      }
-
-      await createSessionFromKey(tokenPayload.access_token, "Platform token active");
-    } catch {
-      setStatus("Exchange failed");
+      await fetch("/api/v1/auth/logout", { method: "POST", credentials: "include" });
     } finally {
-      setIsBusy(false);
+      notifyChanged();
+      setBusy(false);
     }
   }
-
-  async function logout() {
-    setIsBusy(true);
-    setStatus("Signing out");
-    try {
-      await fetch("/api/v1/auth/logout", {
-        method: "POST",
-        credentials: "include"
-      });
-    } finally {
-      await refreshAuth();
-      notifyAuthChanged();
-      setIsBusy(false);
-    }
-  }
-
-  useEffect(() => {
-    void refreshAuth();
-    const handleAuthChanged = () => {
-      void refreshAuth();
-    };
-    window.addEventListener("track-anywhere-auth-changed", handleAuthChanged);
-    return () => window.removeEventListener("track-anywhere-auth-changed", handleAuthChanged);
-  }, []);
 
   return (
     <header id="auth" className="site-header">
@@ -212,27 +83,28 @@ export function AuthHeader() {
       </a>
 
       <div className="auth-panel" aria-live="polite">
-        <span className={`auth-state ${session?.authenticated ? "auth-state-on" : ""}`}>{isLoading ? "Checking" : status}</span>
-        {session?.authenticated ? (
+        {offline ? <span className="auth-state">Can't reach the server</span> : null}
+        {error ? <span className="auth-state">{error}</span> : null}
+
+        {session.authenticated ? (
           <>
             <span className="identity-chip">
               {displayName}
               {session.identity?.role ? <small>{session.identity.role}</small> : null}
             </span>
-            <button className="text-button text-button-strong" type="button" onClick={exchangePlatformToken} disabled={isBusy}>
-              Exchange OAuth
-            </button>
-            <button className="text-button" type="button" onClick={logout} disabled={isBusy}>
-              Log out
+            <button className="text-button" type="button" onClick={signOut} disabled={busy}>
+              Sign out
             </button>
           </>
+        ) : loading ? (
+          <span className="auth-state">Loading…</span>
         ) : (
           <>
-            <a className="text-button" href={accountUrl("login")}>
-              Log in
+            <a className="text-button text-button-strong" href={accountUrl("login")}>
+              Sign in
             </a>
             <a className="text-button" href={accountUrl("signup")}>
-              Register
+              Create account
             </a>
             <input
               className="auth-input"
@@ -240,57 +112,25 @@ export function AuthHeader() {
               autoComplete="off"
               id="header-api-key"
               name="header_api_key"
-              placeholder="ta_ API key"
+              placeholder="or paste an API key"
               type="password"
               value={apiKey}
               onChange={(event) => setApiKey(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
-                  void loginWithApiKey();
+                  void signInWithKey();
                 }
               }}
             />
-            <button className="text-button text-button-strong" type="button" onClick={loginWithApiKey} disabled={isBusy}>
-              Connect
+            <button className="text-button" type="button" onClick={signInWithKey} disabled={busy}>
+              Use key
             </button>
-            <button className="text-button" type="button" onClick={startLocalSession} disabled={isBusy}>
-              Local
+            <button className="text-button" type="button" onClick={tryItOut} disabled={busy}>
+              Try without signing up
             </button>
           </>
         )}
       </div>
     </header>
   );
-}
-
-function readCookie(name: string) {
-  const value = document.cookie
-    .split("; ")
-    .find((item) => item.startsWith(`${name}=`))
-    ?.split("=")[1];
-  return value ? decodeURIComponent(value) : "";
-}
-
-function randomBase64Url(byteLength: number) {
-  const bytes = new Uint8Array(byteLength);
-  crypto.getRandomValues(bytes);
-  return base64Url(bytes);
-}
-
-async function pkceChallenge(verifier: string) {
-  const data = new TextEncoder().encode(verifier);
-  const digest = await crypto.subtle.digest("SHA-256", data);
-  return base64Url(new Uint8Array(digest));
-}
-
-function base64Url(bytes: Uint8Array) {
-  let binary = "";
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
-}
-
-function notifyAuthChanged() {
-  window.dispatchEvent(new Event("track-anywhere-auth-changed"));
 }

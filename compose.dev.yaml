@@ -21,7 +21,8 @@ services:
   api:
     build:
       context: .
-    image: ${TRACK_ANYWHERE_DEV_IMAGE:-track-anywhere:dev}
+      target: api-runtime
+    image: ${TRACK_ANYWHERE_DEV_API_IMAGE:-track-anywhere-api:dev}
     container_name: track-anywhere-dev-api
     depends_on:
       postgres:
@@ -36,7 +37,10 @@ services:
     restart: unless-stopped
 
   web:
-    image: ${TRACK_ANYWHERE_DEV_IMAGE:-track-anywhere:dev}
+    build:
+      context: .
+      target: web-runtime
+    image: ${TRACK_ANYWHERE_DEV_WEB_IMAGE:-track-anywhere-web:dev}
     container_name: track-anywhere-dev-web
     depends_on:
       api:
@@ -46,7 +50,6 @@ services:
       HOSTNAME: 0.0.0.0
       PORT: "3000"
       NEXT_TELEMETRY_DISABLED: "1"
-    command: ["node", "frontend/server.js"]
     healthcheck:
       disable: true
     ports:
@@ -54,7 +57,10 @@ services:
     restart: unless-stopped
 
   cli:
-    image: ${TRACK_ANYWHERE_DEV_IMAGE:-track-anywhere:dev}
+    build:
+      context: .
+      target: api-runtime
+    image: ${TRACK_ANYWHERE_DEV_API_IMAGE:-track-anywhere-api:dev}
     profiles: ["cli"]
     depends_on:
       api:

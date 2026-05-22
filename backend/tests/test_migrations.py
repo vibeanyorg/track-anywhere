@@ -30,7 +30,7 @@ def test_alembic_clears_legacy_duplicate_transaction_memos(tmp_path):
         line_memos = dict(connection.execute("select line_id, memo from transaction_lines").fetchall())
         version = connection.execute("select version_num from alembic_version").fetchone()[0]
 
-    assert version == "0009_reversal_investment_links"
+    assert version == "0010_auth_machine_flows"
     assert transaction_memos["txn_duplicate"] == ""
     assert transaction_memos["txn_private"] == "card ending 1234"
     assert line_memos["line_duplicate"] == ""
@@ -61,7 +61,7 @@ def test_alembic_drops_legacy_django_tables_without_dropping_track_anywhere_tabl
         tables = {row[0] for row in connection.execute("select name from sqlite_master where type = 'table'")}
         version = connection.execute("select version_num from alembic_version").fetchone()[0]
 
-    assert version == "0009_reversal_investment_links"
+    assert version == "0010_auth_machine_flows"
     assert "accounts" in tables
     assert "auth_identities" in tables
     assert not {
@@ -110,7 +110,7 @@ def test_alembic_backfills_lines_and_drops_legacy_category_columns(tmp_path):
             """
         ).fetchone()
 
-    assert version == "0009_reversal_investment_links"
+    assert version == "0010_auth_machine_flows"
     assert "category_id" not in transaction_columns
     assert "primary" not in category_columns
     assert "secondary" not in category_columns

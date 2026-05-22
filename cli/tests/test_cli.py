@@ -169,7 +169,7 @@ def test_auth_login_without_token_uses_pkce_callback_exchange(monkeypatch, capsy
         assert path == "/api/v1/oauth/token"
         assert payload["code"] == "code_cli"
         assert payload["client_id"] == "track-anywhere-web"
-        assert payload["redirect_uri"] == "http://127.0.0.1:3000/auth/callback"
+        assert payload["redirect_uri"] == "http://api.test/api/v1/auth/callback"
         assert payload["code_verifier"].startswith("verifier_value")
         return 200, {"access_token": "ta_cli_access", "scope": payload.get("scope", "account:read")}
 
@@ -177,7 +177,7 @@ def test_auth_login_without_token_uses_pkce_callback_exchange(monkeypatch, capsy
     monkeypatch.setattr(cli_main.TokenStore, "save", lambda self, token: saved.setdefault("token", token))
     monkeypatch.setattr(oauth_login.secrets, "token_urlsafe", lambda _length: next(generated))
 
-    callback = "http://127.0.0.1:3000/auth/callback?code=code_cli&state=state_value_123456789012345678901234567890123456"
+    callback = "http://api.test/api/v1/auth/callback?code=code_cli&state=state_value_123456789012345678901234567890123456"
     assert main(["--base-url", "http://api.test", "auth", "login", "--no-browser", "--callback", callback, "--json"]) == 0
 
     assert saved["token"] == "ta_cli_access"
@@ -194,7 +194,7 @@ def test_auth_login_rejects_callback_state_mismatch(monkeypatch, capsys):
     generated = iter(["state_value_123456789012345678901234567890123456", "verifier_value_12345678901234567890123456789012345678901234567890"])
     monkeypatch.setattr(oauth_login.secrets, "token_urlsafe", lambda _length: next(generated))
 
-    callback = "http://127.0.0.1:3000/auth/callback?code=code_cli&state=wrong"
+    callback = "http://api.test/api/v1/auth/callback?code=code_cli&state=wrong"
     assert main(["auth", "login", "--no-browser", "--callback", callback, "--json"]) == EXIT_VALIDATION
 
     output = capsys.readouterr()
@@ -215,7 +215,7 @@ def test_auth_login_exchange_exception_still_returns_json_envelope(monkeypatch, 
     monkeypatch.setattr(cli_main, "request_json", broken_request)
     monkeypatch.setattr(oauth_login.secrets, "token_urlsafe", lambda _length: next(generated))
 
-    callback = "http://127.0.0.1:3000/auth/callback?code=code_cli&state=state_value_123456789012345678901234567890123456"
+    callback = "http://api.test/api/v1/auth/callback?code=code_cli&state=state_value_123456789012345678901234567890123456"
     assert main(["auth", "login", "--no-browser", "--callback", callback, "--json"]) == cli_main.EXIT_EXTERNAL_DEPENDENCY
 
     output = capsys.readouterr()

@@ -72,6 +72,7 @@ TRACK_ANYWHERE_AUTH_SUCCESS_REDIRECT=https://app.example.com/auth/complete
 - `GET /api/v1/auth/oauth/providers` lists configured providers.
 - `GET /api/v1/auth/oauth/{provider}/authorize` starts the OAuth authorization redirect.
 - `GET /api/v1/auth/oauth/{provider}/callback` exchanges the provider callback, links the identity, applies RBAC, creates a `ta_session` cookie, and returns a CSRF token in JSON or a readable `ta_csrf` cookie when redirecting.
+- `GET /api/v1/auth/login`, `GET /api/v1/auth/signup`, and `GET|POST /api/v1/auth/callback` provide the built-in FastAPI HTML login and CLI authorization flow so the browser auth path does not require the Next.js frontend.
 - `GET /api/v1/auth/session` returns the current browser session identity, if present.
 - `POST /api/v1/auth/logout` revokes the browser session and clears auth
   cookies.

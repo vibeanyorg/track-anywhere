@@ -7,6 +7,7 @@ import click
 
 from .click_common import ClickState, output_options, pass_state
 from .config import CliConfig, TokenStore, resolve_token_with_diagnostics
+from .device_login import run_device_login
 from .exit_codes import EXIT_VALIDATION
 from .interaction import ClickInteraction, Interaction, inform
 from .oauth_login import DEFAULT_CLI_SCOPE, DEFAULT_WEB_URL, create_browser_login_request, exchange_callback_for_token
@@ -23,10 +24,11 @@ def register(root: click.Group) -> None:
 def _register_top_level_login(root: click.Group) -> None:
     @root.command("login")
     @click.argument("token", required=False)
-    @click.option("--web-url", envvar="TRACK_ANYWHERE_WEB_URL", default=DEFAULT_WEB_URL)
+    @click.option("--web-url", envvar="TRACK_ANYWHERE_WEB_URL", default=None)
     @click.option("--scope", default=DEFAULT_CLI_SCOPE)
     @click.option("--client-id", default="track-anywhere-web")
     @click.option("--no-browser", is_flag=True)
+    @click.option("--device", is_flag=True)
     @click.option("--callback", "callback_value", hidden=True)
     @output_options
     @pass_state
@@ -35,10 +37,11 @@ def _register_top_level_login(root: click.Group) -> None:
         json_mode: bool,
         no_color: bool,
         token: str | None,
-        web_url: str,
+        web_url: str | None,
         scope: str,
         client_id: str,
         no_browser: bool,
+        device: bool,
         callback_value: str | None,
     ) -> int:
         return run_login(
@@ -50,6 +53,7 @@ def _register_top_level_login(root: click.Group) -> None:
             scope=scope,
             client_id=client_id,
             no_browser=no_browser,
+            device=device,
             callback_value=callback_value,
         )
 
@@ -61,10 +65,11 @@ def _register_auth_group(root: click.Group) -> None:
 
     @auth.command("login")
     @click.argument("token", required=False)
-    @click.option("--web-url", envvar="TRACK_ANYWHERE_WEB_URL", default=DEFAULT_WEB_URL)
+    @click.option("--web-url", envvar="TRACK_ANYWHERE_WEB_URL", default=None)
     @click.option("--scope", default=DEFAULT_CLI_SCOPE)
     @click.option("--client-id", default="track-anywhere-web")
     @click.option("--no-browser", is_flag=True)
+    @click.option("--device", is_flag=True)
     @click.option("--callback", "callback_value", hidden=True)
     @output_options
     @pass_state
@@ -73,10 +78,11 @@ def _register_auth_group(root: click.Group) -> None:
         json_mode: bool,
         no_color: bool,
         token: str | None,
-        web_url: str,
+        web_url: str | None,
         scope: str,
         client_id: str,
         no_browser: bool,
+        device: bool,
         callback_value: str | None,
     ) -> int:
         return run_login(
@@ -88,6 +94,7 @@ def _register_auth_group(root: click.Group) -> None:
             scope=scope,
             client_id=client_id,
             no_browser=no_browser,
+            device=device,
             callback_value=callback_value,
         )
 
@@ -127,6 +134,16 @@ def _register_auth_group(root: click.Group) -> None:
             "base_url": state.base_url,
             "token_source": _token_source(state, token),
         }
+        if token:
+            status, status_data = state.requester(
+                CliConfig(base_url=state.base_url, token=token, insecure_automation=state.insecure_automation),
+                "GET",
+                "/api/v1/auth/token-status",
+                None,
+                None,
+            )
+            if status < 400 and isinstance(status_data, dict):
+                data.update(status_data)
         outcome = build_outcome("auth.status", 200, data, diagnostics=token_resolution.diagnostics)
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
@@ -138,10 +155,11 @@ def run_login(
     json_mode: bool,
     no_color: bool,
     token: str | None,
-    web_url: str,
+    web_url: str | None,
     scope: str,
     client_id: str,
     no_browser: bool,
+    device: bool,
     callback_value: str | None,
     interaction: Interaction | None = None,
 ) -> int:
@@ -154,6 +172,17 @@ def run_login(
         outcome = build_outcome("auth.login", 200, {"authenticated": True, "token_saved": True}, diagnostics=diagnostics)
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
+
+    if device:
+        return _run_device_login(
+            state,
+            output_json=output_json,
+            output_no_color=output_no_color,
+            scope=scope,
+            client_id=client_id,
+            interaction=interaction,
+            save_token=_save_token,
+        )
 
     if state.no_input and not callback_value:
         outcome = build_outcome(
@@ -177,7 +206,7 @@ def run_login(
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
 
-    login_request = create_browser_login_request(web_url=web_url, client_id=client_id, scope=scope)
+    login_request = create_browser_login_request(web_url=web_url or state.base_url or DEFAULT_WEB_URL, client_id=client_id, scope=scope)
     if not callback_value:
         interaction.open_url(login_request.auth_url)
         inform(interaction, "Open this URL to authorize Track Anywhere CLI:")

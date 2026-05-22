@@ -3,55 +3,36 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { useAuth } from "../../components/auth-provider";
 import { readJson } from "../../lib/http";
-
-type SessionResponse = {
-  authenticated: boolean;
-  identity: {
-    display_name?: string | null;
-    email?: string | null;
-    role?: string | null;
-  } | null;
-};
 
 export function CliCallback() {
   const searchParams = useSearchParams();
-  const [session, setSession] = useState<SessionResponse>({ authenticated: false, identity: null });
+  const { session, loading, offline } = useAuth();
   const [callbackUrl, setCallbackUrl] = useState("");
-  const [status, setStatus] = useState("Checking");
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
   const hasCode = Boolean(searchParams.get("code"));
+
   const loginNext = useMemo(() => {
     const path = `/auth/callback?${searchParams.toString()}`;
     return `/auth/login?next=${encodeURIComponent(path)}`;
   }, [searchParams]);
-  const displayName = session.identity?.display_name || session.identity?.email || "Signed in";
+
+  const displayName = session.identity?.display_name || session.identity?.email || "You";
 
   useEffect(() => {
     if (hasCode && typeof window !== "undefined") {
       setCallbackUrl(window.location.href);
-      setStatus("Authorized");
-      setError("");
-      return;
     }
-    fetch("/api/v1/auth/session", { credentials: "include", cache: "no-store" })
-      .then((response) => readJson<SessionResponse>(response))
-      .then((payload: SessionResponse) => {
-        setSession(payload);
-        setStatus(payload.authenticated ? "Ready" : "Login required");
-        setError("");
-      })
-      .catch(() => {
-        setStatus("Offline");
-        setError("Backend is not reachable.");
-      });
   }, [hasCode]);
 
-  async function authorizeCli() {
-    setStatus("Authorizing");
+  async function connect() {
+    setBusy(true);
     setError("");
     try {
-      const payload = authorizationPayload(searchParams);
+      const payload = buildAuthorizationPayload(searchParams);
       const response = await fetch("/api/v1/oauth/authorize", {
         method: "POST",
         credentials: "include",
@@ -63,20 +44,21 @@ export function CliCallback() {
       });
       const data = await readJson<{ redirect_uri?: string; detail?: string }>(response);
       if (!response.ok || !data.redirect_uri) {
-        throw new Error(friendlyAuthError(data.detail));
+        throw new Error(friendlyError(data.detail));
       }
       setCallbackUrl(data.redirect_uri);
-      setStatus("Authorized");
-    } catch (error) {
-      setStatus("Blocked");
-      setError(error instanceof Error ? error.message : "Authorization failed.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function copyCallback() {
     if (!callbackUrl) return;
     await navigator.clipboard.writeText(callbackUrl);
-    setStatus("Copied");
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   return (
@@ -88,33 +70,51 @@ export function CliCallback() {
 
       <section className="cli-auth-panel" aria-labelledby="cli-callback-title">
         <div className="cli-auth-heading">
-          <p className="eyebrow">CLI authorization</p>
-          <h1 id="cli-callback-title">Authorize CLI</h1>
-          <span className={`auth-state ${status === "Authorized" || status === "Ready" ? "auth-state-on" : ""}`}>{status}</span>
+          <h1 id="cli-callback-title">Connect your command line</h1>
+          <p className="auth-form-subhead">
+            {callbackUrl
+              ? "Copy this and paste it back where you started."
+              : session.authenticated
+              ? "We'll give you a code to paste back."
+              : "Sign in first, then we'll hand off."}
+          </p>
+          {offline ? <span className="auth-state">Can't reach the server.</span> : null}
+          {error ? <span className="auth-state">{error}</span> : null}
         </div>
-        {error ? <p className="callback-error">{error}</p> : null}
 
         {callbackUrl ? (
           <div className="callback-output">
-            <textarea id="cli-callback-url" name="cli_callback_url" className="callback-code" readOnly value={callbackUrl} aria-label="CLI callback URL" />
+            <textarea
+              id="cli-callback-url"
+              name="cli_callback_url"
+              className="callback-code"
+              readOnly
+              value={callbackUrl}
+              aria-label="Code to copy back"
+            />
             <button className="primary-action cli-auth-submit" type="button" onClick={copyCallback}>
-              Copy callback
+              {copied ? "Copied" : "Copy"}
             </button>
           </div>
+        ) : loading ? (
+          <p className="console-empty">Loading…</p>
         ) : session.authenticated ? (
           <div className="callback-output">
             <span className="identity-chip">{displayName}</span>
-            <button className="primary-action cli-auth-submit" type="button" onClick={authorizeCli}>
-              Authorize CLI
+            <button className="primary-action cli-auth-submit" type="button" onClick={connect} disabled={busy}>
+              {busy ? "Connecting…" : "Connect"}
             </button>
           </div>
         ) : (
           <div className="auth-form-switch">
             <Link className="text-button text-button-strong" href={loginNext}>
-              Log in
+              Sign in
             </Link>
-            <Link className="text-button" href={`/auth/signup?next=${encodeURIComponent(`/auth/callback?${searchParams.toString()}`)}`}>
-              Register
+            <Link
+              className="text-button"
+              href={`/auth/signup?next=${encodeURIComponent(`/auth/callback?${searchParams.toString()}`)}`}
+            >
+              Create account
             </Link>
           </div>
         )}
@@ -123,10 +123,10 @@ export function CliCallback() {
   );
 }
 
-function authorizationPayload(searchParams: { get(name: string): string | null }) {
+function buildAuthorizationPayload(searchParams: { get(name: string): string | null }) {
   const required = ["client_id", "redirect_uri", "state", "code_challenge"];
   for (const key of required) {
-    if (!searchParams.get(key)) throw new Error("Invalid CLI authorization request");
+    if (!searchParams.get(key)) throw new Error("This link looks incomplete. Start over from the command line.");
   }
   return {
     client_id: searchParams.get("client_id"),
@@ -147,10 +147,10 @@ function readCookie(name: string) {
   return value ? decodeURIComponent(value) : "";
 }
 
-function friendlyAuthError(detail: string | undefined) {
-  if (!detail) return "Authorization failed.";
+function friendlyError(detail: string | undefined) {
+  if (!detail) return "Something went wrong.";
   if (detail.includes("actor lacks requested scopes")) {
-    return "This account cannot grant the requested CLI scopes.";
+    return "Your account can't grant this app what it's asking for.";
   }
-  return detail.length > 140 ? `${detail.slice(0, 137)}...` : detail;
+  return detail.length > 140 ? `${detail.slice(0, 137)}…` : detail;
 }

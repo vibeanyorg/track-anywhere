@@ -95,3 +95,56 @@ def test_platform_oauth_pkce_exchange_issues_usable_token():
     assert token.json()["token_type"] == "Bearer"
     assert accounts.status_code == 200
     assert replay.status_code == 400
+
+
+def test_platform_oauth_token_exchange_uses_incremental_persist(monkeypatch):
+    assert app is not None
+    client = TestClient(app)
+    session_response = client.post("/api/v1/session/dev-local")
+    verifier = "b" * 64
+    saved = []
+
+    authorize = client.post(
+        "/api/v1/oauth/authorize",
+        json={
+            "client_id": "track-anywhere-web",
+            "redirect_uri": "http://localhost:3000/auth/callback",
+            "scope": "account:read book:read ledger:read",
+            "state": "state-incremental",
+            "code_challenge": pkce_challenge(verifier),
+            "code_challenge_method": "S256",
+            "action": "approve",
+        },
+        headers={
+            "X-CSRF-Token": session_response.json()["csrf_token"],
+            "Origin": "http://localhost:3000",
+        },
+    )
+    code = parse_qs(urlparse(authorize.json()["redirect_uri"]).query)["code"][0]
+
+    def fail_full_save(_service):
+        raise AssertionError("OAuth token exchange should not full-save service state")
+
+    def capture_credential_event(credential, audit_event):
+        saved.append((credential, audit_event))
+
+    monkeypatch.setattr(service.storage, "save", fail_full_save)
+    monkeypatch.setattr(service.storage, "save_credential_and_audit_event", capture_credential_event)
+
+    token = client.post(
+        "/api/v1/oauth/token",
+        json={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": "track-anywhere-web",
+            "redirect_uri": "http://localhost:3000/auth/callback",
+            "code_verifier": verifier,
+        },
+    )
+
+    assert token.status_code == 200
+    assert len(saved) == 1
+    credential, audit_event = saved[0]
+    assert credential.actor.actor_id == "owner"
+    assert credential.actor.scopes == frozenset({"account:read", "book:read", "ledger:read"})
+    assert audit_event.operation == "oauth.pkce.exchange"

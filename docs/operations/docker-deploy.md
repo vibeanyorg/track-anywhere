@@ -1,18 +1,19 @@
 # Docker Deployment
 
-Track Anywhere publishes one image for the API service, the production web
-frontend, and the `ta` CLI:
+Track Anywhere publishes separate runtime images for the API/CLI and the
+production web frontend:
 
 ```text
-ghcr.io/vibeanyorg/track-anywhere:latest
+ghcr.io/vibeanyorg/track-anywhere-api:latest
+ghcr.io/vibeanyorg/track-anywhere-web:latest
 ```
 
-The image starts the FastAPI service by default. The production Compose file runs
-the same image twice: `api` on port 8000 and `web` on port 3000. Run `ta` inside
-the same image when you need a containerized CLI:
+The API image starts the FastAPI service by default and also contains the `ta`
+CLI. The web image only contains the Next.js standalone server. Run `ta` inside
+the API image when you need a containerized CLI:
 
 ```bash
-docker run --rm ghcr.io/vibeanyorg/track-anywhere:latest ta --help
+docker run --rm ghcr.io/vibeanyorg/track-anywhere-api:latest ta --help
 ```
 
 ## Service Address
@@ -94,10 +95,11 @@ the script.
 
 ## Publishing
 
-Build and publish a multi-arch registry image:
+Build and publish multi-arch registry images:
 
 ```bash
-TRACK_ANYWHERE_IMAGE=ghcr.io/vibeanyorg/track-anywhere \
+TRACK_ANYWHERE_API_IMAGE=ghcr.io/vibeanyorg/track-anywhere-api \
+TRACK_ANYWHERE_WEB_IMAGE=ghcr.io/vibeanyorg/track-anywhere-web \
 TRACK_ANYWHERE_IMAGE_TAG=$(git rev-parse --short HEAD) \
 scripts/build-public-image.sh
 ```

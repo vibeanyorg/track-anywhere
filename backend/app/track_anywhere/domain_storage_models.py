@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Float, ForeignKey, Integer, JSON, String
+from sqlalchemy import Float, ForeignKey, Index, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .storage_models import ASSET_CODE_LENGTH, Base
@@ -36,6 +36,7 @@ class BookMemberRecord(Base):
 
 class TransactionLineRecord(Base):
     __tablename__ = "transaction_lines"
+    __table_args__ = (Index("ix_transaction_lines_book_category", "book_id", "category_id"),)
 
     line_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.transaction_id"))

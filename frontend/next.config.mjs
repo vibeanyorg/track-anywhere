@@ -1,7 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
-  skipTrailingSlashRedirect: true
+  skipTrailingSlashRedirect: true,
+  poweredByHeader: false,
+  reactStrictMode: true
 };
 
 export default nextConfig;

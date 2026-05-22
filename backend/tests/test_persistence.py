@@ -227,7 +227,7 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
     assert "transactions" in tables
     assert "postings" in tables
     assert "recurring_items" in tables
-    assert version == "0009_reversal_investment_links"
+    assert version == "0010_auth_machine_flows"
     assert account_columns["currency"].upper() == "VARCHAR(16)"
     assert account_columns["book_id"].upper() == "VARCHAR(80)"
     assert {"category_id", "metadata"} <= draft_columns
@@ -278,7 +278,7 @@ def test_alembic_adopts_legacy_sqlite_schema_without_destroying_data(tmp_path):
             for row in connection.execute("select name from sqlite_master where type = 'table'").fetchall()
         }
 
-    assert version == "0009_reversal_investment_links"
+    assert version == "0010_auth_machine_flows"
     assert {"institution_type", "subtype", "institution", "book_id"} <= account_columns
     assert "book_id" in transaction_columns
     assert "category_id" not in transaction_columns
@@ -295,4 +295,4 @@ def test_alembic_migrations_are_idempotent_across_restart(tmp_path):
     with sqlite3.connect(database_path) as connection:
         versions = connection.execute("select version_num from alembic_version").fetchall()
 
-    assert versions == [("0009_reversal_investment_links",)]
+    assert versions == [("0010_auth_machine_flows",)]

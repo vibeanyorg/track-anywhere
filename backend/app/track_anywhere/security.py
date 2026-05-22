@@ -6,6 +6,7 @@ from hashlib import sha256
 from typing import Any
 from uuid import uuid4
 
+from .deployment_security import DeploymentSecurityConfig, validate_startup_security
 from .errors import PolicyDenied, SecurityPreconditionFailed
 
 
@@ -26,7 +27,6 @@ SENSITIVE_KEYS = {
     "raw_note",
     "raw_text",
     "refresh_token",
-    "request_body",
     "secret",
     "target_token",
     "token",
@@ -75,6 +75,13 @@ class Credential:
     expires_at: datetime
     jti: str
     revoked_at: datetime | None = None
+    auth_kind: str = "api_key"
+    name: str | None = None
+    description: str = ""
+    key_prefix: str | None = None
+    created_by_actor_id: str | None = None
+    last_used_at: datetime | None = None
+    rotated_from_jti: str | None = None
 
     @property
     def active(self) -> bool:
@@ -93,6 +100,12 @@ class CredentialStore:
         scopes: set[str],
         ttl: timedelta = timedelta(hours=1),
         token: str | None = None,
+        auth_kind: str = "api_key",
+        name: str | None = None,
+        description: str = "",
+        key_prefix: str | None = None,
+        created_by_actor_id: str | None = None,
+        rotated_from_jti: str | None = None,
     ) -> str:
         token = token or f"ta_{uuid4().hex}"
         token_hash = hash_secret(token)
@@ -102,6 +115,12 @@ class CredentialStore:
             issued_at=utcnow(),
             expires_at=utcnow() + ttl,
             jti=uuid4().hex,
+            auth_kind=auth_kind,
+            name=name,
+            description=description,
+            key_prefix=key_prefix or f"ta_...{token_hash[:8]}",
+            created_by_actor_id=created_by_actor_id,
+            rotated_from_jti=rotated_from_jti,
         )
         return token
 
@@ -112,16 +131,25 @@ class CredentialStore:
             raise PolicyDenied("credential is missing, expired, or revoked")
         if required_scope is not None and required_scope not in credential.actor.scopes:
             raise PolicyDenied(f"credential lacks required scope: {required_scope}")
+        credential.last_used_at = utcnow()
         return credential.actor
 
     def list(self) -> list[Credential]:
-        return sorted(self._credentials.values(), key=lambda credential: (credential.issued_at, credential.jti), reverse=True)
+        return sorted(
+            self._credentials.values(),
+            key=lambda credential: (credential.issued_at, credential.jti),
+            reverse=True,
+        )
 
     def get_by_jti(self, jti: str) -> Credential | None:
         return next((credential for credential in self._credentials.values() if credential.jti == jti), None)
 
     def get_by_token(self, token: str) -> Credential | None:
         return self._credentials.get(hash_secret(token))
+
+    def get(self, token: str | CredentialReference) -> Credential | None:
+        token_hash = token.token_hash if isinstance(token, CredentialReference) else hash_secret(token)
+        return self._credentials.get(token_hash)
 
     def revoke(self, token: str) -> None:
         credential = self._credentials.get(hash_secret(token))
@@ -240,37 +268,3 @@ def validate_web_security(
     if not origin_ok and not referer_ok:
         raise SecurityPreconditionFailed("missing or invalid Origin/Referer")
 
-
-@dataclass(frozen=True)
-class DeploymentSecurityConfig:
-    mode: str = "local"
-    tls_enabled: bool = False
-    key_provider_configured: bool = False
-    encrypted_volume_documented: bool = False
-    backup_encryption_documented: bool = False
-    attachment_scanner_available: bool = False
-    debug_raw_payload: bool = False
-    local_dev_no_scan: bool = False
-
-
-def validate_startup_security(config: DeploymentSecurityConfig) -> list[str]:
-    warnings: list[str] = []
-    if config.local_dev_no_scan and config.mode != "local":
-        raise SecurityPreconditionFailed("local_dev_no_scan is only allowed in local mode")
-    if config.mode == "local":
-        if config.debug_raw_payload:
-            warnings.append("debug raw payload override enabled in local mode")
-        if config.local_dev_no_scan:
-            warnings.append("attachment scanner bypass enabled in local mode")
-        return warnings
-    if not config.tls_enabled:
-        raise SecurityPreconditionFailed("non-local deployment requires TLS")
-    if not (config.key_provider_configured or config.encrypted_volume_documented):
-        raise SecurityPreconditionFailed("non-local deployment requires key provider or encrypted-volume constraint")
-    if not config.backup_encryption_documented:
-        raise SecurityPreconditionFailed("non-local deployment requires backup encryption/restoration plan")
-    if not config.attachment_scanner_available:
-        raise SecurityPreconditionFailed("non-local deployment requires attachment scanner")
-    if config.debug_raw_payload:
-        raise SecurityPreconditionFailed("raw payload debug override is forbidden in non-local mode")
-    return warnings

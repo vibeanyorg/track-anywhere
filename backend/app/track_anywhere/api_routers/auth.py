@@ -4,6 +4,7 @@ from authlib.integrations.base_client import OAuthError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from ..api_dependencies import AuthToken
 from ..api_sessions import SESSION_COOKIE, clear_browser_session_cookies, set_browser_session_cookies
 from ..api_runtime import auth_cookie_secure, auth_settings, browser_sessions, oauth_registry, password_accounts, service
 from ..auth_identities import OAuthIdentity
@@ -31,10 +32,23 @@ def current_session(request: Request):
     return {"authenticated": True, "identity": identity}
 
 
+@router.get("/token-status", dependencies=[])
+def token_status(token: AuthToken):
+    try:
+        return service.credential_status(token)
+    except PolicyDenied as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/logout")
 def logout(request: Request):
     browser_sessions.revoke(request.cookies.get(SESSION_COOKIE))
-    response = JSONResponse({"authenticated": False})
+    if _accepts_html(request):
+        response = RedirectResponse("/api/v1/auth/login", status_code=303)
+    else:
+        response = JSONResponse({"authenticated": False})
     clear_browser_session_cookies(response)
     return response
 
@@ -94,7 +108,7 @@ def list_oauth_providers():
 
 
 @router.get("/oauth/{provider}/authorize")
-async def oauth_authorize(provider: str, request: Request):
+async def oauth_authorize(provider: str, request: Request, next: str | None = None):
     provider_settings = auth_settings.provider(provider)
     if provider_settings is None:
         raise HTTPException(status_code=404, detail="OAuth provider is not configured")
@@ -104,6 +118,8 @@ async def oauth_authorize(provider: str, request: Request):
         raise HTTPException(status_code=503, detail="OAuth provider is unavailable")
 
     redirect_uri = oauth_callback_url(request, auth_settings, provider)
+    if next and hasattr(request, "session"):
+        request.session["ta_auth_next"] = _safe_next(next)
     return await client.authorize_redirect(request, redirect_uri)
 
 
@@ -134,7 +150,7 @@ async def oauth_callback(provider: str, request: Request):
         credential_token=login["credential_token"],
         identity=session_identity,
     )
-    response = _success_response(csrf_token=csrf_token, identity=session_identity)
+    response = _success_response(request, csrf_token=csrf_token, identity=session_identity)
     set_browser_session_cookies(
         response,
         session_id=session_id,
@@ -144,10 +160,24 @@ async def oauth_callback(provider: str, request: Request):
     return response
 
 
-def _success_response(*, csrf_token: str, identity: dict):
-    if auth_settings.success_redirect_url:
-        return RedirectResponse(auth_settings.success_redirect_url, status_code=303)
+def _success_response(request: Request, *, csrf_token: str, identity: dict):
+    redirect_to = auth_settings.success_redirect_url
+    if not redirect_to and hasattr(request, "session"):
+        redirect_to = request.session.pop("ta_auth_next", None)
+    if redirect_to:
+        return RedirectResponse(redirect_to, status_code=303)
     return JSONResponse({"authenticated": True, "csrf_token": csrf_token, "identity": identity})
+
+
+def _safe_next(value: str) -> str:
+    if value.startswith("/") and not value.startswith("//"):
+        return value
+    return "/api/v1/auth/session-view"
+
+
+def _accepts_html(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    return "text/html" in accept and "application/json" not in accept
 
 
 def _password_session_response(email: str, display_name: str, role: str):

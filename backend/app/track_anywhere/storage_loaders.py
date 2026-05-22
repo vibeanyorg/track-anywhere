@@ -15,7 +15,6 @@ from .recurring import Recurrence, RecurringItem
 from .security import Actor, Credential
 from .storage_models import (
     AuditEventRecord,
-    CredentialRecord,
     DraftPostingRecord,
     DraftRecord,
     FundRecord,
@@ -26,6 +25,7 @@ from .storage_models import (
     RecurringItemRecord,
     TransactionRecord,
 )
+from .storage_auth_models import CredentialRecord
 from .domain_storage_models import TransactionLineRecord
 
 
@@ -184,6 +184,13 @@ class StorageLoaders:
                 expires_at=datetime.fromisoformat(row.expires_at),
                 jti=row.jti,
                 revoked_at=datetime.fromisoformat(row.revoked_at) if row.revoked_at else None,
+                auth_kind=getattr(row, "auth_kind", "api_key"),
+                name=getattr(row, "name", None),
+                description=getattr(row, "description", "") or "",
+                key_prefix=getattr(row, "key_prefix", None),
+                created_by_actor_id=getattr(row, "created_by_actor_id", None),
+                last_used_at=(datetime.fromisoformat(row.last_used_at) if getattr(row, "last_used_at", None) else None),
+                rotated_from_jti=getattr(row, "rotated_from_jti", None),
             )
             for row in session.query(CredentialRecord).all()
         }

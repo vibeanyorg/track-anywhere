@@ -18,7 +18,7 @@ from .idempotency import IdempotencyStore
 from .investments import InvestmentBook
 from .ledger import Ledger
 from .recurring import RecurringBook
-from .security import Actor, CredentialStore, DeploymentSecurityConfig, validate_startup_security
+from .security import Actor, CredentialReference, CredentialStore, DeploymentSecurityConfig, validate_startup_security
 from .service_assets import AssetUseCases
 from .service_auth import OWNER_SCOPES
 from .service_balances import BalanceUseCases
@@ -86,8 +86,12 @@ class FinanceService(
         if persist_on_initialize or self._startup_persist_required:
             self._persist()
 
-    def actor_from_token(self, token: str, required_scope: str | None = None) -> Actor:
-        return self.credentials.verify(token, required_scope=required_scope)
+    def actor_from_token(self, token: str | CredentialReference, required_scope: str | None = None) -> Actor:
+        actor = self.credentials.verify(token, required_scope=required_scope)
+        credential = self.credentials.get(token)
+        if credential is not None:
+            self.storage.save_credential(credential)
+        return actor
 
     def actor_for_book(self, token: str, book_id: str | None, required_scope: str | None = None) -> Actor:
         actor = self.actor_from_token(token, required_scope=required_scope)
@@ -107,6 +111,8 @@ class FinanceService(
             scopes=set(OWNER_SCOPES),
             ttl=timedelta(days=30),
             token=self.owner_token,
+            auth_kind="owner",
+            name="Owner credential",
         )
 
     def _persist(self) -> None:
