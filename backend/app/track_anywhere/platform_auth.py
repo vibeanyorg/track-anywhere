@@ -137,12 +137,11 @@ class PlatformKeyExchange:
         if action == "deny":
             grant.status = "denied"
         else:
-            scopes = tuple(dict.fromkeys(approved_scopes)) if approved_scopes is not None else grant.scopes
-            if not scopes:
-                raise ValidationError("select at least one scope")
-            unexpected_scopes = set(scopes) - set(grant.scopes)
-            if unexpected_scopes:
-                raise ValidationError(f"approved scopes were not requested: {sorted(unexpected_scopes)}")
+            scopes = (
+                tuple(self._validated_client_scopes(" ".join(approved_scopes), self._client_for(grant.client_id)))
+                if approved_scopes is not None
+                else grant.scopes
+            )
             self._ensure_actor_can_approve(scopes, actor)
             grant.scopes = scopes
             grant.status = "approved"

@@ -13,7 +13,7 @@ from ..auth_identities import OAuthIdentity
 from ..errors import PolicyDenied, ValidationError
 from ..password_auth import PasswordSignupCommand
 from ..platform_auth import OAuthAuthorizeCommand
-from .auth_scope_ui import approved_scope_text, requested_scope_text, scope_controls
+from .auth_scope_ui import actor_available_scope_text, approved_scope_text, requested_scope_text, scope_controls
 
 
 router = APIRouter(prefix="/auth", tags=["auth-ui"], include_in_schema=False)
@@ -89,12 +89,15 @@ def cli_callback_page(request: Request) -> HTMLResponse:
     if missing:
         return _page("Incomplete link", f"<section class='panel'><h1>Incomplete link</h1><p class='error'>Missing {escape(', '.join(missing))}.</p></section>", 400)
 
-    identity = browser_sessions.identity_for(request.cookies.get(SESSION_COOKIE))
+    session_id = request.cookies.get(SESSION_COOKIE)
+    identity = browser_sessions.identity_for(session_id)
+    credential = browser_sessions.credential_for(session_id)
     csrf_token = request.cookies.get(CSRF_COOKIE)
-    if identity is None or csrf_token is None:
+    if identity is None or credential is None or csrf_token is None:
         next_path = _request_path(request)
         return RedirectResponse(f"/api/v1/auth/login?next={quote(next_path)}", status_code=303)
-    return _approval_form(request, identity=identity, csrf_token=csrf_token, error=None)
+    actor = service.actor_from_token(credential)
+    return _approval_form(request, identity=identity, csrf_token=csrf_token, error=None, available_scope_text=actor_available_scope_text(actor.scopes))
 
 
 @router.post("/callback")
@@ -127,13 +130,15 @@ def cli_callback_approve(
         "code_challenge": code_challenge,
         "code_challenge_method": code_challenge_method,
     }
+    available_scope_text = None
     try:
+        actor = service.actor_from_token(credential)
+        available_scope_text = actor_available_scope_text(actor.scopes)
         approved_scope_value = approved_scope_text(
             requested_scope_text=scope,
             approved_scopes=approved_scope,
             selection_present=scope_selection_present is not None,
         )
-        actor = service.actor_from_token(credential)
         result = platform_key_exchange.authorize(
             OAuthAuthorizeCommand(
                 client_id=client_id,
@@ -148,7 +153,7 @@ def cli_callback_approve(
             service.storage,
         )
     except (PolicyDenied, ValidationError, ValueError) as exc:
-        return _approval_form(request, identity=identity, csrf_token=csrf_token, error=str(exc), status_code=400, values=form_values)
+        return _approval_form(request, identity=identity, csrf_token=csrf_token, error=str(exc), status_code=400, values=form_values, available_scope_text=available_scope_text)
     return _callback_result(result["redirect_uri"])
 
 
@@ -203,6 +208,7 @@ def _approval_form(
     error: str | None,
     status_code: int = 200,
     values: dict[str, str] | None = None,
+    available_scope_text: str | None = None,
 ) -> HTMLResponse:
     name = identity.get("name") or identity.get("display_name") or identity.get("email") or "this account"
     field_values = values or {key: request.query_params.get(key, "") for key in ("client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method")}
@@ -210,7 +216,7 @@ def _approval_form(
         _hidden(name, field_values.get(name, ""))
         for name in ("client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method")
     )
-    scope_options = scope_controls(requested_scope_text(field_values.get("scope")))
+    scope_options = scope_controls(requested_scope_text(field_values.get("scope")), available_scope_text=available_scope_text)
     body = f"""
       <section class="panel">
         <p class="eyebrow">Track Anywhere CLI</p>
@@ -253,7 +259,9 @@ textarea{{min-height:140px;resize:vertical}}button,.secondary{{border:1px solid 
 .secondary{{background:#fff;color:#16201d}}.link{{color:#16201d}}.muted{{color:#59645f;line-height:1.5}}.error{{color:#a3332a}}
 .scope-panel{{border:1px solid #d7ddd8;border-radius:8px;padding:14px;display:grid;gap:10px}}.scope-panel legend{{padding:0 6px;font-weight:650}}
 .scope-list{{display:grid;gap:8px}}.scope-option{{display:flex;align-items:center;gap:9px}}.scope-option input{{width:auto;margin:0}}.scope-name{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}}
-</style></head><body>{body}</body></html>""", status_code=status_code)
+</style><script>
+document.addEventListener("DOMContentLoaded",()=>{{const all=document.querySelector("[data-scope-all]");const boxes=[...document.querySelectorAll("input[name='approved_scope']")];if(!all||!boxes.length)return;const sync=()=>{{all.checked=boxes.every(box=>box.checked);all.indeterminate=!all.checked&&boxes.some(box=>box.checked)}};all.addEventListener("change",()=>{{boxes.forEach(box=>box.checked=all.checked);sync()}});boxes.forEach(box=>box.addEventListener("change",sync));sync()}});
+</script></head><body>{body}</body></html>""", status_code=status_code)
 
 
 def _hidden(name: str, value: str | None) -> str:

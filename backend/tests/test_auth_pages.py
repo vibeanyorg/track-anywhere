@@ -107,7 +107,7 @@ def test_fastapi_cli_callback_requires_login_then_approves_code():
     assert token.json()["token_type"] == "Bearer"
 
 
-def test_fastapi_cli_callback_page_can_downscope_requested_scopes():
+def test_fastapi_cli_callback_page_can_select_available_scopes():
     assert app is not None
     client = TestClient(app)
     verifier = "d" * 64
@@ -129,7 +129,7 @@ def test_fastapi_cli_callback_page_can_downscope_requested_scopes():
             "action": "approve",
             "csrf_token": client.cookies.get("ta_csrf"),
             "scope_selection_present": "1",
-            "approved_scope": ["account:read", "book:read"],
+            "approved_scope": ["account:read", "account:write", "book:read"],
         },
     )
 
@@ -147,15 +147,16 @@ def test_fastapi_cli_callback_page_can_downscope_requested_scopes():
     )
 
     assert page.status_code == 200
-    assert "Requested access" in page.text
+    assert "Token permissions" in page.text
     assert 'name="approved_scope" value="account:read"' in page.text
+    assert 'name="approved_scope" value="account:write"' in page.text
     assert 'name="approved_scope" value="ledger:read"' in page.text
     assert approved.status_code == 200
     assert token.status_code == 200
-    assert token.json()["scope"] == "account:read book:read"
+    assert token.json()["scope"] == "account:read account:write book:read"
 
 
-def test_fastapi_cli_callback_rejects_scope_expansion_from_form_tampering():
+def test_fastapi_cli_callback_rejects_disallowed_scope_selection():
     assert app is not None
     client = TestClient(app)
     query = {
@@ -175,15 +176,15 @@ def test_fastapi_cli_callback_rejects_scope_expansion_from_form_tampering():
             "action": "approve",
             "csrf_token": client.cookies.get("ta_csrf"),
             "scope_selection_present": "1",
-            "approved_scope": ["account:read", "ledger:read"],
+            "approved_scope": ["account:read", "credential:write"],
         },
     )
 
     assert approved.status_code == 400
-    assert "approved scopes were not requested" in approved.text
+    assert "unknown OAuth scopes" in approved.text
 
 
-def test_fastapi_device_page_can_downscope_requested_scopes():
+def test_fastapi_device_page_can_select_available_scopes():
     assert app is not None
     client = TestClient(app)
     authorization = _create_device_authorization(client, "account:read book:read ledger:read")
@@ -197,7 +198,7 @@ def test_fastapi_device_page_can_downscope_requested_scopes():
             "action": "approve",
             "csrf_token": client.cookies.get("ta_csrf"),
             "scope_selection_present": "1",
-            "approved_scope": ["account:read", "book:read"],
+            "approved_scope": ["account:read", "account:write", "book:read"],
         },
     )
     token = client.post(
@@ -210,15 +211,16 @@ def test_fastapi_device_page_can_downscope_requested_scopes():
     )
 
     assert page.status_code == 200
-    assert "Requested access" in page.text
+    assert "Token permissions" in page.text
     assert 'name="approved_scope" value="account:read"' in page.text
+    assert 'name="approved_scope" value="account:write"' in page.text
     assert 'name="approved_scope" value="ledger:read"' in page.text
     assert approved.status_code == 200
     assert token.status_code == 200
-    assert token.json()["scope"] == "account:read book:read"
+    assert token.json()["scope"] == "account:read account:write book:read"
 
 
-def test_fastapi_device_page_rejects_scope_expansion_from_form_tampering():
+def test_fastapi_device_page_rejects_disallowed_scope_selection():
     assert app is not None
     client = TestClient(app)
     authorization = _create_device_authorization(client, "account:read")
@@ -231,9 +233,9 @@ def test_fastapi_device_page_rejects_scope_expansion_from_form_tampering():
             "action": "approve",
             "csrf_token": client.cookies.get("ta_csrf"),
             "scope_selection_present": "1",
-            "approved_scope": ["account:read", "ledger:read"],
+            "approved_scope": ["account:read", "credential:write"],
         },
     )
 
     assert approved.status_code == 400
-    assert "approved scopes were not requested" in approved.text
+    assert "unknown OAuth scopes" in approved.text
