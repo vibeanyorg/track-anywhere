@@ -148,6 +148,9 @@ def test_fastapi_cli_callback_page_can_select_available_scopes():
 
     assert page.status_code == 200
     assert "Token permissions" in page.text
+    assert "Account permissions" in page.text
+    assert "Ledger permissions" in page.text
+    assert 'data-scope-group="account"' in page.text
     assert 'name="approved_scope" value="account:read"' in page.text
     assert 'name="approved_scope" value="account:write"' in page.text
     assert 'name="approved_scope" value="ledger:read"' in page.text
@@ -212,6 +215,9 @@ def test_fastapi_device_page_can_select_available_scopes():
 
     assert page.status_code == 200
     assert "Token permissions" in page.text
+    assert "Account permissions" in page.text
+    assert "Ledger permissions" in page.text
+    assert 'data-scope-group="account"' in page.text
     assert 'name="approved_scope" value="account:read"' in page.text
     assert 'name="approved_scope" value="account:write"' in page.text
     assert 'name="approved_scope" value="ledger:read"' in page.text

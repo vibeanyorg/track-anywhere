@@ -22,15 +22,7 @@ def scope_controls(scope_text: str, available_scope_text: str | None = None) -> 
           </section>
         """
     requested_set = set(requested_scopes)
-    options = "\n".join(
-        f"""
-          <label class="scope-option">
-            <input type="checkbox" name="approved_scope" value="{escape(scope, quote=True)}" {"checked" if scope in requested_set else ""}>
-            <span class="scope-name">{escape(scope)}</span>
-          </label>
-        """
-        for scope in scopes
-    )
+    options = "\n".join(_scope_group(group, group_scopes, requested_set) for group, group_scopes in _group_scopes(scopes).items())
     return f"""
       <fieldset class="scope-panel">
         <legend>Token permissions</legend>
@@ -60,3 +52,36 @@ def requested_scope_text(value: str | None) -> str:
 
 def actor_available_scope_text(actor_scopes: Iterable[str]) -> str:
     return " ".join(sorted(set(actor_scopes) & AGENT_ALLOWED_SCOPES))
+
+
+def _group_scopes(scopes: list[str]) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for scope in scopes:
+        groups.setdefault(scope.split(":", 1)[0], []).append(scope)
+    return groups
+
+
+def _scope_group(group: str, scopes: list[str], requested_set: set[str]) -> str:
+    escaped_group = escape(group, quote=True)
+    items = "\n".join(
+        f"""
+          <label class="scope-option">
+            <input type="checkbox" name="approved_scope" value="{escape(scope, quote=True)}" data-scope-item="{escaped_group}" {"checked" if scope in requested_set else ""}>
+            <span class="scope-name">{escape(scope)}</span>
+          </label>
+        """
+        for scope in scopes
+    )
+    return f"""
+      <section class="scope-group">
+        <label class="scope-option scope-group-label">
+          <input type="checkbox" data-scope-group="{escaped_group}">
+          <span>{escape(_group_title(group))} permissions</span>
+        </label>
+        <div class="scope-list scope-group-items">{items}</div>
+      </section>
+    """
+
+
+def _group_title(group: str) -> str:
+    return group.replace("-", " ").title()
