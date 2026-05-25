@@ -174,13 +174,14 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
         account_columns = {row[1]: row[2] for row in connection.execute("pragma table_info(accounts)").fetchall()}
         draft_columns = {row[1] for row in connection.execute("pragma table_info(drafts)").fetchall()}
         investment_valuation_indexes = {row[1] for row in connection.execute("pragma index_list(investment_valuations)").fetchall()}
+        posting_indexes = connection.execute("pragma index_list(postings)").fetchall()
 
     assert "alembic_version" in tables
     assert "accounts" in tables
     assert "transactions" in tables
     assert "postings" in tables
     assert "recurring_items" in tables
-    assert version == "0010_auth_machine_flows"
+    assert version == "0011_posting_position_invariants"
     assert account_columns["currency"].upper() == "VARCHAR(16)"
     assert account_columns["book_id"].upper() == "VARCHAR(80)"
     assert {"category_id", "metadata"} <= draft_columns
@@ -195,6 +196,7 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
         "auth_identities",
         "password_accounts",
     } <= tables
+    assert any(index[2] for index in posting_indexes)
 
 
 def test_alembic_adopts_legacy_sqlite_schema_without_destroying_data(tmp_path):
@@ -231,7 +233,7 @@ def test_alembic_adopts_legacy_sqlite_schema_without_destroying_data(tmp_path):
             for row in connection.execute("select name from sqlite_master where type = 'table'").fetchall()
         }
 
-    assert version == "0010_auth_machine_flows"
+    assert version == "0011_posting_position_invariants"
     assert {"institution_type", "subtype", "institution", "book_id"} <= account_columns
     assert "book_id" in transaction_columns
     assert "category_id" not in transaction_columns
@@ -248,4 +250,4 @@ def test_alembic_migrations_are_idempotent_across_restart(tmp_path):
     with sqlite3.connect(database_path) as connection:
         versions = connection.execute("select version_num from alembic_version").fetchall()
 
-    assert versions == [("0010_auth_machine_flows",)]
+    assert versions == [("0011_posting_position_invariants",)]

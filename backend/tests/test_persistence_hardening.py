@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
+from decimal import Decimal
 
+import pytest
+from sqlalchemy import event
+
+from track_anywhere.errors import ValidationError
+from track_anywhere.ledger import Posting
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
@@ -144,3 +150,144 @@ def test_fund_flows_replay_before_stale_version_checks(tmp_path):
     assert replay is True
     assert replayed_spend["transaction"].transaction_id == spent["transaction"].transaction_id
     assert service.account_balance(token, fund.account_id)["official_balance"]["amount"] == "25"
+
+
+def test_confirmed_postings_are_immutable_after_initial_persist(tmp_path):
+    database_path = tmp_path / "track-anywhere.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    account, _ = service.create_account(
+        token,
+        {"name": "Immutable Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="immutable-cash",
+    )
+    transaction, _ = service.adjust_balance(
+        token,
+        {
+            "account_id": account.account_id,
+            "amount": "100",
+            "currency": "CNY",
+            "purpose": "seed balance",
+        },
+        idempotency_key="immutable-balance",
+    )
+    adjustment_account_id = transaction.postings[1].account_id
+
+    transaction.postings.extend(
+        [
+            Posting(account.account_id, Decimal("100"), "CNY"),
+            Posting(adjustment_account_id, Decimal("-100"), "CNY"),
+        ]
+    )
+
+    with pytest.raises(ValidationError, match="confirmed transaction postings are immutable"):
+        service._persist_ledger_change(transaction)
+
+    with sqlite3.connect(database_path) as connection:
+        posting_count = connection.execute(
+            "select count(*) from postings where transaction_id = ?",
+            (transaction.transaction_id,),
+        ).fetchone()[0]
+
+    assert posting_count == 2
+
+
+def test_service_startup_rejects_duplicate_balance_adjustment_postings(tmp_path):
+    database_path = tmp_path / "track-anywhere.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    account, _ = service.create_account(
+        token,
+        {"name": "Dirty Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="dirty-cash",
+    )
+    transaction, _ = service.adjust_balance(
+        token,
+        {
+            "account_id": account.account_id,
+            "amount": "100",
+            "currency": "CNY",
+            "purpose": "seed balance",
+        },
+        idempotency_key="dirty-balance",
+    )
+
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            select transaction_id, book_id, account_id, amount, currency
+            from postings
+            where transaction_id = ?
+            order by position
+            """,
+            (transaction.transaction_id,),
+        ).fetchall()
+        for offset, row in enumerate(rows, start=2):
+            transaction_id, book_id, account_id, amount, currency = row
+            connection.execute(
+                """
+                insert into postings (transaction_id, book_id, position, account_id, amount, currency)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (transaction_id, book_id, offset, account_id, amount, currency),
+            )
+
+    with pytest.raises(ValidationError, match="balance adjustment transaction requires exactly two postings"):
+        FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+
+
+def test_reclassification_does_not_rewrite_confirmed_postings(tmp_path):
+    database_path = tmp_path / "track-anywhere.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Classify Cash", "type": "asset", "currency": "CNY", "opening_balance": "100"},
+        idempotency_key="classify-cash",
+    )
+    food, _ = service.create_category(token, {"kind": "expense", "name": "Food"}, idempotency_key="classify-food")
+    dining, _ = service.create_category(
+        token,
+        {"kind": "expense", "name": "Dining"},
+        idempotency_key="classify-dining",
+    )
+    transaction, _ = service.record_expense(
+        token,
+        {
+            "amount": "38",
+            "currency": "CNY",
+            "from_account_id": cash.account_id,
+            "category_id": food.category_id,
+            "purpose": "lunch",
+        },
+        idempotency_key="classify-lunch",
+    )
+    with sqlite3.connect(database_path) as connection:
+        posting_ids_before = connection.execute(
+            "select id from postings where transaction_id = ? order by position",
+            (transaction.transaction_id,),
+        ).fetchall()
+
+    statements: list[str] = []
+
+    def capture_statement(_conn, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(" ".join(statement.lower().split()))
+
+    event.listen(service.storage.engine, "before_cursor_execute", capture_statement)
+    try:
+        service.reclassify_transaction(
+            token,
+            {"transaction_id": transaction.transaction_id, "category_id": dining.category_id},
+            idempotency_key="classify-lunch-dining",
+        )
+    finally:
+        event.remove(service.storage.engine, "before_cursor_execute", capture_statement)
+
+    with sqlite3.connect(database_path) as connection:
+        posting_ids_after = connection.execute(
+            "select id from postings where transaction_id = ? order by position",
+            (transaction.transaction_id,),
+        ).fetchall()
+
+    assert posting_ids_after == posting_ids_before
+    assert not any(statement.startswith("delete from postings") for statement in statements)

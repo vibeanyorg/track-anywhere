@@ -152,6 +152,7 @@ class FinanceService(
                 self.assets.ensure(posting.currency)
             for line in transaction.lines:
                 self.assets.ensure(line.currency)
+            self.ledger.validate_transaction_integrity(transaction)
             if transaction.reverses_transaction_id:
                 original = self.ledger.transactions.get(transaction.reverses_transaction_id)
                 if original is not None and original.reversed_by is None:

@@ -122,10 +122,29 @@ class Ledger:
         book_id: str | None = None,
         reverses_transaction_id: str | None = None,
     ) -> Transaction:
+        posting_book_id = self._validate_transaction_postings(postings, book_id=book_id)
+        transaction = Transaction(
+            transaction_id=f"txn_{uuid4().hex}",
+            memo=memo,
+            occurred_at=occurred_at or datetime.now(timezone.utc),
+            purpose=purpose or memo,
+            postings=postings,
+            book_id=posting_book_id,
+            lines=[],
+            reverses_transaction_id=reverses_transaction_id,
+        )
+        self.transactions[transaction.transaction_id] = transaction
+        return transaction
+
+    def validate_transaction_integrity(self, transaction: Transaction) -> None:
+        self._validate_transaction_postings(transaction.postings, book_id=transaction.book_id)
+
+    def _validate_transaction_postings(self, postings: list[Posting], *, book_id: str | None = None) -> str:
         if len(postings) < 2:
             raise ValidationError("confirmed transaction requires at least two postings")
         totals: dict[str, Decimal] = {}
         posting_book_id: str | None = book_id
+        system_adjustment_posting_count = 0
         for posting in postings:
             if posting.amount == Decimal("0"):
                 raise ValidationError("posting amount must not be zero")
@@ -142,22 +161,29 @@ class Ledger:
                 posting_book_id = account.book_id
             elif account.book_id != posting_book_id:
                 raise ValidationError("transaction postings must belong to one book")
+            if self._is_system_adjustment_account(account):
+                system_adjustment_posting_count += 1
             totals[posting.currency] = totals.get(posting.currency, Decimal("0")) + posting.amount
         unbalanced = {currency: total for currency, total in totals.items() if total != Decimal("0")}
         if unbalanced:
             raise ValidationError(f"postings must balance by currency: {unbalanced}")
-        transaction = Transaction(
-            transaction_id=f"txn_{uuid4().hex}",
-            memo=memo,
-            occurred_at=occurred_at or datetime.now(timezone.utc),
-            purpose=purpose or memo,
-            postings=postings,
-            book_id=posting_book_id or DEFAULT_BOOK_ID,
-            lines=[],
-            reverses_transaction_id=reverses_transaction_id,
+        if system_adjustment_posting_count and (
+            len(postings) != 2 or system_adjustment_posting_count != 1
+        ):
+            raise ValidationError(
+                "balance adjustment transaction requires exactly two postings: "
+                "one account posting and one system adjustment posting"
+            )
+        return posting_book_id or DEFAULT_BOOK_ID
+
+    @staticmethod
+    def _is_system_adjustment_account(account: Account) -> bool:
+        return (
+            account.type == "system"
+            and account.institution_type == "system"
+            and account.subtype == "system_adjustment"
+            and account.institution == "track-anywhere"
         )
-        self.transactions[transaction.transaction_id] = transaction
-        return transaction
 
     def add_line(
         self,

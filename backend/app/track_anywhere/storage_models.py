@@ -91,7 +91,10 @@ class TransactionRecord(Base):
 
 class PostingRecord(Base):
     __tablename__ = "postings"
-    __table_args__ = (Index("ix_postings_account_transaction", "account_id", "transaction_id"),)
+    __table_args__ = (
+        UniqueConstraint("transaction_id", "position", name="uq_postings_transaction_position"),
+        Index("ix_postings_account_transaction", "account_id", "transaction_id"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.transaction_id"))

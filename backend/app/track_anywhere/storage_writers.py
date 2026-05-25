@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from .audit import AuditEvent
 from .drafts import DraftTransaction
+from .errors import ValidationError
 from .ledger import Transaction
 from .storage_json import to_jsonable
 from .storage_models import (
@@ -23,59 +24,9 @@ from .storage_models import (
     RecurringItemRecord,
     TransactionRecord,
 )
+from .storage_posting_integrity import stored_posting_entries, transaction_posting_entries
+from .storage_redaction import redact_idempotency_result
 from .domain_storage_models import TransactionLineRecord
-
-IDEMPOTENCY_SECRET_KEYS = {
-    "account_number",
-    "api_key",
-    "authorization",
-    "access_token",
-    "card_number",
-    "credential",
-    "csrf_token",
-    "idempotency_key",
-    "memo",
-    "note",
-    "notes",
-    "password",
-    "raw_memo",
-    "refresh_token",
-    "target_token",
-    "token",
-    "secret",
-}
-
-
-def _is_idempotency_secret_key(key: str) -> bool:
-    key_lower = key.lower()
-    return (
-        key_lower in IDEMPOTENCY_SECRET_KEYS
-        or key_lower.endswith("_token")
-        or key_lower.endswith("_secret")
-        or key_lower.endswith("_password")
-    )
-
-
-def redact_idempotency_result(value: Any) -> Any:
-    """Redact secrets and free-text notes from persisted replay data.
-
-    Receipts need enough response shape for retry diagnostics, but memo/note
-    fields are user free text and may contain PII.  Keep structured purpose
-    values available while avoiding a second plaintext copy of private notes.
-    """
-
-    if isinstance(value, dict):
-        return {
-            key: (
-                "[REDACTED]"
-                if _is_idempotency_secret_key(key) and item not in ("", None)
-                else redact_idempotency_result(item)
-            )
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [redact_idempotency_result(item) for item in value]
-    return value
 
 
 class StorageWriters:
@@ -96,8 +47,20 @@ class StorageWriters:
             statement = statement.on_conflict_do_nothing(index_elements=key_columns)
         session.execute(statement)
 
-    def _replace_transaction_postings(self, session: Session, transaction: Transaction) -> None:
-        session.execute(delete(PostingRecord).where(PostingRecord.transaction_id == transaction.transaction_id))
+    def _save_transaction_postings(self, session: Session, transaction: Transaction) -> None:
+        existing = list(
+            session.scalars(
+                select(PostingRecord)
+                .where(PostingRecord.transaction_id == transaction.transaction_id)
+                .order_by(PostingRecord.position, PostingRecord.id)
+            )
+        )
+        if existing:
+            if stored_posting_entries(existing, transaction.book_id) != transaction_posting_entries(transaction):
+                raise ValidationError(
+                    "confirmed transaction postings are immutable; write a reversal or adjustment instead"
+                )
+            return
         for index, posting in enumerate(transaction.postings):
             session.add(
                 PostingRecord(
@@ -164,7 +127,7 @@ class StorageWriters:
                 },
                 ["transaction_id"],
             )
-            self._replace_transaction_postings(session, transaction)
+            self._save_transaction_postings(session, transaction)
             self._replace_transaction_lines(session, transaction)
 
     def _save_drafts(self, session: Session, drafts) -> None:
