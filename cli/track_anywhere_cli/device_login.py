@@ -18,6 +18,7 @@ def run_device_login(
     client_id: str,
     interaction: Interaction,
     save_token,
+    return_authorization: bool = False,
 ) -> int:
     config = CliConfig(base_url=state.base_url or DEFAULT_WEB_URL, token=None, insecure_automation=state.insecure_automation)
     status, data, request = create_device_login_request(config=config, requester=state.requester, client_id=client_id, scope=scope)
@@ -25,7 +26,7 @@ def run_device_login(
         outcome = build_outcome("auth.login", status, data)
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
-    if state.no_input:
+    if state.no_input or return_authorization:
         outcome = build_outcome("auth.login", 200, {"device_authorization": data})
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code

@@ -81,6 +81,6 @@ USER track-anywhere
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3))['status'] == 'ok'"
+    CMD python -c "import json, urllib.request; assert json.load(urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=3))['status'] == 'ok'"
 
 CMD ["uvicorn", "track_anywhere.api:app", "--app-dir", "backend/app", "--host", "0.0.0.0", "--port", "8000"]

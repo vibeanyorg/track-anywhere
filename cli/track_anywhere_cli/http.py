@@ -48,7 +48,32 @@ def request_json(config: CliConfig, method: str, path: str, payload: dict[str, A
         except Exception:
             parsed = {"detail": str(exc)}
         return exc.code, parsed
-    except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+    except (TimeoutError, socket.timeout) as exc:
+        return 504, _external_error_payload(
+            code="write_outcome_unknown" if method.upper() not in {"GET", "HEAD", "OPTIONS"} else "api_timeout",
+            message=(
+                "API write request timed out before a response; outcome is unknown. "
+                "Do not retry with a new idempotency key."
+                if method.upper() not in {"GET", "HEAD", "OPTIONS"}
+                else f"API request timed out: {exc}"
+            ),
+            retryable=method.upper() in {"GET", "HEAD", "OPTIONS"},
+            detail={"base_url": config.base_url, "path": path, "method": method},
+        )
+    except urllib.error.URLError as exc:
+        reason = getattr(exc, "reason", None)
+        if isinstance(reason, socket.timeout):
+            return 504, _external_error_payload(
+                code="write_outcome_unknown" if method.upper() not in {"GET", "HEAD", "OPTIONS"} else "api_timeout",
+                message=(
+                    "API write request timed out before a response; outcome is unknown. "
+                    "Do not retry with a new idempotency key."
+                    if method.upper() not in {"GET", "HEAD", "OPTIONS"}
+                    else f"API request timed out: {exc}"
+                ),
+                retryable=method.upper() in {"GET", "HEAD", "OPTIONS"},
+                detail={"base_url": config.base_url, "path": path, "method": method},
+            )
         return 503, _external_error_payload(
             code="api_unreachable",
             message=f"API request failed: {exc}",

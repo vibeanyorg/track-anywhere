@@ -31,6 +31,7 @@ from .service_fx import FxUseCases
 from .service_identity import IdentityUseCases
 from .service_investments import InvestmentUseCases
 from .service_ledger import LedgerUseCases
+from .service_reclassification import ReclassificationUseCases
 from .service_recurring import RecurringUseCases
 from .storage import OrmStorage, new_owner_token
 from .storage_json import to_jsonable
@@ -49,6 +50,7 @@ class FinanceService(
     RecurringUseCases,
     BalanceUseCases,
     FxUseCases,
+    ReclassificationUseCases,
     LedgerUseCases,
 ):
     def __init__(
@@ -87,11 +89,7 @@ class FinanceService(
             self._persist()
 
     def actor_from_token(self, token: str | CredentialReference, required_scope: str | None = None) -> Actor:
-        actor = self.credentials.verify(token, required_scope=required_scope)
-        credential = self.credentials.get(token)
-        if credential is not None:
-            self.storage.save_credential(credential)
-        return actor
+        return self.credentials.verify(token, required_scope=required_scope)
 
     def actor_for_book(self, token: str, book_id: str | None, required_scope: str | None = None) -> Actor:
         actor = self.actor_from_token(token, required_scope=required_scope)
@@ -117,6 +115,21 @@ class FinanceService(
 
     def _persist(self) -> None:
         self.storage.save(self)
+        self.assets.mark_clean()
+        self.credentials.mark_clean()
+        self.ledger.mark_accounts_clean()
+        self.categories.mark_clean()
+        self.audit.mark_persisted()
+        self.idempotency.mark_clean()
+
+    def _persist_idempotency(self) -> None:
+        self.storage.save_idempotency(self)
+
+    def _persist_catalog_change(self) -> None:
+        self.storage.save_catalog_change(self)
+
+    def _persist_ledger_change(self, *transactions, include_category_history: bool = False) -> None:
+        self.storage.save_ledger_change(self, transactions, include_category_history=include_category_history)
 
     def _ensure_domain_foundations(self) -> None:
         self.books.ensure_default()

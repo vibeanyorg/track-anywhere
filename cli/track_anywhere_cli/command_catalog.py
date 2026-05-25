@@ -36,7 +36,22 @@ def handle_catalog_command(args: Namespace, config: CliConfig, requester: Reques
             payload,
             key=command_idempotency_key(args, "category-create"),
         )
+    if args.command == "category" and args.category_command == "ensure":
+        payload = compact_payload({"kind": args.kind, "path": args.path})
+        return requester(
+            config,
+            "POST",
+            "/api/v1/categories/ensure-path",
+            payload,
+            key=command_idempotency_key(args, "category-ensure"),
+        )
     if args.command == "category" and args.category_command in {"list", "find"}:
+        if getattr(args, "path", None):
+            path = with_query(
+                "/api/v1/categories/by-path",
+                {"kind": args.kind, "path": args.path},
+            )
+            return requester(config, "GET", path)
         path = with_query(
             "/api/v1/categories",
             {"kind": args.kind, "name": args.name, "parent_id": args.parent_id},
@@ -44,6 +59,24 @@ def handle_catalog_command(args: Namespace, config: CliConfig, requester: Reques
         return requester(config, "GET", path)
     if args.command == "category" and args.category_command == "show":
         return requester(config, "GET", f"/api/v1/categories/{urllib.parse.quote(args.category_id)}")
+    if args.command == "category" and args.category_command == "update":
+        payload = compact_payload(
+            {
+                "name": args.name,
+                "parent_id": args.parent_id,
+                "icon": args.icon,
+                "color": args.color,
+                "sort_order": args.sort_order,
+                "status": args.status,
+            }
+        )
+        return requester(
+            config,
+            "PATCH",
+            f"/api/v1/categories/{urllib.parse.quote(args.category_id)}",
+            payload,
+            key=command_idempotency_key(args, "category-update"),
+        )
     if args.command == "credit-card" and args.credit_card_command == "list":
         return requester(config, "GET", "/api/v1/credit-cards")
     if args.command == "credit-card" and args.credit_card_command == "show":

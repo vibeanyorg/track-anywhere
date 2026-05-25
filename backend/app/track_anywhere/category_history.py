@@ -30,6 +30,8 @@ class CategoryHistoryMixin:
         for version in self.versions.values():
             if version.category_id == category.category_id and version.valid_to is None:
                 version.valid_to = datetime.now(timezone.utc)
+                if hasattr(self, "_mark_category_version_dirty"):
+                    self._mark_category_version_dirty(version.category_version_id)
         version = CategoryVersion(
             category_version_id=f"catv_{uuid4().hex}",
             category_id=category.category_id,
@@ -42,6 +44,8 @@ class CategoryHistoryMixin:
             change_reason=reason,
         )
         self.versions[version.category_version_id] = version
+        if hasattr(self, "_mark_category_version_dirty"):
+            self._mark_category_version_dirty(version.category_version_id)
         return version
 
     def _record_event(
@@ -68,6 +72,8 @@ class CategoryHistoryMixin:
             created_by=actor_id,
         )
         self.events[event.classification_event_id] = event
+        if hasattr(self, "_mark_classification_event_dirty"):
+            self._mark_classification_event_dirty(event.classification_event_id)
         return event
 
     @staticmethod

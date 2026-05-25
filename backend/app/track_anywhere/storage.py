@@ -21,6 +21,7 @@ from .storage_auth import AuthStorageWriters
 from .storage_engine import create_database_engine, database_url_from_env
 from .storage_json import new_owner_token, to_jsonable
 from .storage_loaders import StorageLoaders
+from .storage_partial import PartialStorageWriters
 from .storage_models import (
     AdjustmentAccountRecord,
     AppStateRecord,
@@ -40,7 +41,7 @@ from .users import AppUser
 _storage_auth_models.CredentialRecord
 
 
-class OrmStorage(DomainStorageLoaders, StorageLoaders, AuthStorageWriters, DomainStorageWriters, StorageWriters):
+class OrmStorage(PartialStorageWriters, DomainStorageLoaders, StorageLoaders, AuthStorageWriters, DomainStorageWriters, StorageWriters):
     def __init__(self, database_url: str | None = None) -> None:
         self.database_url = database_url or database_url_from_env()
         self.engine = create_database_engine(self.database_url)
@@ -81,6 +82,7 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, AuthStorageWriters, Domai
                 )
                 for row in session.query(AccountRecord).all()
             }
+            service.ledger.mark_accounts_clean()
             service.users.users = {
                 row.user_id: AppUser(
                     user_id=row.user_id,
@@ -135,6 +137,7 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, AuthStorageWriters, Domai
                 service.categories.versions,
                 service.categories.events,
             ) = self._load_category_history(session)
+            service.categories.mark_clean()
             service.credit_cards.profiles = {
                 row.account_id: CreditCardProfile(
                     account_id=row.account_id,
@@ -159,8 +162,11 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, AuthStorageWriters, Domai
                 for row in session.query(AttachmentRecord).all()
             }
             service.credentials._credentials = self._load_credentials(session)
+            service.credentials.mark_clean()
             service.audit.events = self._load_audit_events(session)
+            service.audit.mark_persisted()
             service.idempotency._receipts = self._load_idempotency_receipts(session)
+            service.idempotency.mark_clean()
             service.reconciliation_actions = [row.payload for row in session.query(ReconciliationActionRecord).all()]
             service.adjustment_account_ids = {
                 row.currency: row.account_id for row in session.query(AdjustmentAccountRecord).all()
@@ -174,32 +180,8 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, AuthStorageWriters, Domai
         with self.session_factory.begin() as session:
             session.execute(delete(AppStateRecord).where(AppStateRecord.key == "owner_token"))
             self._save_books(session, service.books)
-            for asset in service.assets.assets.values():
-                session.merge(
-                    AssetRecord(
-                        asset_code=asset.asset_code,
-                        kind=asset.kind,
-                        scale=asset.scale,
-                        display_scale=asset.display_scale if asset.display_scale is not None else asset.scale,
-                        name=asset.name,
-                        status=asset.status,
-                        version=asset.version,
-                    )
-                )
-            for account in service.ledger.accounts.values():
-                session.merge(
-                    AccountRecord(
-                        account_id=account.account_id,
-                        book_id=account.book_id,
-                        name=account.name,
-                        type=account.type,
-                        currency=account.currency,
-                        institution_type=account.institution_type,
-                        subtype=account.subtype,
-                        institution=account.institution,
-                        version=account.version,
-                    )
-                )
+            self._save_assets(session, service.assets.assets.values())
+            self._save_accounts(session, service.ledger.accounts.values())
             for user in service.users.users.values():
                 session.merge(
                     UserRecord(
@@ -231,24 +213,7 @@ class OrmStorage(DomainStorageLoaders, StorageLoaders, AuthStorageWriters, Domai
             self._save_budgets(session, service.budgets)
             self._save_investment_events(session, service.investments.events.values())
             self._save_investment_valuations(session, service.investments.valuations.values())
-            for category in service.categories.categories.values():
-                session.merge(
-                    CategoryRecord(
-                        category_id=category.category_id,
-                        book_id=category.book_id,
-                        kind=category.kind,
-                        parent_id=category.parent_id,
-                        name=category.name,
-                        normalized_name=category.normalized_name,
-                        level=category.level,
-                        path_cache=category.path_cache,
-                        icon=category.icon,
-                        color=category.color,
-                        sort_order=category.sort_order,
-                        status=category.status,
-                        version=category.version,
-                    )
-                )
+            self._save_categories(session, service.categories.categories.values())
             self._save_category_history(session, service.categories)
             for profile in service.credit_cards.profiles.values():
                 session.merge(

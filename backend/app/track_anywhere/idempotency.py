@@ -26,6 +26,7 @@ class CommandReceipt:
 class IdempotencyStore:
     def __init__(self) -> None:
         self._receipts: dict[tuple[str, str, str], CommandReceipt] = {}
+        self._dirty_keys: set[tuple[str, str, str]] = set()
 
     def run(
         self,
@@ -44,6 +45,7 @@ class IdempotencyStore:
             if receipt.request_hash != request_hash:
                 raise IdempotencyConflict("idempotency key reused with different payload")
             receipt.replay_count += 1
+            self._dirty_keys.add(receipt_key)
             return receipt.result, True
         result = fn()
         stored_result = stored_result_factory(result) if stored_result_factory is not None else result
@@ -55,4 +57,11 @@ class IdempotencyStore:
             result=result,
             stored_result=stored_result,
         )
+        self._dirty_keys.add(receipt_key)
         return result, False
+
+    def dirty_receipts(self) -> list[CommandReceipt]:
+        return [self._receipts[key] for key in self._dirty_keys if key in self._receipts]
+
+    def mark_clean(self) -> None:
+        self._dirty_keys.clear()

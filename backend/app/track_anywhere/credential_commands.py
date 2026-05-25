@@ -16,8 +16,8 @@ class IssueCredentialCommand(StrictCredentialCommand):
 
 
 class IssueMachineCredentialCommand(StrictCredentialCommand):
-    scopes: list[str] = Field(min_length=1, max_length=12)
-    ttl_minutes: int = Field(default=30 * 24 * 60, ge=1, le=90 * 24 * 60)
+    scopes: list[str] = Field(min_length=1, max_length=32)
+    ttl_minutes: int = Field(default=365 * 24 * 60, ge=1, le=3650 * 24 * 60)
     name: str = Field(default="Machine credential", min_length=1, max_length=120)
     description: str = Field(default="", max_length=240)
     credential_type: Literal["machine", "agent", "mcp", "ci", "integration"] = "machine"

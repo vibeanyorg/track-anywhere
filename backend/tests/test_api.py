@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
@@ -8,6 +10,17 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 from track_anywhere.api import app, service
+
+
+def test_api_ready_checks_database_and_migrations():
+    assert app is not None
+    response = TestClient(app).get("/api/v1/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["checks"] == {"database": "ok", "migrations": "ok"}
+    assert payload["alembic_revision"] == payload["expected_revision"]
 
 
 def test_api_capture_confirm_and_query_flow():
@@ -169,3 +182,26 @@ def test_api_account_and_transaction_read_side():
     tx_get = client.get(f"/api/v1/ledger/transactions/{transaction_id}", headers=headers)
     assert tx_get.status_code == 200
     assert tx_get.json()["transaction"]["postings"][0]["account_id"] == cash_id
+
+
+def test_api_root_category_update_flow():
+    assert app is not None
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {service.owner_token}"}
+    suffix = uuid4().hex[:8]
+    create_resp = client.post(
+        "/api/v1/categories",
+        json={"kind": "expense", "name": f"Smoke Parent {suffix}"},
+        headers={**headers, "X-Idempotency-Key": f"api-category-create-{suffix}"},
+    )
+    assert create_resp.status_code == 200
+    category_id = create_resp.json()["category"]["category_id"]
+
+    update_resp = client.patch(
+        f"/api/v1/categories/{category_id}",
+        json={"name": f"Smoke Parent Renamed {suffix}"},
+        headers={**headers, "X-Idempotency-Key": f"api-category-update-{suffix}"},
+    )
+
+    assert update_resp.status_code == 200
+    assert update_resp.json()["category"]["name"] == f"Smoke Parent Renamed {suffix}"

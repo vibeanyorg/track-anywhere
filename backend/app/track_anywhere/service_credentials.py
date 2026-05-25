@@ -52,20 +52,31 @@ class CredentialUseCases:
             key_prefix=key_prefix,
             created_by_actor_id=actor.actor_id,
         )
+        credential = self.credentials.get_by_token(agent_token)
         default_book = self.books.ensure_default()
-        self.books.members[(default_book.book_id, actor_id)] = BookMember(
+        member = BookMember(
             book_id=default_book.book_id,
             user_id=actor_id,
             role="editor",
             scopes=sorted(scopes),
         )
-        self.audit.record(
+        self.books.members[(default_book.book_id, actor_id)] = member
+        audit_event = self.audit.record(
             operation="credential.issue",
             actor=actor,
             entity_ref=actor_id,
             details={"scopes": sorted(scopes), "auth_kind": auth_kind, "key_prefix": key_prefix},
         )
-        self._persist()
+        if credential is None:
+            raise ValidationError("issued credential could not be loaded")
+        self.storage.save_credential_issue_state(
+            book=default_book,
+            member=member,
+            credentials=self.credentials.dirty_credentials(),
+            audit_event=audit_event,
+        )
+        self.credentials.mark_clean()
+        self.audit.mark_persisted()
         return agent_token
 
     def issue_agent_credential_command(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -85,7 +96,7 @@ class CredentialUseCases:
             fn=run,
             stored_result_factory=_credential_issue_replay_receipt,
         )
-        self._persist()
+        self._persist_idempotency()
         return result
 
     def issue_machine_credential_command(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -120,7 +131,7 @@ class CredentialUseCases:
             fn=run,
             stored_result_factory=_credential_issue_replay_receipt,
         )
-        self._persist()
+        self._persist_idempotency()
         return result
 
     def revoke_credential_command(self, token: str, payload: dict[str, Any], *, idempotency_key: str):

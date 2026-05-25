@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from .click_app import cli, run
 from .config import CliConfig, TokenStore, create_sqlite_backup, resolve_token
+from .data_backup import create_data_backup
 from .exit_codes import (
     EXIT_AUTH,
     EXIT_EXTERNAL_DEPENDENCY,
@@ -35,6 +36,7 @@ __all__ = [
     "EXIT_VALIDATION",
     "TokenStore",
     "cli",
+    "create_data_backup",
     "create_sqlite_backup",
     "exit_for_status",
     "main",

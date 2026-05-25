@@ -17,6 +17,7 @@ class AccountUseCases:
         self.assets.ensure(command.currency)
         self.assets.validate_amount(command.currency, command.opening_balance, field_name="opening balance")
         request_hash = self._hash_command(command)
+        created_transactions = []
 
         def run():
             account = self.ledger.create_account(
@@ -38,7 +39,7 @@ class AccountUseCases:
                     institution="track-anywhere",
                     book_id=book_id,
                 )
-                self.ledger.create_transaction(
+                transaction = self.ledger.create_transaction(
                     memo=f"Opening balance: {command.name}",
                     purpose="opening_balance",
                     postings=[
@@ -47,6 +48,7 @@ class AccountUseCases:
                     ],
                     book_id=book_id,
                 )
+                created_transactions.append(transaction)
             self.audit.record(
                 operation="account.create",
                 actor=actor,
@@ -55,15 +57,18 @@ class AccountUseCases:
             )
             return account
 
-        result = self.idempotency.run(
+        account, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="account.create",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_ledger_change(*created_transactions)
+        return account, replay
 
     def list_accounts(
         self,
@@ -202,6 +207,7 @@ class AccountUseCases:
             if command.institution is not None:
                 account.institution = command.institution
             account.version += 1
+            self.ledger.mark_account_dirty(account.account_id)
             self.audit.record(
                 operation="account.metadata.update",
                 actor=actor,
@@ -210,12 +216,15 @@ class AccountUseCases:
             )
             return account
 
-        result = self.idempotency.run(
+        account, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="account.metadata.update",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_ledger_change()
+        return account, replay

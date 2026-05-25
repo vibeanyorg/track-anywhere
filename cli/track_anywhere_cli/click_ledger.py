@@ -91,6 +91,23 @@ def _transactions(root: click.Group) -> None:
         args = common_args(state, json_mode, no_color, command="tx", tx_command="show", transaction_id=transaction_id)
         return run_api(args, state=state, command_path="tx.show")
 
+    @tx.command("snapshot")
+    @click.argument("transaction_id")
+    @click.option("--output", type=click.Path(dir_okay=False))
+    @output_options
+    @pass_state
+    def snapshot_tx(state, json_mode, no_color, transaction_id, output):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="tx",
+            tx_command="snapshot",
+            transaction_id=transaction_id,
+            output=output,
+        )
+        return run_api(args, state=state, command_path="tx.snapshot")
+
     @tx.command("reverse")
     @click.argument("transaction_id")
     @click.option("--memo", required=True)
@@ -109,6 +126,47 @@ def _transactions(root: click.Group) -> None:
             idempotency_key=idempotency_key,
         )
         return run_api(args, state=state, command_path="tx.reverse")
+
+    @tx.command("reclassify")
+    @click.argument("transaction_id")
+    @click.option("--category-id", required=True)
+    @click.option("--line-id")
+    @click.option("--memo", default="")
+    @click.option("--backup-before", is_flag=True)
+    @click.option("--backup-dir", type=click.Path(file_okay=False))
+    @click.option("--backup-label")
+    @click.option("--idempotency-key")
+    @output_options
+    @pass_state
+    def reclassify_tx(
+        state,
+        json_mode,
+        no_color,
+        transaction_id,
+        category_id,
+        line_id,
+        memo,
+        backup_before,
+        backup_dir,
+        backup_label,
+        idempotency_key,
+    ):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="tx",
+            tx_command="reclassify",
+            transaction_id=transaction_id,
+            category_id=category_id,
+            line_id=line_id,
+            memo=memo,
+            backup_before=backup_before,
+            backup_dir=backup_dir,
+            backup_label=backup_label,
+            idempotency_key=idempotency_key,
+        )
+        return run_api(args, state=state, command_path="tx.reclassify")
 
     _record_command(root, name="record", command="record")
 

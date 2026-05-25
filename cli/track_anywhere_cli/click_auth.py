@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from argparse import Namespace
 
 import click
@@ -133,7 +132,7 @@ def _register_auth_group(root: click.Group) -> None:
         data = {
             "authenticated": token is not None,
             "base_url": state.base_url,
-            "token_source": _token_source(state, token),
+            "token_source": token_resolution.source,
         }
         if token:
             status, status_data = state.requester(
@@ -145,6 +144,12 @@ def _register_auth_group(root: click.Group) -> None:
             )
             if status < 400 and isinstance(status_data, dict):
                 data.update(status_data)
+            else:
+                detail = status_data.get("detail") if isinstance(status_data, dict) else status_data
+                data.update({"authenticated": False, "detail": detail or "token validation failed"})
+                outcome = build_outcome("auth.status", status, data, diagnostics=token_resolution.diagnostics)
+                emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
+                return outcome.exit_code
         outcome = build_outcome("auth.status", 200, data, diagnostics=token_resolution.diagnostics)
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
@@ -183,6 +188,7 @@ def run_login(
             client_id=client_id,
             interaction=interaction,
             save_token=_save_token,
+            return_authorization=output_json and no_browser,
         )
 
     if state.no_input and not callback_value:
@@ -262,13 +268,3 @@ def run_login(
 def _save_token(token: str) -> list[CliDiagnostic]:
     diagnostics = TokenStore().save(token)
     return diagnostics if isinstance(diagnostics, list) else []
-
-
-def _token_source(state: ClickState, token: str | None) -> str | None:
-    if token is None:
-        return None
-    if state.token:
-        return "configured"
-    if os.getenv("TRACK_ANYWHERE_TOKEN"):
-        return "environment"
-    return "keyring"

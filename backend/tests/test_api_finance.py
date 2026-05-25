@@ -68,6 +68,50 @@ def test_api_credential_revoke_route_revokes_agent_token():
     assert denied_resp.status_code == 403
 
 
+def test_api_machine_credential_allows_local_durable_ttl():
+    assert app is not None
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {service.owner_token}", "X-Idempotency-Key": "api-machine-durable-ttl"}
+    common_local_scopes = [
+        "account:read",
+        "account:write",
+        "book:read",
+        "budget:read",
+        "budget:write",
+        "capture:draft",
+        "category:read",
+        "category:write",
+        "credit-card:read",
+        "credit-card:write",
+        "investment:read",
+        "investment:write",
+        "ledger:confirm",
+        "ledger:read",
+        "ledger:reverse",
+        "recurring:read",
+        "recurring:write",
+        "user:read",
+        "user:write",
+    ]
+
+    response = client.post(
+        "/api/v1/credentials/machine",
+        json={
+            "name": "Stable local smoke token",
+            "description": "pytest durable token",
+            "scopes": common_local_scopes,
+            "ttl_minutes": 3650 * 24 * 60,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    credential = response.json()["credential"]
+    assert credential["token"].startswith("ta_m2m_")
+    assert credential["scopes"] == common_local_scopes
+    assert credential["ttl_minutes"] == 3650 * 24 * 60
+
+
 def test_api_fund_flow_and_reversal_surface():
     assert app is not None
     client = TestClient(app)

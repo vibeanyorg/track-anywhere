@@ -44,6 +44,7 @@ def default_asset_definition(asset_code: str) -> AssetDefinition:
 class AssetCatalog:
     def __init__(self) -> None:
         self.assets: dict[str, AssetDefinition] = dict(DEFAULT_ASSETS)
+        self._dirty_asset_codes: set[str] = set()
 
     def ensure_defaults(self) -> None:
         for asset in DEFAULT_ASSETS.values():
@@ -54,6 +55,7 @@ class AssetCatalog:
         if asset is None:
             asset = default_asset_definition(asset_code)
             self.assets[asset_code] = asset
+            self._dirty_asset_codes.add(asset_code)
         return asset
 
     def register(self, asset: AssetDefinition) -> None:
@@ -64,6 +66,13 @@ class AssetCatalog:
         if asset.status not in {"active", "disabled"}:
             raise ValidationError("asset status must be active or disabled")
         self.assets[asset.asset_code] = asset
+        self._dirty_asset_codes.add(asset.asset_code)
+
+    def dirty_assets(self) -> list[AssetDefinition]:
+        return [self.assets[asset_code] for asset_code in self._dirty_asset_codes if asset_code in self.assets]
+
+    def mark_clean(self) -> None:
+        self._dirty_asset_codes.clear()
 
     def scale_for(self, asset_code: str) -> int:
         return self.ensure(asset_code).scale

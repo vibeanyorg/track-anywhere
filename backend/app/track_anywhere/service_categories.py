@@ -5,8 +5,9 @@ from typing import Any
 
 from .books import DEFAULT_BOOK_ID
 from .categories import Category
+from .category_commands import EnsureCategoryPathCommand
 from .commands import CreateCategoryCommand
-from .errors import ValidationError
+from .errors import NotFound, ValidationError
 
 
 class CategoryUseCases:
@@ -112,15 +113,18 @@ class CategoryUseCases:
             )
             return category
 
-        result = self.idempotency.run(
+        category, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="category.create",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_catalog_change()
+        return category, replay
 
     def list_categories(
         self,
@@ -136,6 +140,71 @@ class CategoryUseCases:
         if kind is not None and kind not in {"income", "expense"}:
             raise ValidationError("category kind must be income or expense")
         return self.categories.list(kind=kind, name=name, parent_id=parent_id, book_id=target_book_id)
+
+    def find_category_by_path(
+        self,
+        token: str,
+        *,
+        kind: str,
+        path: str,
+        book_id: str | None = None,
+    ) -> Category:
+        target_book_id = book_id or DEFAULT_BOOK_ID
+        self.actor_for_book(token, target_book_id, "category:read")
+        category = self.categories.find_by_path(book_id=target_book_id, kind=kind, path=path)
+        if category is None:
+            raise NotFound(f"category path not found: {path}")
+        return category
+
+    def ensure_category_path(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[dict[str, Any], bool]:
+        command = EnsureCategoryPathCommand.model_validate(payload)
+        target_book_id = self.books.ensure_default().book_id
+        actor = self.actor_for_book(token, target_book_id, "category:write")
+        request_hash = self._hash_command_payload(command, {"book_id": target_book_id})
+
+        def run():
+            parts = self.categories.split_path(command.path)
+            created: list[Category] = []
+            parent = self.categories.find_by_path(book_id=target_book_id, kind=command.kind, path=parts[0])
+            if parent is None:
+                parent = self.categories.create(kind=command.kind, name=parts[0], book_id=target_book_id)
+                created.append(parent)
+            category = parent
+            if len(parts) == 2:
+                child = self.categories.find_by_path(book_id=target_book_id, kind=command.kind, path=command.path)
+                if child is None:
+                    child = self.categories.create(
+                        kind=command.kind,
+                        name=parts[1],
+                        parent_id=parent.category_id,
+                        book_id=target_book_id,
+                    )
+                    created.append(child)
+                category = child
+            self.audit.record(
+                operation="category.ensure_path",
+                actor=actor,
+                entity_ref=category.category_id,
+                details={
+                    "kind": command.kind,
+                    "path": command.path,
+                    "created_category_ids": [item.category_id for item in created],
+                },
+            )
+            return {"category": category, "created_categories": created, "created": bool(created)}
+
+        result, replay = self.idempotency.run(
+            key=idempotency_key,
+            actor=actor,
+            operation="category.ensure_path",
+            request_hash=request_hash,
+            fn=run,
+        )
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_catalog_change()
+        return result, replay
 
     def get_category(self, token: str, category_id: str) -> Category:
         category = self.categories.get(category_id)

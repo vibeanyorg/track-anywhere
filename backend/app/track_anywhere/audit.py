@@ -21,6 +21,7 @@ class AuditEvent:
 class AuditLog:
     def __init__(self) -> None:
         self.events: list[AuditEvent] = []
+        self._persisted_count = 0
 
     def record(
         self,
@@ -41,6 +42,11 @@ class AuditLog:
         self.events.append(event)
         return event
 
+    def pending_events(self) -> list[AuditEvent]:
+        return self.events[self._persisted_count :]
+
+    def mark_persisted(self) -> None:
+        self._persisted_count = len(self.events)
+
     def for_entity(self, entity_ref: str) -> list[AuditEvent]:
         return [event for event in self.events if event.entity_ref == entity_ref]
-

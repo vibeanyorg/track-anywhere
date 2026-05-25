@@ -277,6 +277,13 @@ class ReverseTransactionCommand(StrictCommand):
     memo: str = Field(min_length=1, max_length=256)
 
 
+class ReclassifyTransactionCommand(StrictCommand):
+    transaction_id: str
+    category_id: str
+    line_id: str | None = None
+    memo: str = Field(default="", max_length=256)
+
+
 from .credential_commands import IssueCredentialCommand, RevokeCredentialByIdCommand, RevokeCredentialCommand
 
 

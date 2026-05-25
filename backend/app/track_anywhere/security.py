@@ -91,6 +91,7 @@ class Credential:
 class CredentialStore:
     def __init__(self) -> None:
         self._credentials: dict[str, Credential] = {}
+        self._dirty_credential_hashes: set[str] = set()
 
     def issue(
         self,
@@ -122,6 +123,7 @@ class CredentialStore:
             created_by_actor_id=created_by_actor_id,
             rotated_from_jti=rotated_from_jti,
         )
+        self._dirty_credential_hashes.add(token_hash)
         return token
 
     def verify(self, token: str | CredentialReference, required_scope: str | None = None) -> Actor:
@@ -152,16 +154,29 @@ class CredentialStore:
         return self._credentials.get(token_hash)
 
     def revoke(self, token: str) -> None:
-        credential = self._credentials.get(hash_secret(token))
+        token_hash = hash_secret(token)
+        credential = self._credentials.get(token_hash)
         if credential is not None:
             credential.revoked_at = utcnow()
+            self._dirty_credential_hashes.add(token_hash)
 
     def revoke_by_jti(self, jti: str) -> bool:
         credential = self.get_by_jti(jti)
         if credential is None:
             return False
         credential.revoked_at = utcnow()
+        self._dirty_credential_hashes.add(credential.token_hash)
         return True
+
+    def dirty_credentials(self) -> list[Credential]:
+        return [
+            self._credentials[token_hash]
+            for token_hash in self._dirty_credential_hashes
+            if token_hash in self._credentials
+        ]
+
+    def mark_clean(self) -> None:
+        self._dirty_credential_hashes.clear()
 
 
 @dataclass
@@ -267,4 +282,3 @@ def validate_web_security(
     referer_ok = bool(referer and referer.startswith(allowed_origin))
     if not origin_ok and not referer_ok:
         raise SecurityPreconditionFailed("missing or invalid Origin/Referer")
-

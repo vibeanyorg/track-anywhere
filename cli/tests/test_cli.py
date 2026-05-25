@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import sys
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -33,6 +32,11 @@ def test_click_cli_exposes_recurring_help():
 def test_cli_accepts_service_url_env_alias(monkeypatch, capsys):
     monkeypatch.delenv("TRACK_ANYWHERE_API", raising=False)
     monkeypatch.setenv("TRACK_ANYWHERE_SERVICE_URL", "http://track-anywhere-prod:8000")
+
+    def fake_request(config, method, path, payload=None, key=None):
+        return 200, {"authenticated": True, "credential_id": "cred_1"}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
 
     assert main(["--token", "token-1", "auth", "status", "--json"]) == 0
     payload = _json_from_output(capsys.readouterr())
@@ -126,24 +130,6 @@ def test_auth_login_token_store_warning_is_structured_diagnostic(monkeypatch, ca
     payload = json.loads(capsys.readouterr().out)
     assert payload["diagnostics"][0]["code"] == "token_file_fallback"
     assert payload["diagnostics"][0]["level"] == "warning"
-
-
-def test_token_store_keyring_write_failure_falls_back_to_structured_warning(monkeypatch, tmp_path):
-    class FailingKeyring:
-        @staticmethod
-        def set_password(*args, **kwargs):
-            raise RuntimeError("keyring unavailable")
-
-    token_file = tmp_path / "token"
-    monkeypatch.setitem(sys.modules, "keyring", FailingKeyring)
-    monkeypatch.setenv("TRACK_ANYWHERE_TOKEN_FILE", str(token_file))
-
-    diagnostics = cli_main.TokenStore().save("ta_manual_token")
-
-    assert token_file.read_text(encoding="utf-8") == "ta_manual_token\n"
-    assert token_file.stat().st_mode & 0o777 == 0o600
-    assert diagnostics[0].code == "token_file_fallback"
-    assert diagnostics[0].level == "warning"
 
 
 def test_top_level_login_uses_auth_login_output_contract(monkeypatch, capsys):

@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import delete
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from .audit import AuditEvent
@@ -21,9 +23,7 @@ from .storage_models import (
     RecurringItemRecord,
     TransactionRecord,
 )
-from .storage_auth_models import CredentialRecord
 from .domain_storage_models import TransactionLineRecord
-
 
 IDEMPOTENCY_SECRET_KEYS = {
     "account_number",
@@ -79,6 +79,23 @@ def redact_idempotency_result(value: Any) -> Any:
 
 
 class StorageWriters:
+    def _upsert_record(self, session: Session, model, values: dict[str, Any], key_columns: list[str]) -> None:
+        dialect_name = session.get_bind().dialect.name
+        if dialect_name == "postgresql":
+            insert = postgresql_insert
+        elif dialect_name == "sqlite":
+            insert = sqlite_insert
+        else:
+            session.merge(model(**values))
+            return
+        statement = insert(model).values(**values)
+        update_values = {key: getattr(statement.excluded, key) for key in values if key not in key_columns}
+        if update_values:
+            statement = statement.on_conflict_do_update(index_elements=key_columns, set_=update_values)
+        else:
+            statement = statement.on_conflict_do_nothing(index_elements=key_columns)
+        session.execute(statement)
+
     def _replace_transaction_postings(self, session: Session, transaction: Transaction) -> None:
         session.execute(delete(PostingRecord).where(PostingRecord.transaction_id == transaction.transaction_id))
         for index, posting in enumerate(transaction.postings):
@@ -132,17 +149,20 @@ class StorageWriters:
 
     def _save_transactions(self, session: Session, transactions) -> None:
         for transaction in transactions:
-            session.merge(
-                TransactionRecord(
-                    transaction_id=transaction.transaction_id,
-                    book_id=transaction.book_id,
-                    memo=transaction.memo,
-                    occurred_at=transaction.occurred_at.isoformat(),
-                    purpose=transaction.purpose,
-                    reversed_by=transaction.reversed_by,
-                    reverses_transaction_id=transaction.reverses_transaction_id,
-                    version=transaction.version,
-                )
+            self._upsert_record(
+                session,
+                TransactionRecord,
+                {
+                    "transaction_id": transaction.transaction_id,
+                    "book_id": transaction.book_id,
+                    "memo": transaction.memo,
+                    "occurred_at": transaction.occurred_at.isoformat(),
+                    "purpose": transaction.purpose,
+                    "reversed_by": transaction.reversed_by,
+                    "reverses_transaction_id": transaction.reverses_transaction_id,
+                    "version": transaction.version,
+                },
+                ["transaction_id"],
             )
             self._replace_transaction_postings(session, transaction)
             self._replace_transaction_lines(session, transaction)
@@ -246,51 +266,35 @@ class StorageWriters:
                 )
             )
 
-    def _save_credentials(self, session: Session, credentials) -> None:
-        for credential in credentials:
-            session.merge(
-                CredentialRecord(
-                    token_hash=credential.token_hash,
-                    actor_id=credential.actor.actor_id,
-                    actor_type=credential.actor.actor_type,
-                    scopes=sorted(credential.actor.scopes),
-                    issued_at=credential.issued_at.isoformat(),
-                    expires_at=credential.expires_at.isoformat(),
-                    jti=credential.jti,
-                    revoked_at=credential.revoked_at.isoformat() if credential.revoked_at else None,
-                    auth_kind=credential.auth_kind,
-                    name=credential.name,
-                    description=credential.description,
-                    key_prefix=credential.key_prefix,
-                    created_by_actor_id=credential.created_by_actor_id,
-                    last_used_at=credential.last_used_at.isoformat() if credential.last_used_at else None,
-                    rotated_from_jti=credential.rotated_from_jti,
-                )
-            )
-
     def _save_audit_events(self, session: Session, events: list[AuditEvent]) -> None:
         for event in events:
-            session.merge(
-                AuditEventRecord(
-                    event_id=event.event_id,
-                    operation=event.operation,
-                    actor_id=event.actor_id,
-                    actor_type=event.actor_type,
-                    entity_ref=event.entity_ref,
-                    details=to_jsonable(event.details),
-                    created_at=event.created_at,
-                )
+            self._upsert_record(
+                session,
+                AuditEventRecord,
+                {
+                    "event_id": event.event_id,
+                    "operation": event.operation,
+                    "actor_id": event.actor_id,
+                    "actor_type": event.actor_type,
+                    "entity_ref": event.entity_ref,
+                    "details": to_jsonable(event.details),
+                    "created_at": event.created_at,
+                },
+                ["event_id"],
             )
 
     def _save_idempotency_receipts(self, session: Session, receipts) -> None:
         for receipt in receipts:
-            session.merge(
-                IdempotencyReceiptRecord(
-                    key_hash=receipt.key_hash,
-                    actor_id=receipt.actor_id,
-                    operation=receipt.operation,
-                    request_hash=receipt.request_hash,
-                    result=redact_idempotency_result(to_jsonable(receipt.stored_result)),
-                    replay_count=receipt.replay_count,
-                )
+            self._upsert_record(
+                session,
+                IdempotencyReceiptRecord,
+                {
+                    "key_hash": receipt.key_hash,
+                    "actor_id": receipt.actor_id,
+                    "operation": receipt.operation,
+                    "request_hash": receipt.request_hash,
+                    "result": redact_idempotency_result(to_jsonable(receipt.stored_result)),
+                    "replay_count": receipt.replay_count,
+                },
+                ["key_hash", "actor_id", "operation"],
             )

@@ -14,6 +14,10 @@ class CategoryBook(CategoryHistoryMixin):
         self.aliases: dict[str, CategoryAlias] = {}
         self.versions: dict[str, CategoryVersion] = {}
         self.events: dict[str, ClassificationEvent] = {}
+        self._dirty_category_ids: set[str] = set()
+        self._dirty_alias_ids: set[str] = set()
+        self._dirty_version_ids: set[str] = set()
+        self._dirty_event_ids: set[str] = set()
 
     def create(
         self,
@@ -76,6 +80,25 @@ class CategoryBook(CategoryHistoryMixin):
             ),
         )
 
+    def split_path(self, path: str) -> list[str]:
+        parts = [_normalize_label(part, "path") for part in path.split("/")]
+        parts = [part for part in parts if part]
+        if not parts:
+            raise ValidationError("category path must not be blank")
+        if len(parts) > 2:
+            raise ValidationError("category path supports at most two levels")
+        return parts
+
+    def find_by_path(self, *, book_id: str, kind: str, path: str) -> Category | None:
+        self._validate_kind(kind)
+        parts = self.split_path(path)
+        parent = self._find_node(book_id=book_id, kind=kind, parent_id=None, name=parts[0])
+        if len(parts) == 1:
+            return parent
+        if parent is None:
+            return None
+        return self._find_node(book_id=book_id, kind=kind, parent_id=parent.category_id, name=parts[1])
+
     def rename(self, category_id: str, *, name: str, actor_id: str = DEFAULT_OWNER_ID) -> Category:
         category = self.get(category_id)
         name = _normalize_label(name, "name")
@@ -92,6 +115,7 @@ class CategoryBook(CategoryHistoryMixin):
         self._record_version(category, "rename")
         for child in self._children(category.category_id):
             self._sync_display_fields(child)
+            self._mark_category_dirty(child.category_id)
             self._record_version(child, "parent_rename")
         self._record_event("rename", category.book_id, category.category_id, before=before, after=self._snapshot(category), actor_id=actor_id)
         return category
@@ -110,6 +134,7 @@ class CategoryBook(CategoryHistoryMixin):
         category.parent_id = parent.category_id
         self._sync_display_fields(category)
         category.version += 1
+        self._mark_category_dirty(category.category_id)
         self._record_version(category, "move")
         self._record_event("move", category.book_id, category.category_id, target_id=parent.category_id, before=before, after=self._snapshot(category), actor_id=actor_id)
         return category
@@ -119,6 +144,7 @@ class CategoryBook(CategoryHistoryMixin):
         before = self._snapshot(category)
         category.status = "archived"
         category.version += 1
+        self._mark_category_dirty(category.category_id)
         self._record_version(category, "archive")
         self._record_event("archive", category.book_id, category.category_id, before=before, after=self._snapshot(category), actor_id=actor_id)
         return category
@@ -141,6 +167,7 @@ class CategoryBook(CategoryHistoryMixin):
             source=source,
         )
         self.aliases[category_alias.alias_id] = category_alias
+        self._mark_category_alias_dirty(category_alias.alias_id)
         self._record_event("alias_add", category.book_id, category.category_id, after={"alias": alias}, actor_id=actor_id)
         return category_alias
 
@@ -152,6 +179,7 @@ class CategoryBook(CategoryHistoryMixin):
         before = self._snapshot(source)
         source.status = "archived"
         source.version += 1
+        self._mark_category_dirty(source.category_id)
         self._record_version(source, "merge")
         if source.name != target.name:
             alias_id = f"alias_{uuid4().hex}"
@@ -163,6 +191,7 @@ class CategoryBook(CategoryHistoryMixin):
                 normalized_alias=normalize_key(source.name),
                 source="merge",
             )
+            self._mark_category_alias_dirty(alias_id)
         self._record_event(
             "merge",
             source.book_id,
@@ -187,6 +216,7 @@ class CategoryBook(CategoryHistoryMixin):
         )
         self.categories[category.category_id] = category
         self._sync_display_fields(category)
+        self._mark_category_dirty(category.category_id)
         self._record_version(category, "create")
         self._record_event("create", category.book_id, category.category_id, after=self._snapshot(category))
         return category
@@ -212,6 +242,7 @@ class CategoryBook(CategoryHistoryMixin):
         category.normalized_name = normalize_key(name)
         category.version += 1
         self._sync_display_fields(category)
+        self._mark_category_dirty(category.category_id)
 
     def _sync_display_fields(self, category: Category) -> None:
         parent = self.categories.get(category.parent_id) if category.parent_id else None
@@ -230,6 +261,34 @@ class CategoryBook(CategoryHistoryMixin):
     def _validate_kind(kind: str) -> None:
         if kind not in {"income", "expense"}:
             raise ValidationError("category kind must be income or expense")
+
+    def _mark_category_dirty(self, category_id: str) -> None:
+        self._dirty_category_ids.add(category_id)
+
+    def _mark_category_alias_dirty(self, alias_id: str) -> None:
+        self._dirty_alias_ids.add(alias_id)
+
+    def _mark_category_version_dirty(self, version_id: str) -> None:
+        self._dirty_version_ids.add(version_id)
+
+    def _mark_classification_event_dirty(self, event_id: str) -> None:
+        self._dirty_event_ids.add(event_id)
+
+    def dirty_categories(self) -> list[Category]:
+        return [self.categories[category_id] for category_id in self._dirty_category_ids if category_id in self.categories]
+
+    def dirty_history(self) -> tuple[list[CategoryAlias], list[CategoryVersion], list[ClassificationEvent]]:
+        return (
+            [self.aliases[alias_id] for alias_id in self._dirty_alias_ids if alias_id in self.aliases],
+            [self.versions[version_id] for version_id in self._dirty_version_ids if version_id in self.versions],
+            [self.events[event_id] for event_id in self._dirty_event_ids if event_id in self.events],
+        )
+
+    def mark_clean(self) -> None:
+        self._dirty_category_ids.clear()
+        self._dirty_alias_ids.clear()
+        self._dirty_version_ids.clear()
+        self._dirty_event_ids.clear()
 
 
 def _normalize_label(value: str | None, field_name: str) -> str:

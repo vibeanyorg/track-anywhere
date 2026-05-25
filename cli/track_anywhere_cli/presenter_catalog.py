@@ -113,7 +113,10 @@ def user_summary(data: Any) -> Table:
 
 
 def category_list(data: Any) -> Table | Panel:
-    categories = _as_dict(data).get("categories", [])
+    payload = _as_dict(data)
+    categories = payload.get("categories", [])
+    if not categories and payload.get("category"):
+        categories = [payload.get("category")]
     if not categories:
         return empty_panel("Categories", "No categories found.")
     table = Table(title="Categories")

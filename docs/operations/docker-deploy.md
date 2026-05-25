@@ -4,8 +4,10 @@ Track Anywhere publishes separate runtime images for the API/CLI and the
 production web frontend:
 
 ```text
-ghcr.io/vibeanyorg/track-anywhere-api:latest
-ghcr.io/vibeanyorg/track-anywhere-web:latest
+ghcr.io/vibeanyorg/track-anywhere-api:stable
+ghcr.io/vibeanyorg/track-anywhere-web:stable
+ghcr.io/vibeanyorg/track-anywhere-api:nightly
+ghcr.io/vibeanyorg/track-anywhere-web:nightly
 ```
 
 The API image starts the FastAPI service by default and also contains the `ta`
@@ -13,7 +15,7 @@ CLI. The web image only contains the Next.js standalone server. Run `ta` inside
 the API image when you need a containerized CLI:
 
 ```bash
-docker run --rm ghcr.io/vibeanyorg/track-anywhere-api:latest ta --help
+docker run --rm ghcr.io/vibeanyorg/track-anywhere-api:stable ta --help
 ```
 
 ## Service Address
@@ -58,6 +60,48 @@ docker compose --env-file deploy/env/dev.env -f compose.dev.yaml ps
 docker compose --env-file deploy/env/dev.env -f compose.dev.yaml logs -f api
 docker compose --env-file deploy/env/dev.env -f compose.dev.yaml run --rm cli --help
 ```
+
+## Stable Local Backend
+
+The daily-use Mac mini backend is intentionally separate from the dev stack. It
+lives in `/Users/xuyanyue/Documents/track-anywhere-stable-backend`, binds only
+to `127.0.0.1:12306`, and points at the Neon `track_anywhere` database.
+
+Build a local stable API image from this source checkout and start the stable
+Compose context:
+
+```bash
+scripts/build-stable-local-image.sh
+scripts/start-stable-local.sh
+```
+
+The stable context uses `TRACK_ANYWHERE_TOKEN_FILE` rather than the shared
+macOS keyring so stale dev/browser credentials cannot shadow the local machine
+token:
+
+```bash
+export TRACK_ANYWHERE_API=http://127.0.0.1:12306
+export TRACK_ANYWHERE_SERVICE_URL=http://127.0.0.1:12306
+export TRACK_ANYWHERE_TOKEN_FILE=/Users/xuyanyue/Documents/track-anywhere-stable-backend/secrets/ta-token
+```
+
+Verify the running service and common CLI surfaces:
+
+```bash
+scripts/stable-smoke.sh
+```
+
+Run the release-gate Docker Postgres E2E locally:
+
+```bash
+scripts/e2e-docker-postgres.sh
+```
+
+This starts an isolated Compose project, issues a long-lived machine token in
+local mode, and verifies the common read/write CLI paths against Postgres:
+service status, account create, category path ensure/find, expense record,
+transaction snapshot, reclassify with `--backup-before`, and targeted Postgres
+backup.
 
 ## Production/VPS
 
@@ -104,5 +148,6 @@ TRACK_ANYWHERE_IMAGE_TAG=$(git rev-parse --short HEAD) \
 scripts/build-public-image.sh
 ```
 
-The GitHub Actions workflow also publishes images on `main`, tags, and manual
-dispatch.
+The GitHub Actions workflow publishes `nightly` images from `main`, scheduled
+runs, and manual nightly dispatch. A `v*` release tag runs the Docker Postgres
+E2E gate first, then publishes tag-specific and `stable` multi-arch images.

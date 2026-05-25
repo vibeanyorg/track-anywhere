@@ -11,6 +11,7 @@ from ..commands import (
     BalanceAdjustmentCommand,
     CaptureDraftCommand,
     ConfirmDraftCommand,
+    ReclassifyTransactionCommand,
     RecordExpenseCommand,
     RecordIncomeCommand,
     RecordTransactionCommand,
@@ -92,6 +93,14 @@ def get_transaction(transaction_id: str, token: AuthToken):
         raise_command_error(exc, "ledger.transaction.get")
 
 
+@router.get("/ledger/transactions/{transaction_id}/snapshot", dependencies=protected)
+def get_transaction_snapshot(transaction_id: str, token: AuthToken):
+    try:
+        return {"snapshot": serialize(service.transaction_snapshot(token, transaction_id))}
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "ledger.transaction.snapshot")
+
+
 @router.post("/ledger/adjustments", dependencies=protected)
 def adjust_balance(payload: BalanceAdjustmentCommand, token: AuthToken, key: IdempotencyKey):
     try:
@@ -135,6 +144,15 @@ def reverse_transaction(payload: ReverseTransactionCommand, token: AuthToken, ke
         return {"transaction": serialize(transaction), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "ledger.reverse")
+
+
+@router.post("/ledger/reclassify", dependencies=protected)
+def reclassify_transaction(payload: ReclassifyTransactionCommand, token: AuthToken, key: IdempotencyKey):
+    try:
+        transaction, replay = service.reclassify_transaction(token, command_payload(payload), idempotency_key=key)
+        return {"transaction": serialize(transaction), "idempotent_replay": replay}
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "ledger.reclassify")
 
 
 @router.get("/query/accounts/{account_id}/balance", dependencies=protected)

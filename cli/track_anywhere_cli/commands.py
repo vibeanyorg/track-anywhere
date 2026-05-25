@@ -7,6 +7,7 @@ from .command_catalog import handle_catalog_command
 from .command_investment import handle_investment_command
 from .command_ledger import handle_ledger_command
 from .command_recurring import handle_recurring_command
+from .command_system import handle_system_command
 from .config import CliConfig
 from .output import CommandResult
 from .runtime import CliCommandSpec, Requester, RuntimeContext
@@ -28,9 +29,11 @@ PUBLIC_COMMAND_PATHS = (
     "balance.adjust",
     "capture",
     "category.create",
+    "category.ensure",
     "category.find",
     "category.list",
     "category.show",
+    "category.update",
     "credit_card.list",
     "credit_card.show",
     "credit_card.update",
@@ -50,10 +53,13 @@ PUBLIC_COMMAND_PATHS = (
     "release.bump",
     "summary.accounts",
     "summary.categories",
+    "system.status",
     "tx.list",
     "tx.record",
+    "tx.reclassify",
     "tx.reverse",
     "tx.show",
+    "tx.snapshot",
     "user.create",
     "user.list",
     "schema",
@@ -69,6 +75,8 @@ MUTATING_COMMAND_PATHS = frozenset(
         "balance.adjust",
         "capture",
         "category.create",
+        "category.ensure",
+        "category.update",
         "credit_card.update",
         "draft.confirm",
         "expense.record",
@@ -79,6 +87,7 @@ MUTATING_COMMAND_PATHS = frozenset(
         "recurring.update",
         "release.bump",
         "tx.record",
+        "tx.reclassify",
         "tx.reverse",
         "user.create",
     }
@@ -117,7 +126,13 @@ def dispatch_api_command(
     config: CliConfig,
     requester: Requester,
 ) -> DispatcherResult | None:
-    for handler in (handle_catalog_command, handle_investment_command, handle_ledger_command, handle_recurring_command):
+    for handler in (
+        handle_system_command,
+        handle_catalog_command,
+        handle_investment_command,
+        handle_ledger_command,
+        handle_recurring_command,
+    ):
         result = handler(args, config, requester)
         if result is not None:
             return result

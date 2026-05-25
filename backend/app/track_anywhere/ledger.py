@@ -70,6 +70,7 @@ class Ledger:
         self.accounts: dict[str, Account] = {}
         self.transactions: dict[str, Transaction] = {}
         self._asset_scale_lookup = asset_scale_lookup or (lambda code: default_asset_definition(code).scale)
+        self._dirty_account_ids: set[str] = set()
 
     def create_account(
         self,
@@ -93,7 +94,17 @@ class Ledger:
             book_id=book_id,
         )
         self.accounts[account.account_id] = account
+        self._dirty_account_ids.add(account.account_id)
         return account
+
+    def mark_account_dirty(self, account_id: str) -> None:
+        self._dirty_account_ids.add(account_id)
+
+    def dirty_accounts(self) -> list[Account]:
+        return [self.accounts[account_id] for account_id in self._dirty_account_ids if account_id in self.accounts]
+
+    def mark_accounts_clean(self) -> None:
+        self._dirty_account_ids.clear()
 
     def get_account(self, account_id: str) -> Account:
         try:

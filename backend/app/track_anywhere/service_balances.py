@@ -42,15 +42,18 @@ class BalanceUseCases:
             )
             return transaction
 
-        result = self.idempotency.run(
+        transaction, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="ledger.balance.adjust",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_ledger_change(transaction)
+        return transaction, replay
 
     def account_balance(self, token: str, account_id: str, *, include_drafts: bool = False) -> dict[str, Any]:
         account = self.ledger.get_account(account_id)

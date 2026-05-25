@@ -6,6 +6,7 @@ from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
 from ..api_runtime import service
 from ..api_serialization import serialize
+from ..category_commands import EnsureCategoryPathCommand
 from ..commands import (
     CreateAccountCommand,
     CreateCategoryCommand,
@@ -13,6 +14,7 @@ from ..commands import (
     UpdateAccountMetadataCommand,
     UpdateCreditCardProfileCommand,
 )
+from ..domain_commands import UpdateCategoryCommand
 from .common import COMMAND_ERRORS, command_payload, protected
 
 
@@ -144,6 +146,14 @@ def list_categories(
         raise_command_error(exc, "category.list")
 
 
+@router.get("/categories/by-path", dependencies=protected)
+def get_category_by_path(token: AuthToken, kind: str, path: str):
+    try:
+        return {"category": serialize(service.find_category_by_path(token, kind=kind, path=path))}
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "category.path.get")
+
+
 @router.post("/categories", dependencies=protected)
 def create_category(payload: CreateCategoryCommand, token: AuthToken, key: IdempotencyKey):
     try:
@@ -153,12 +163,42 @@ def create_category(payload: CreateCategoryCommand, token: AuthToken, key: Idemp
         raise_command_error(exc, "category.create")
 
 
+@router.post("/categories/ensure-path", dependencies=protected)
+def ensure_category_path(payload: EnsureCategoryPathCommand, token: AuthToken, key: IdempotencyKey):
+    try:
+        result, replay = service.ensure_category_path(token, command_payload(payload), idempotency_key=key)
+        return {
+            "category": serialize(result["category"]),
+            "created_categories": serialize(result["created_categories"]),
+            "created": result["created"],
+            "idempotent_replay": replay,
+        }
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "category.path.ensure")
+
+
 @router.get("/categories/{category_id}", dependencies=protected)
 def get_category(category_id: str, token: AuthToken):
     try:
         return {"category": serialize(service.get_category(token, category_id))}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "category.get")
+
+
+@router.patch("/categories/{category_id}", dependencies=protected)
+def update_category(category_id: str, payload: UpdateCategoryCommand, token: AuthToken, key: IdempotencyKey):
+    try:
+        category = service.get_category(token, category_id)
+        updated, replay = service.update_book_category(
+            token,
+            category.book_id,
+            category_id,
+            command_payload(payload),
+            idempotency_key=key,
+        )
+        return {"category": serialize(updated), "idempotent_replay": replay}
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "category.update")
 
 
 @router.get("/credit-cards", dependencies=protected)

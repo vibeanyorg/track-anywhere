@@ -127,6 +127,7 @@ def test_public_command_paths_have_presenters():
         "category.list",
         "category.find",
         "category.show",
+        "category.update",
         "credit_card.list",
         "credit_card.show",
         "credit_card.update",

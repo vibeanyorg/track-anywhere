@@ -32,7 +32,7 @@ def create_machine_token(
     request: Request,
     name: Annotated[str, Form()] = "Local agent token",
     description: Annotated[str, Form()] = "",
-    ttl_days: Annotated[str, Form()] = "30",
+    ttl_days: Annotated[str, Form()] = "365",
     csrf_token: Annotated[str, Form()] = "",
     approved_scope: Annotated[list[str] | None, Form()] = None,
     scope_selection_present: Annotated[str | None, Form()] = None,
@@ -116,8 +116,8 @@ def _ttl_minutes(ttl_days: str) -> int:
         days = int(ttl_days)
     except ValueError as exc:
         raise ValidationError("expiration must be a whole number of days") from exc
-    if days < 1 or days > 90:
-        raise ValidationError("expiration must be between 1 and 90 days")
+    if days < 1 or days > 3650:
+        raise ValidationError("expiration must be between 1 and 3650 days")
     return days * 24 * 60
 
 
@@ -129,7 +129,7 @@ def _machine_tokens_form(
     values: dict[str, str] | None = None,
     status_code: int = 200,
 ) -> HTMLResponse:
-    form_values = values or {"name": "Local agent token", "description": "", "ttl_days": "30"}
+    form_values = values or {"name": "Local agent token", "description": "", "ttl_days": "365"}
     available_scope_text = actor_available_scope_text(session["actor"].scopes)
     token_panel = _created_token_panel(created_token)
     body = f"""
@@ -146,7 +146,7 @@ def _machine_tokens_form(
             {_hidden('scope_selection_present', '1')}
             <label>Name<input name="name" value="{escape(form_values['name'], quote=True)}" required maxlength="120"></label>
             <label>Description<textarea name="description" maxlength="240">{escape(form_values['description'])}</textarea></label>
-            <label>Expires after days<input name="ttl_days" type="number" min="1" max="90" value="{escape(form_values['ttl_days'], quote=True)}" required></label>
+            <label>Expires after days<input name="ttl_days" type="number" min="1" max="3650" value="{escape(form_values['ttl_days'], quote=True)}" required></label>
             {scope_controls(DEFAULT_PLATFORM_SCOPE, available_scope_text=available_scope_text)}
             <button type="submit">Create machine token</button>
           </form>

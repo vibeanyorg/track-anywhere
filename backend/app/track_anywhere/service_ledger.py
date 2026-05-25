@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from .books import DEFAULT_BOOK_ID
@@ -50,15 +51,18 @@ class LedgerUseCases:
             )
             return transaction
 
-        result = self.idempotency.run(
+        transaction, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="ledger.transaction.record",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_ledger_change(transaction)
+        return transaction, replay
 
     def record_expense(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = RecordExpenseCommand.model_validate(payload)
@@ -94,15 +98,18 @@ class LedgerUseCases:
             )
             return transaction
 
-        result = self.idempotency.run(
+        transaction, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="expense.record",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_ledger_change(transaction)
+        return transaction, replay
 
     def record_income(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = RecordIncomeCommand.model_validate(payload)
@@ -138,15 +145,18 @@ class LedgerUseCases:
             )
             return transaction
 
-        result = self.idempotency.run(
+        transaction, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="income.record",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_ledger_change(transaction)
+        return transaction, replay
 
     def list_transactions(
         self,
@@ -189,6 +199,41 @@ class LedgerUseCases:
         self.actor_for_book(token, transaction.book_id, "ledger:read")
         return transaction
 
+    def transaction_snapshot(self, token: str, transaction_id: str) -> dict[str, Any]:
+        transaction = self.get_transaction(token, transaction_id)
+        account_ids = {posting.account_id for posting in transaction.postings}
+        category_ids = {line.category_id for line in transaction.lines if line.category_id is not None}
+        category_version_ids = {
+            line.category_version_id
+            for line in transaction.lines
+            if line.category_version_id is not None
+        }
+        categories = [
+            self.categories.get(category_id)
+            for category_id in sorted(category_ids)
+            if category_id in self.categories.categories
+        ]
+        category_versions = [
+            version
+            for version in self.categories.versions.values()
+            if version.category_id in category_ids or version.category_version_id in category_version_ids
+        ]
+        category_versions.sort(key=lambda version: (version.category_id, version.valid_from, version.category_version_id))
+        accounts = [
+            self.ledger.accounts[account_id]
+            for account_id in sorted(account_ids)
+            if account_id in self.ledger.accounts
+        ]
+        return {
+            "schema_version": "tx-snapshot.v1",
+            "captured_at": datetime.now(timezone.utc),
+            "book_id": transaction.book_id,
+            "transaction": transaction,
+            "accounts": accounts,
+            "categories": categories,
+            "category_versions": category_versions,
+        }
+
     def reverse_transaction(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = ReverseTransactionCommand.model_validate(payload)
         transaction = self.ledger.transactions.get(command.transaction_id)
@@ -207,12 +252,15 @@ class LedgerUseCases:
             )
             return reversal
 
-        result = self.idempotency.run(
+        reversal, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="ledger.reverse",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_ledger_change(transaction, reversal)
+        return reversal, replay

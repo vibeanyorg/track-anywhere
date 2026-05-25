@@ -70,6 +70,16 @@ def _register_category(root: click.Group) -> None:
     for name in ("list", "find"):
         _category_query_command(category, name)
 
+    @category.command("ensure")
+    @click.option("--kind", type=click.Choice(["income", "expense"]), required=True)
+    @click.option("--path", "category_path", required=True)
+    @click.option("--idempotency-key")
+    @output_options
+    @pass_state
+    def ensure_category(state, json_mode, no_color, kind, category_path, idempotency_key):
+        args = common_args(state, json_mode, no_color, command="category", category_command="ensure", kind=kind, path=category_path, idempotency_key=idempotency_key)
+        return run_api(args, state=state, command_path="category.ensure")
+
     @category.command("create")
     @click.argument("name")
     @click.option("--kind", type=click.Choice(["income", "expense"]), required=True)
@@ -89,16 +99,42 @@ def _register_category(root: click.Group) -> None:
         args = common_args(state, json_mode, no_color, command="category", category_command="show", category_id=category_id)
         return run_api(args, state=state, command_path="category.show")
 
+    @category.command("update")
+    @click.argument("category_id")
+    @click.option("--name")
+    @click.option("--parent-id")
+    @click.option("--icon")
+    @click.option("--color")
+    @click.option("--sort-order", type=int)
+    @click.option("--status", type=click.Choice(["active", "hidden", "archived"]))
+    @click.option("--idempotency-key")
+    @output_options
+    @pass_state
+    def update_category(state, json_mode, no_color, category_id, **kwargs):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="category",
+            category_command="update",
+            category_id=category_id,
+            **kwargs,
+        )
+        return run_api(args, state=state, command_path="category.update")
+
 
 def _category_query_command(group: click.Group, command_name: str) -> None:
     @group.command(command_name)
     @click.option("--kind", type=click.Choice(["income", "expense"]), required=command_name == "find")
-    @click.option("--name", required=command_name == "find")
+    @click.option("--name")
+    @click.option("--path", "category_path")
     @click.option("--parent-id")
     @output_options
     @pass_state
-    def query_category(state, json_mode, no_color, kind, name, parent_id):
-        args = common_args(state, json_mode, no_color, command="category", category_command=command_name, kind=kind, name=name, parent_id=parent_id)
+    def query_category(state, json_mode, no_color, kind, name, category_path, parent_id):
+        if command_name == "find" and not name and not category_path:
+            raise click.UsageError("category find requires --name or --path")
+        args = common_args(state, json_mode, no_color, command="category", category_command=command_name, kind=kind, name=name, path=category_path, parent_id=parent_id)
         return run_api(args, state=state, command_path=f"category.{command_name}")
 
 

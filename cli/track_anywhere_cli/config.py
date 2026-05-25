@@ -24,8 +24,15 @@ class CliConfig:
     insecure_automation: bool = False
 
 
+@dataclass(frozen=True)
+class StoredToken:
+    token: str
+    source: str
+
+
 class TokenStore:
     def __init__(self) -> None:
+        self.explicit_token_file = "TRACK_ANYWHERE_TOKEN_FILE" in os.environ
         self.token_file = Path(
             os.getenv(
                 "TRACK_ANYWHERE_TOKEN_FILE",
@@ -34,6 +41,12 @@ class TokenStore:
         )
 
     def load(self) -> str | None:
+        stored = self.load_with_source()
+        return stored.token if stored is not None else None
+
+    def load_with_source(self) -> StoredToken | None:
+        if self.explicit_token_file:
+            return self._load_file()
         try:
             import keyring  # type: ignore
         except Exception:
@@ -41,12 +54,13 @@ class TokenStore:
         if keyring is not None:
             token = keyring.get_password("track-anywhere", "cli-token")
             if token:
-                return token
-        if self.token_file.exists():
-            return self.token_file.read_text(encoding="utf-8").strip() or None
-        return None
+                return StoredToken(token=token, source="keyring")
+        return self._load_file()
 
     def save(self, token: str) -> list[CliDiagnostic]:
+        if self.explicit_token_file:
+            self._save_file(token)
+            return []
         try:
             import keyring  # type: ignore
         except Exception:
@@ -57,9 +71,7 @@ class TokenStore:
                 return []
             except Exception:
                 pass
-        self.token_file.parent.mkdir(parents=True, exist_ok=True)
-        self.token_file.write_text(token + "\n", encoding="utf-8")
-        self.token_file.chmod(0o600)
+        self._save_file(token)
         return [
             CliDiagnostic(
                 level="warning",
@@ -67,6 +79,18 @@ class TokenStore:
                 message=f"OS keyring unavailable; saved token to {self.token_file}.",
             )
         ]
+
+    def _load_file(self) -> StoredToken | None:
+        if self.token_file.exists():
+            token = self.token_file.read_text(encoding="utf-8").strip()
+            if token:
+                return StoredToken(token=token, source="token_file")
+        return None
+
+    def _save_file(self, token: str) -> None:
+        self.token_file.parent.mkdir(parents=True, exist_ok=True)
+        self.token_file.write_text(token + "\n", encoding="utf-8")
+        self.token_file.chmod(0o600)
 
 
 def generated_idempotency_key(prefix: str) -> str:
@@ -129,11 +153,12 @@ def create_sqlite_backup(database_url: str | None = None, output_dir: str | None
 class TokenResolution:
     token: str | None
     diagnostics: list[CliDiagnostic]
+    source: str | None = None
 
 
 def resolve_token_with_diagnostics(args: argparse.Namespace) -> TokenResolution:
     if args.token:
-        return TokenResolution(token=args.token, diagnostics=[])
+        return TokenResolution(token=args.token, diagnostics=[], source="configured")
 
     env_token = os.getenv("TRACK_ANYWHERE_TOKEN")
     if env_token:
@@ -148,9 +173,13 @@ def resolve_token_with_diagnostics(args: argparse.Namespace) -> TokenResolution:
                     message="Using TRACK_ANYWHERE_TOKEN with --insecure-automation.",
                 )
             ],
+            source="environment",
         )
 
-    return TokenResolution(token=TokenStore().load(), diagnostics=[])
+    stored = TokenStore().load_with_source()
+    if stored is None:
+        return TokenResolution(token=None, diagnostics=[], source=None)
+    return TokenResolution(token=stored.token, diagnostics=[], source=stored.source)
 
 
 def resolve_token(args: argparse.Namespace) -> str | None:

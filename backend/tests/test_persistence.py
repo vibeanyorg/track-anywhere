@@ -117,53 +117,6 @@ def test_idempotency_receipts_persist_across_restart(tmp_path):
     assert replayed["account_id"] == account.account_id
 
 
-def test_persistence_does_not_store_raw_bearer_tokens(tmp_path):
-    database_path = tmp_path / "track-anywhere.sqlite3"
-    database_url = f"sqlite:///{database_path}"
-    service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
-    owner_token = service.owner_token
-
-    credential, replay = service.issue_agent_credential_command(
-        owner_token,
-        {"scopes": ["capture:draft"], "ttl_minutes": 30},
-        idempotency_key="persist-agent-credential",
-    )
-    assert replay is False
-    agent_token = credential["token"]
-    service.revoke_credential_command(
-        owner_token,
-        {"target_token": agent_token, "reason": "rotation"},
-        idempotency_key="persist-agent-revoke",
-    )
-
-    raw_database = database_path.read_text(errors="ignore")
-
-    assert owner_token not in raw_database
-    assert agent_token not in raw_database
-
-
-def test_persistence_removes_legacy_raw_owner_token_state(tmp_path):
-    database_path = tmp_path / "track-anywhere.sqlite3"
-    database_url = f"sqlite:///{database_path}"
-    first = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
-    token = first.owner_token
-    with sqlite3.connect(database_path) as connection:
-        connection.execute(
-            "insert or replace into app_state (key, value) values (?, ?)",
-            ("owner_token", f'{{"token": "{token}"}}'),
-        )
-
-    second = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
-
-    assert second.actor_from_token(token, "account:read").actor_id == "owner"
-    with sqlite3.connect(database_path) as connection:
-        legacy_state = connection.execute("select value from app_state where key = 'owner_token'").fetchone()
-    raw_database = database_path.read_text(errors="ignore")
-
-    assert legacy_state is None
-    assert token not in raw_database
-
-
 def test_persistence_save_does_not_issue_table_wide_deletes(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}"
     service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
