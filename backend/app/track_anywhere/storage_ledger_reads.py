@@ -58,27 +58,40 @@ class LedgerReadStorage:
         if limit == 0:
             return []
         with self.session_factory() as session:
-            statement = select(TransactionRecord.transaction_id, TransactionRecord.occurred_at).where(
+            base_statement = select(TransactionRecord.transaction_id, TransactionRecord.occurred_at).where(
                 TransactionRecord.book_id == book_id
             )
             if account_id is not None:
-                statement = statement.join(
+                base_statement = base_statement.join(
                     PostingRecord,
                     PostingRecord.transaction_id == TransactionRecord.transaction_id,
                 ).where(PostingRecord.account_id == account_id)
             if category_id is not None:
-                statement = statement.join(
+                base_statement = base_statement.join(
                     TransactionLineRecord,
                     TransactionLineRecord.transaction_id == TransactionRecord.transaction_id,
                 ).where(TransactionLineRecord.category_id == category_id)
-            rows = session.execute(
-                statement.distinct()
+            selected = (
+                base_statement.distinct()
                 .order_by(TransactionRecord.occurred_at.desc(), TransactionRecord.transaction_id.desc())
                 .limit(limit)
+                .subquery()
             )
-            transaction_ids = [row.transaction_id for row in rows]
-        hydrated = self._load_confirmed_transactions(transaction_ids)
-        return [hydrated[transaction_id] for transaction_id in transaction_ids if transaction_id in hydrated]
+            rows = session.execute(
+                select(TransactionRecord, PostingRecord, TransactionLineRecord)
+                .join(selected, selected.c.transaction_id == TransactionRecord.transaction_id)
+                .outerjoin(PostingRecord, PostingRecord.transaction_id == TransactionRecord.transaction_id)
+                .outerjoin(TransactionLineRecord, TransactionLineRecord.transaction_id == TransactionRecord.transaction_id)
+                .order_by(
+                    selected.c.occurred_at.desc(),
+                    TransactionRecord.transaction_id.desc(),
+                    PostingRecord.position,
+                    PostingRecord.id,
+                    TransactionLineRecord.position,
+                    TransactionLineRecord.line_id,
+                )
+            )
+            return self._transactions_from_joined_rows(rows)
 
     def _load_confirmed_transactions(self, transaction_ids: Iterable[str]) -> dict[str, Transaction]:
         ids = list(dict.fromkeys(transaction_ids))
@@ -109,6 +122,45 @@ class LedgerReadStorage:
             for transaction_id, row in transactions.items()
         }
 
+    def _transactions_from_joined_rows(self, rows) -> list[Transaction]:
+        records: dict[str, TransactionRecord] = {}
+        postings: dict[str, dict[int, PostingRecord]] = {}
+        lines: dict[str, dict[str, TransactionLineRecord]] = {}
+        for transaction_row, posting_row, line_row in rows:
+            transaction_id = transaction_row.transaction_id
+            records.setdefault(transaction_id, transaction_row)
+            if posting_row is not None:
+                postings.setdefault(transaction_id, {})[posting_row.id] = posting_row
+            if line_row is not None:
+                lines.setdefault(transaction_id, {})[line_row.line_id] = line_row
+        return [
+            self._transaction_from_records(
+                row,
+                sorted(postings.get(transaction_id, {}).values(), key=lambda item: (item.position, item.id)),
+                sorted(lines.get(transaction_id, {}).values(), key=lambda item: (item.position, item.line_id)),
+            )
+            for transaction_id, row in records.items()
+        ]
+
+    def _transaction_from_records(
+        self,
+        row: TransactionRecord,
+        postings: list[PostingRecord],
+        lines: list[TransactionLineRecord],
+    ) -> Transaction:
+        return Transaction(
+            transaction_id=row.transaction_id,
+            book_id=row.book_id,
+            memo=row.memo,
+            occurred_at=datetime.fromisoformat(row.occurred_at),
+            purpose=row.purpose,
+            postings=[Posting(item.account_id, Decimal(item.amount), item.currency) for item in postings],
+            lines=[self._line_from_record(item) for item in lines],
+            reversed_by=row.reversed_by,
+            reverses_transaction_id=getattr(row, "reverses_transaction_id", None),
+            version=row.version,
+        )
+
     def _postings_by_transaction(self, session, transaction_ids: list[str]) -> dict[str, list[Posting]]:
         rows = session.scalars(
             select(PostingRecord)
@@ -130,24 +182,26 @@ class LedgerReadStorage:
         )
         lines: dict[str, list[TransactionLine]] = {}
         for row in rows:
-            lines.setdefault(row.transaction_id, []).append(
-                TransactionLine(
-                    line_id=row.line_id,
-                    transaction_id=row.transaction_id,
-                    position=row.position,
-                    line_type=row.line_type,
-                    amount=Decimal(row.amount),
-                    currency=row.currency,
-                    book_id=row.book_id,
-                    category_id=row.category_id,
-                    category_version_id=row.category_version_id,
-                    category_path_snapshot=row.category_path_snapshot,
-                    merchant_id=row.merchant_id,
-                    project_id=row.project_id,
-                    necessity=row.necessity,
-                    reimbursement_status=row.reimbursement_status,
-                    memo=row.memo,
-                    version=row.version,
-                )
-            )
+            lines.setdefault(row.transaction_id, []).append(self._line_from_record(row))
         return lines
+
+    @staticmethod
+    def _line_from_record(row: TransactionLineRecord) -> TransactionLine:
+        return TransactionLine(
+            line_id=row.line_id,
+            transaction_id=row.transaction_id,
+            position=row.position,
+            line_type=row.line_type,
+            amount=Decimal(row.amount),
+            currency=row.currency,
+            book_id=row.book_id,
+            category_id=row.category_id,
+            category_version_id=row.category_version_id,
+            category_path_snapshot=row.category_path_snapshot,
+            merchant_id=row.merchant_id,
+            project_id=row.project_id,
+            necessity=row.necessity,
+            reimbursement_status=row.reimbursement_status,
+            memo=row.memo,
+            version=row.version,
+        )
