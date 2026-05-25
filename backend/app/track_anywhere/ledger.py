@@ -136,10 +136,20 @@ class Ledger:
         self.transactions[transaction.transaction_id] = transaction
         return transaction
 
-    def validate_transaction_integrity(self, transaction: Transaction) -> None:
-        self._validate_transaction_postings(transaction.postings, book_id=transaction.book_id)
+    def validate_transaction_integrity(self, transaction: Transaction, *, enforce_asset_scale: bool = True) -> None:
+        self._validate_transaction_postings(
+            transaction.postings,
+            book_id=transaction.book_id,
+            enforce_asset_scale=enforce_asset_scale,
+        )
 
-    def _validate_transaction_postings(self, postings: list[Posting], *, book_id: str | None = None) -> str:
+    def _validate_transaction_postings(
+        self,
+        postings: list[Posting],
+        *,
+        book_id: str | None = None,
+        enforce_asset_scale: bool = True,
+    ) -> str:
         if len(postings) < 2:
             raise ValidationError("confirmed transaction requires at least two postings")
         totals: dict[str, Decimal] = {}
@@ -148,9 +158,13 @@ class Ledger:
         for posting in postings:
             if posting.amount == Decimal("0"):
                 raise ValidationError("posting amount must not be zero")
-            validate_asset_amount(
-                posting.amount, posting.currency, field_name="posting amount", scale_lookup=self._asset_scale_lookup
-            )
+            if enforce_asset_scale:
+                validate_asset_amount(
+                    posting.amount,
+                    posting.currency,
+                    field_name="posting amount",
+                    scale_lookup=self._asset_scale_lookup,
+                )
             account = self.get_account(posting.account_id)
             if posting.currency != account.currency:
                 raise ValidationError(
