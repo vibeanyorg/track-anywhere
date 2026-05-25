@@ -20,6 +20,7 @@ from .ledger import Account
 from .storage_auth import AuthStorageWriters
 from .storage_engine import create_database_engine, database_url_from_env
 from .storage_json import new_owner_token, to_jsonable
+from .storage_ledger_reads import LedgerReadStorage
 from .storage_loaders import StorageLoaders
 from .storage_partial import PartialStorageWriters
 from .storage_models import (
@@ -41,7 +42,15 @@ from .users import AppUser
 _storage_auth_models.CredentialRecord
 
 
-class OrmStorage(PartialStorageWriters, DomainStorageLoaders, StorageLoaders, AuthStorageWriters, DomainStorageWriters, StorageWriters):
+class OrmStorage(
+    PartialStorageWriters,
+    DomainStorageLoaders,
+    StorageLoaders,
+    LedgerReadStorage,
+    AuthStorageWriters,
+    DomainStorageWriters,
+    StorageWriters,
+):
     def __init__(self, database_url: str | None = None) -> None:
         self.database_url = database_url or database_url_from_env()
         self.engine = create_database_engine(self.database_url)

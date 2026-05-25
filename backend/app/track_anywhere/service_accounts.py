@@ -133,19 +133,23 @@ class AccountUseCases:
         if group_by not in allowed_groupings:
             raise ValidationError(f"group_by must be one of {sorted(allowed_groupings)}")
 
+        accounts = [
+            account
+            for account in self.ledger.accounts.values()
+            if account.book_id == DEFAULT_BOOK_ID
+            and (include_system or account.type in {"asset", "liability", "fund"})
+            and (currency is None or account.currency == currency)
+            and (institution_type is None or account.institution_type == institution_type)
+        ]
+        balances = self.storage.account_balances(account.account_id for account in accounts)
+
         groups: dict[tuple[str, str], dict[str, Any]] = {}
-        for account in self.ledger.accounts.values():
+        for account in accounts:
             if account.book_id != DEFAULT_BOOK_ID:
-                continue
-            if not include_system and account.type not in {"asset", "liability", "fund"}:
-                continue
-            if currency and account.currency != currency:
-                continue
-            if institution_type and account.institution_type != institution_type:
                 continue
 
             account_currency = account.currency
-            amount = self.ledger.balance(account.account_id).get(account_currency, Decimal("0"))
+            amount = balances.get((account.account_id, account_currency), Decimal("0"))
             key_value = getattr(account, group_by)
             key = str(key_value) if key_value else "unclassified"
             group = groups.setdefault(

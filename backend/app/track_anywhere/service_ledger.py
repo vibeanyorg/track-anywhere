@@ -176,24 +176,15 @@ class LedgerUseCases:
             category = self.categories.get(category_id)
             if category.book_id != book_id:
                 return []
-        transactions = [transaction for transaction in self.ledger.transactions.values() if transaction.book_id == book_id]
-        if account_id:
-            transactions = [
-                transaction
-                for transaction in transactions
-                if any(posting.account_id == account_id for posting in transaction.postings)
-            ]
-        if category_id:
-            transactions = [
-                transaction
-                for transaction in transactions
-                if any(line.category_id == category_id for line in transaction.lines)
-            ]
-        transactions.sort(key=lambda transaction: (transaction.occurred_at, transaction.transaction_id), reverse=True)
-        return transactions[: max(0, min(limit, 200))]
+        return self.storage.list_confirmed_transactions(
+            book_id=book_id,
+            account_id=account_id,
+            category_id=category_id,
+            limit=limit,
+        )
 
     def get_transaction(self, token: str, transaction_id: str) -> Transaction:
-        transaction = self.ledger.transactions.get(transaction_id)
+        transaction = self.storage.get_confirmed_transaction(transaction_id)
         if transaction is None:
             raise NotFound(f"transaction not found: {transaction_id}")
         self.actor_for_book(token, transaction.book_id, "ledger:read")

@@ -37,6 +37,7 @@ frontend/tsconfig.tsbuildinfo
 
 # Logs and scratch files
 *.log
+backups/
 tmp/
 temp/
 playground/

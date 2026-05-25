@@ -58,7 +58,7 @@ class BalanceUseCases:
     def account_balance(self, token: str, account_id: str, *, include_drafts: bool = False) -> dict[str, Any]:
         account = self.ledger.get_account(account_id)
         self.actor_for_book(token, account.book_id, "account:read")
-        official = self.ledger.balance(account_id)
+        official = self.storage.account_balance(account_id)
         pending = self.drafts.projected_impact(account_id) if include_drafts else {}
         currency = account.currency
         official_amount = official.get(currency, Decimal("0"))
@@ -69,11 +69,11 @@ class BalanceUseCases:
             "official_balance": {
                 "amount": str(official_amount),
                 "source": "confirmed_postings",
-                "as_of_ledger_version": len(self.ledger.transactions),
+                "as_of_ledger_version": self.storage.confirmed_transaction_count(book_id=account.book_id),
             },
             "default_view": "official",
             "provenance": {
-                "confirmed_transaction_count": len(self.ledger.transactions),
+                "confirmed_transaction_count": self.storage.confirmed_transaction_count(book_id=account.book_id),
                 "draft_count": len(self.drafts.drafts),
             },
         }
