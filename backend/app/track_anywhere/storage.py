@@ -17,6 +17,7 @@ from .domain_storage_loaders import DomainStorageLoaders
 from .domain_storage_writers import DomainStorageWriters
 from . import storage_auth_models as _storage_auth_models
 from .ledger import Account
+from .storage_annotation_writers import AnnotationStorageWriters
 from .storage_auth import AuthStorageWriters
 from .storage_engine import create_database_engine, database_url_from_env
 from .storage_json import new_owner_token, to_jsonable
@@ -47,6 +48,7 @@ class OrmStorage(
     DomainStorageLoaders,
     StorageLoaders,
     LedgerReadStorage,
+    AnnotationStorageWriters,
     AuthStorageWriters,
     DomainStorageWriters,
     StorageWriters,

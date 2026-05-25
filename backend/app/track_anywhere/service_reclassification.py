@@ -10,7 +10,7 @@ from .ledger import Transaction
 class ReclassificationUseCases:
     def reclassify_transaction(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = ReclassifyTransactionCommand.model_validate(payload)
-        transaction = self.ledger.transactions.get(command.transaction_id)
+        transaction = self.storage.get_confirmed_transaction(command.transaction_id)
         if transaction is None:
             raise NotFound(f"transaction not found: {command.transaction_id}")
         category = self.categories.get(command.category_id)
@@ -18,8 +18,10 @@ class ReclassificationUseCases:
             raise ValidationError("transaction category must belong to the same book")
         actor = self.actor_for_book(token, transaction.book_id, "ledger:confirm")
         request_hash = self._hash_command(command)
+        changed_line_id: str | None = None
 
         def run():
+            nonlocal changed_line_id
             line = self._line_for_reclassification(transaction, line_id=command.line_id, category_kind=category.kind)
             if line is None:
                 before_count = len(transaction.lines)
@@ -47,7 +49,7 @@ class ReclassificationUseCases:
             }
             if before != {key: after.get(key) for key in ("category_id", "category_version_id", "category_path_snapshot")}:
                 line.version += 1
-                transaction.version += 1
+            changed_line_id = line.line_id
             self.categories._record_event(
                 "reclassify",
                 transaction.book_id,
@@ -76,7 +78,9 @@ class ReclassificationUseCases:
         if replay:
             self._persist_idempotency()
         else:
-            self._persist_ledger_change(result, include_category_history=True)
+            if changed_line_id is None:
+                raise ValidationError("reclassification did not select a transaction line")
+            self._persist_reclassification_change(result, changed_line_id)
         return result, replay
 
     def _line_for_reclassification(self, transaction: Transaction, *, line_id: str | None, category_kind: str):

@@ -131,6 +131,10 @@ class FinanceService(
     def _persist_ledger_change(self, *transactions, include_category_history: bool = False) -> None:
         self.storage.save_ledger_change(self, transactions, include_category_history=include_category_history)
 
+    def _persist_reclassification_change(self, transaction, line_id: str) -> None:
+        self.storage.save_reclassification_change(self, transaction, line_id)
+        self.ledger.transactions[transaction.transaction_id] = transaction
+
     def _ensure_domain_foundations(self) -> None:
         self.books.ensure_default()
         self.assets.ensure_defaults()
