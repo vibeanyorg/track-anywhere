@@ -407,5 +407,5 @@ def test_token_backed_card_expense_requires_sufficient_usd24_backing():
             idempotency_key="insufficient-expense",
         )
 
-    assert service.account_balance(token, card.account_id)["official_balance"]["amount"] == "0.00"
-    assert service.account_balance(token, usd24.account_id)["official_balance"]["amount"] == "1.00"
+    assert Decimal(service.account_balance(token, card.account_id)["official_balance"]["amount"]) == Decimal("0")
+    assert Decimal(service.account_balance(token, usd24.account_id)["official_balance"]["amount"]) == Decimal("1.00")

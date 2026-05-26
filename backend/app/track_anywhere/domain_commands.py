@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
-from .commands import ASSET_CODE_PATTERN, CATEGORY_KINDS, StrictCommand
+from .commands import ASSET_CODE_PATTERN, StrictCommand
 
 
 class CreateBookCommand(StrictCommand):
@@ -85,6 +85,17 @@ class CreatePaymentProfileCommand(StrictCommand):
         if self.settlement_rate != Decimal("1"):
             raise ValueError("unsupported payment profile settlement rate")
         return self
+
+
+class RecordPaymentProfileExpenseCommand(StrictCommand):
+    payment: str = Field(min_length=1, max_length=80)
+    amount: Decimal = Field(gt=0)
+    currency: str = Field(pattern=ASSET_CODE_PATTERN)
+    category_id: str
+    purpose: str = Field(min_length=1, max_length=256)
+    memo: str = Field(default="", max_length=256)
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 
 class RecordFxExchangeCommand(StrictCommand):
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
