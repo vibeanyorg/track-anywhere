@@ -188,6 +188,7 @@ Write to the ledger:
 uv run ta account create "<name>" --type asset --currency CNY --idempotency-key <key> --json
 uv run ta category create --kind expense --primary "<level-1>" --secondary "<level-2>" --idempotency-key <key> --json
 uv run ta expense record --amount <amount> --currency CNY --from-account-id <source> --category-id <category_id> --purpose "<why>" --idempotency-key <key> --json
+uv run ta expense record --payment <payment_slug> --amount <amount> --currency USD --category-id <category_id> --purpose "<why>" --idempotency-key <key> --json
 uv run ta income record --amount <amount> --currency CNY --to-account-id <target> --category-id <category_id> --purpose "<why>" --idempotency-key <key> --json
 uv run ta credit-card update <credit_card_account_id> --credit-limit <limit> --statement-day <day> --due-day <day> --idempotency-key <key> --json
 uv run ta account adjust <account_id> --amount <delta> --currency CNY --purpose "<why>" --idempotency-key <key> --json
@@ -226,6 +227,45 @@ uv run ta credit-card list --json
 ```
 
 The overview returns the current liability balance, recorded limit, recorded available credit, derived available credit (`credit_limit - current_balance`), and utilization rate when a limit exists.
+
+## Token-backed payment profiles
+
+Use a payment profile when a user-visible payment instrument is backed by another asset account. SafePal Card USD backed by SafePal USD24 is the first supported shape. Users record the payment once; Track Anywhere writes one confirmed transaction that contains both the USD expense and the immediate USD24 settlement.
+
+Set up the profile:
+
+```bash
+uv run ta payment profile create safepal \
+  --display-name "SafePal" \
+  --kind token-backed-card \
+  --instrument-account-id <safepal_card_usd_account_id> \
+  --backing-account-id <safepal_usd24_account_id> \
+  --settlement-mode immediate \
+  --settlement-rate 1 \
+  --idempotency-key payment-profile-safepal \
+  --json
+```
+
+Record daily spending:
+
+```bash
+uv run ta expense record \
+  --payment safepal \
+  --amount 3.40 \
+  --currency USD \
+  --category-id <category_id> \
+  --purpose "Meituan" \
+  --idempotency-key safepal-expense-<stable-key> \
+  --json
+```
+
+Read the composite SafePal view:
+
+```bash
+uv run ta payment profile status safepal --json
+```
+
+The first version assumes `1 USD = 1 USD24` with no spread, fee, slippage, or rate difference. The raw card clearing account should normally stay at zero after immediate-settlement payments; the status view shows the USD24 backing balance and the effective USD spendable balance.
 
 ## Income and expense categories
 

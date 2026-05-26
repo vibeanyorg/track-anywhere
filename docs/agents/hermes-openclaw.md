@@ -131,9 +131,18 @@ For day-to-day spending and income, prefer the category-aware helpers:
 
 ```bash
 ta expense record --amount <amount> --from-account-id <source> --category-id <category_id> --purpose "<description>" --idempotency-key <key> --json
+ta expense record --payment safepal --amount <amount> --currency USD --category-id <category_id> --purpose "<description>" --idempotency-key <key> --json
 ta income record --amount <amount> --to-account-id <target> --category-id <category_id> --purpose "<description>" --idempotency-key <key> --json
 ta summary categories --kind expense --currency CNY --json
 ```
+
+For SafePal Card USD backed by SafePal USD24, use `--payment safepal` instead of manually creating a card top-up or balance adjustment. The payment-profile expense command records both the USD expense and the immediate USD24 backing settlement in one confirmed transaction. Check the user-facing SafePal balance with:
+
+```bash
+ta payment profile status safepal --json
+```
+
+The first version treats `1 USD = 1 USD24`. Do not ask the user to manually clear a negative SafePal card balance when the payment profile exists.
 
 ## Credit Card Profiles
 
