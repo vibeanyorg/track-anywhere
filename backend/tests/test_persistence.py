@@ -7,6 +7,22 @@ from sqlalchemy import event
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
+PAYMENT_PROFILE_COLUMNS = {
+    "profile_id",
+    "book_id",
+    "slug",
+    "display_name",
+    "kind",
+    "instrument_account_id",
+    "instrument_currency",
+    "backing_account_id",
+    "backing_currency",
+    "settlement_mode",
+    "settlement_rate",
+    "status",
+    "version",
+}
+
 
 def test_sqlite_persistence_survives_service_restart(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}"
@@ -175,13 +191,15 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
         draft_columns = {row[1] for row in connection.execute("pragma table_info(drafts)").fetchall()}
         investment_valuation_indexes = {row[1] for row in connection.execute("pragma index_list(investment_valuations)").fetchall()}
         posting_indexes = connection.execute("pragma index_list(postings)").fetchall()
+        payment_profile_columns = {row[1]: row[2] for row in connection.execute("pragma table_info(payment_profiles)").fetchall()}
+        payment_profile_indexes = _index_columns(connection, "payment_profiles")
 
     assert "alembic_version" in tables
     assert "accounts" in tables
     assert "transactions" in tables
     assert "postings" in tables
     assert "recurring_items" in tables
-    assert version == "0011_posting_position_invariants"
+    assert version == "0012_payment_profiles"
     assert account_columns["currency"].upper() == "VARCHAR(16)"
     assert account_columns["book_id"].upper() == "VARCHAR(80)"
     assert {"category_id", "metadata"} <= draft_columns
@@ -195,8 +213,14 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
         "budget_targets",
         "auth_identities",
         "password_accounts",
+        "payment_profiles",
     } <= tables
     assert any(index[2] for index in posting_indexes)
+    assert PAYMENT_PROFILE_COLUMNS <= set(payment_profile_columns)
+    assert payment_profile_columns["instrument_currency"].upper() == "VARCHAR(16)"
+    assert payment_profile_columns["backing_currency"].upper() == "VARCHAR(16)"
+    assert payment_profile_indexes["ix_payment_profiles_book_status"] == (False, ("book_id", "status"))
+    assert (True, ("book_id", "slug")) in payment_profile_indexes.values()
 
 
 def test_alembic_adopts_legacy_sqlite_schema_without_destroying_data(tmp_path):
@@ -232,12 +256,16 @@ def test_alembic_adopts_legacy_sqlite_schema_without_destroying_data(tmp_path):
             row[0]
             for row in connection.execute("select name from sqlite_master where type = 'table'").fetchall()
         }
+        payment_profile_columns = {row[1] for row in connection.execute("pragma table_info(payment_profiles)").fetchall()}
+        payment_profile_indexes = _index_columns(connection, "payment_profiles")
 
-    assert version == "0011_posting_position_invariants"
+    assert version == "0012_payment_profiles"
     assert {"institution_type", "subtype", "institution", "book_id"} <= account_columns
     assert "book_id" in transaction_columns
     assert "category_id" not in transaction_columns
-    assert {"recurring_items", "ledger_books", "transaction_lines", "auth_identities", "password_accounts"} <= tables
+    assert {"recurring_items", "ledger_books", "transaction_lines", "auth_identities", "password_accounts", "payment_profiles"} <= tables
+    assert PAYMENT_PROFILE_COLUMNS <= payment_profile_columns
+    assert (True, ("book_id", "slug")) in payment_profile_indexes.values()
 
 
 def test_alembic_migrations_are_idempotent_across_restart(tmp_path):
@@ -250,4 +278,12 @@ def test_alembic_migrations_are_idempotent_across_restart(tmp_path):
     with sqlite3.connect(database_path) as connection:
         versions = connection.execute("select version_num from alembic_version").fetchall()
 
-    assert versions == [("0011_posting_position_invariants",)]
+    assert versions == [("0012_payment_profiles",)]
+
+
+def _index_columns(connection: sqlite3.Connection, table_name: str) -> dict[str, tuple[bool, tuple[str, ...]]]:
+    indexes: dict[str, tuple[bool, tuple[str, ...]]] = {}
+    for _, name, unique, *_ in connection.execute(f"pragma index_list({table_name})").fetchall():
+        columns = tuple(row[2] for row in connection.execute(f"pragma index_info({name})").fetchall())
+        indexes[name] = (bool(unique), columns)
+    return indexes

@@ -33,6 +33,7 @@ from .storage_models import (
     Base,
     CategoryRecord,
     CreditCardProfileRecord,
+    PaymentProfileRecord,
     ReconciliationActionRecord,
     UserRecord,
     AccountRecord,
@@ -123,6 +124,8 @@ class OrmStorage(
             service.recurring.items = self._load_recurring_items(session)
             service.budgets.funds = self._load_funds(session)
             service.budgets.budgets, service.budgets.targets = self._load_budgets(session)
+            payment_profiles = self._load_payment_profiles(session)
+            self._hydrate_payment_profiles(service, payment_profiles)
             service.investments.events = self._load_investment_events(session)
             service.investments.valuations = self._load_investment_valuations(session)
             service.categories.categories = {
@@ -238,6 +241,24 @@ class OrmStorage(
                         version=profile.version,
                     )
                 )
+            for profile in self._iter_payment_profiles(service):
+                session.merge(
+                    PaymentProfileRecord(
+                        profile_id=profile.profile_id,
+                        book_id=profile.book_id,
+                        slug=profile.slug,
+                        display_name=profile.display_name,
+                        kind=profile.kind,
+                        instrument_account_id=profile.instrument_account_id,
+                        instrument_currency=profile.instrument_currency,
+                        backing_account_id=profile.backing_account_id,
+                        backing_currency=profile.backing_currency,
+                        settlement_mode=profile.settlement_mode,
+                        settlement_rate=str(profile.settlement_rate),
+                        status=profile.status,
+                        version=profile.version,
+                    )
+                )
             for attachment in service.attachments.attachments.values():
                 session.merge(
                     AttachmentRecord(
@@ -261,6 +282,34 @@ class OrmStorage(
                 )
             for currency, account_id in service.adjustment_account_ids.items():
                 session.merge(AdjustmentAccountRecord(currency=currency, account_id=account_id))
+        payment_profiles = getattr(service, "payment_profiles", None)
+        if hasattr(payment_profiles, "mark_clean"):
+            payment_profiles.mark_clean()
+
+    @staticmethod
+    def _iter_payment_profiles(service: Any) -> list[Any]:
+        profiles = getattr(service, "payment_profiles", None)
+        if profiles is None:
+            return []
+        if isinstance(profiles, dict):
+            return list(profiles.values())
+        container_profiles = getattr(profiles, "profiles", None)
+        if isinstance(container_profiles, dict):
+            return list(container_profiles.values())
+        return []
+
+    def _hydrate_payment_profiles(self, service: Any, payment_profiles: dict[str, Any]) -> None:
+        container = getattr(service, "payment_profiles", None)
+        if container is None:
+            return
+        if isinstance(container, dict):
+            container.clear()
+            container.update(payment_profiles)
+            return
+        if isinstance(getattr(container, "profiles", None), dict):
+            container.profiles = dict(payment_profiles)
+            if hasattr(container, "mark_clean"):
+                container.mark_clean()
 
 
 __all__ = [
