@@ -93,6 +93,7 @@ run_cli summary-accounts summary accounts
 run_cli summary-categories summary categories
 run_cli user-list user list
 run_cli credit-card-list credit-card list
+run_cli payment-instrument-list payment instrument list
 run_cli payment-profile-list payment profile list
 run_cli recurring-list recurring list
 

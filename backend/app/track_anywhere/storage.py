@@ -23,6 +23,7 @@ from .storage_engine import create_database_engine, database_url_from_env
 from .storage_json import new_owner_token, to_jsonable
 from .storage_ledger_reads import LedgerReadStorage
 from .storage_loaders import StorageLoaders
+from .storage_payment_instruments import PaymentInstrumentStorageMixin
 from .storage_payment_profiles import PaymentProfileStorageMixin
 from .storage_partial import PartialStorageWriters
 from .storage_models import (
@@ -46,6 +47,7 @@ _storage_auth_models.CredentialRecord
 
 class OrmStorage(
     PartialStorageWriters,
+    PaymentInstrumentStorageMixin,
     PaymentProfileStorageMixin,
     DomainStorageLoaders,
     StorageLoaders,
@@ -127,6 +129,8 @@ class OrmStorage(
             service.budgets.budgets, service.budgets.targets = self._load_budgets(session)
             payment_profiles = self._load_payment_profiles(session)
             self._hydrate_payment_profiles(service, payment_profiles)
+            payment_instruments = self._load_payment_instruments(session)
+            self._hydrate_payment_instruments(service, payment_instruments)
             service.investments.events = self._load_investment_events(session)
             service.investments.valuations = self._load_investment_valuations(session)
             service.categories.categories = {
@@ -230,6 +234,7 @@ class OrmStorage(
             self._save_investment_valuations(session, service.investments.valuations.values())
             self._save_categories(session, service.categories.categories.values())
             self._save_category_history(session, service.categories)
+            self._save_payment_instruments(session, service)
             for profile in service.credit_cards.profiles.values():
                 session.merge(
                     CreditCardProfileRecord(

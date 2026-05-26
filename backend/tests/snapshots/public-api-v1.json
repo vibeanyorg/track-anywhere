@@ -260,6 +260,13 @@
     "/api/v1/oauth/token": [
       "post"
     ],
+    "/api/v1/payment-instruments": [
+      "get",
+      "post"
+    ],
+    "/api/v1/payment-instruments/{instrument}": [
+      "get"
+    ],
     "/api/v1/payment-profiles": [
       "get",
       "post"

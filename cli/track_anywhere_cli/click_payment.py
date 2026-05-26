@@ -14,6 +14,10 @@ def register(root: click.Group) -> None:
     def profile():
         """Configure payment aliases."""
 
+    @payment.group("instrument")
+    def instrument():
+        """Manage payment instruments."""
+
     @profile.command("create")
     @click.argument("slug")
     @click.option("--display-name", required=True)
@@ -69,3 +73,59 @@ def register(root: click.Group) -> None:
             payment=payment,
         )
         return run_api(args, state=state, command_path="payment.profile.status")
+
+    @instrument.command("create")
+    @click.argument("slug")
+    @click.option("--display-name", required=True)
+    @click.option("--kind", default="credit-card", show_default=True)
+    @click.option("--account-id", required=True)
+    @click.option("--last4")
+    @click.option("--idempotency-key")
+    @output_options
+    @pass_state
+    def create_payment_instrument(state, json_mode, no_color, slug, **kwargs):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="payment",
+            payment_command="instrument",
+            instrument_command="create",
+            slug=slug,
+            **kwargs,
+        )
+        return run_api(args, state=state, command_path="payment.instrument.create")
+
+    @instrument.command("list")
+    @click.option("--account-id")
+    @click.option("--status", default="active")
+    @output_options
+    @pass_state
+    def list_payment_instruments(state, json_mode, no_color, account_id, status):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="payment",
+            payment_command="instrument",
+            instrument_command="list",
+            account_id=account_id,
+            status=status,
+        )
+        return run_api(args, state=state, command_path="payment.instrument.list")
+
+    @instrument.command("show")
+    @click.argument("instrument_ref")
+    @output_options
+    @pass_state
+    def show_payment_instrument(state, json_mode, no_color, instrument_ref):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="payment",
+            payment_command="instrument",
+            instrument_command="show",
+            instrument_ref=instrument_ref,
+        )
+        return run_api(args, state=state, command_path="payment.instrument.show")

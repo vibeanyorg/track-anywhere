@@ -32,6 +32,8 @@ class PartialStorageWriters:
                 versions=dirty_versions,
                 events=dirty_events,
             )
+            if hasattr(self, "_save_payment_instruments"):
+                self._save_payment_instruments(session, service)
             self._save_credentials(session, dirty_credentials)
             self._save_audit_events(session, pending_events)
             self._save_idempotency_receipts(session, dirty_receipts)

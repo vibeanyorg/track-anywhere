@@ -205,6 +205,27 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
         return requester(config, "GET", path)
     if args.command == "payment" and args.payment_command == "profile" and args.profile_command == "status":
         return requester(config, "GET", f"/api/v1/payment-profiles/{urllib.parse.quote(args.payment)}/status")
+    if args.command == "payment" and args.payment_command == "instrument" and args.instrument_command == "create":
+        payload = {
+            "slug": args.slug,
+            "display_name": args.display_name,
+            "kind": args.kind.replace("-", "_"),
+            "account_id": args.account_id,
+        }
+        if args.last4:
+            payload["last4"] = args.last4
+        return requester(
+            config,
+            "POST",
+            "/api/v1/payment-instruments",
+            payload,
+            key=command_idempotency_key(args, "payment-instrument-create"),
+        )
+    if args.command == "payment" and args.payment_command == "instrument" and args.instrument_command == "list":
+        path = with_query("/api/v1/payment-instruments", {"account_id": args.account_id, "status": args.status})
+        return requester(config, "GET", path)
+    if args.command == "payment" and args.payment_command == "instrument" and args.instrument_command == "show":
+        return requester(config, "GET", f"/api/v1/payment-instruments/{urllib.parse.quote(args.instrument_ref)}")
     return None
 
 

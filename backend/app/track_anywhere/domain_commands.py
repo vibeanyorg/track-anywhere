@@ -87,6 +87,14 @@ class CreatePaymentProfileCommand(StrictCommand):
         return self
 
 
+class CreatePaymentInstrumentCommand(StrictCommand):
+    slug: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    display_name: str = Field(min_length=1, max_length=120)
+    kind: Literal["credit_card"]
+    account_id: str
+    last4: str | None = Field(default=None, min_length=1, max_length=16, pattern=r"^[A-Za-z0-9]+$")
+
+
 class RecordPaymentProfileExpenseCommand(StrictCommand):
     payment: str = Field(min_length=1, max_length=80)
     amount: Decimal = Field(gt=0)

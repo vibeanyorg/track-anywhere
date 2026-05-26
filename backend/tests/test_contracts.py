@@ -39,6 +39,7 @@ def test_public_mutation_routes_expose_request_schemas():
     assert schema_refs["/api/v1/accounts"].endswith("/CreateAccountCommand")
     assert schema_refs["/api/v1/drafts/capture"].endswith("/CaptureDraftCommand")
     assert schema_refs["/api/v1/ledger/transactions"].endswith("/RecordTransactionCommand")
+    assert schema_refs["/api/v1/payment-instruments"].endswith("/CreatePaymentInstrumentCommand")
     assert schema_refs["/api/v1/payment-profiles"].endswith("/CreatePaymentProfileCommand")
     assert schema_refs["/api/v1/payment-profiles/{payment}/expenses"].endswith("/RecordPaymentProfileExpenseBody")
     assert schema_refs["/api/v1/recurring/items"].endswith("/CreateRecurringItemCommand")

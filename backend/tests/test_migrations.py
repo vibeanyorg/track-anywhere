@@ -6,24 +6,9 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
+from schema_assertions import PAYMENT_INSTRUMENT_COLUMNS, PAYMENT_PROFILE_COLUMNS, index_columns
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
-
-PAYMENT_PROFILE_COLUMNS = {
-    "profile_id",
-    "book_id",
-    "slug",
-    "display_name",
-    "kind",
-    "instrument_account_id",
-    "instrument_currency",
-    "backing_account_id",
-    "backing_currency",
-    "settlement_mode",
-    "settlement_rate",
-    "status",
-    "version",
-}
 
 
 def test_alembic_clears_legacy_duplicate_transaction_memos(tmp_path):
@@ -52,9 +37,11 @@ def test_alembic_clears_legacy_duplicate_transaction_memos(tmp_path):
         line_memos = dict(connection.execute("select line_id, memo from transaction_lines").fetchall())
         version = connection.execute("select version_num from alembic_version").fetchone()[0]
         payment_profile_columns = {row[1] for row in connection.execute("pragma table_info(payment_profiles)").fetchall()}
+        payment_instrument_columns = {row[1] for row in connection.execute("pragma table_info(payment_instruments)").fetchall()}
 
-    assert version == "0012_payment_profiles"
+    assert version == "0013_payment_instruments"
     assert PAYMENT_PROFILE_COLUMNS <= payment_profile_columns
+    assert PAYMENT_INSTRUMENT_COLUMNS <= payment_instrument_columns
     assert transaction_memos["txn_duplicate"] == ""
     assert transaction_memos["txn_private"] == "card ending 1234"
     assert line_memos["line_duplicate"] == ""
@@ -84,12 +71,13 @@ def test_alembic_drops_legacy_django_tables_without_dropping_track_anywhere_tabl
     with sqlite3.connect(database_path) as connection:
         tables = {row[0] for row in connection.execute("select name from sqlite_master where type = 'table'")}
         version = connection.execute("select version_num from alembic_version").fetchone()[0]
-        payment_profile_indexes = _index_columns(connection, "payment_profiles")
+        payment_profile_indexes = index_columns(connection, "payment_profiles")
 
-    assert version == "0012_payment_profiles"
+    assert version == "0013_payment_instruments"
     assert "accounts" in tables
     assert "auth_identities" in tables
     assert "payment_profiles" in tables
+    assert "payment_instruments" in tables
     assert payment_profile_indexes["ix_payment_profiles_book_status"] == (False, ("book_id", "status"))
     assert (True, ("book_id", "slug")) in payment_profile_indexes.values()
     assert not {
@@ -138,7 +126,7 @@ def test_alembic_backfills_lines_and_drops_legacy_category_columns(tmp_path):
             """
         ).fetchone()
 
-    assert version == "0012_payment_profiles"
+    assert version == "0013_payment_instruments"
     assert "category_id" not in transaction_columns
     assert "primary" not in category_columns
     assert "secondary" not in category_columns
@@ -181,7 +169,6 @@ def _insert_account(sqlite_connection, account_id: str, *, type: str) -> None:
         """,
         (account_id, "book_default", account_id, type, "CNY", None, None, None, 1),
     )
-
 
 def _insert_category(sqlite_connection, category_id: str, *, primary: str) -> None:
     sqlite_connection.execute(
@@ -289,11 +276,3 @@ def _insert_transaction_line(sqlite_connection, line_id: str, transaction_id: st
             1,
         ),
     )
-
-
-def _index_columns(connection: sqlite3.Connection, table_name: str) -> dict[str, tuple[bool, tuple[str, ...]]]:
-    indexes: dict[str, tuple[bool, tuple[str, ...]]] = {}
-    for _, name, unique, *_ in connection.execute(f"pragma index_list({table_name})").fetchall():
-        columns = tuple(row[2] for row in connection.execute(f"pragma index_info({name})").fetchall())
-        indexes[name] = (bool(unique), columns)
-    return indexes
