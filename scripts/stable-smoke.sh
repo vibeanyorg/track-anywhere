@@ -17,7 +17,7 @@ run_ta() {
   if [ -n "${TRACK_ANYWHERE_TA_BIN:-}" ]; then
     "$TRACK_ANYWHERE_TA_BIN" "$@"
   elif command -v uv >/dev/null 2>&1 && [ -f "$ROOT/pyproject.toml" ]; then
-    (cd "$ROOT" && uv run ta "$@")
+    (cd "$ROOT" && PYTHONPATH="$ROOT/backend/app:$ROOT/cli${PYTHONPATH:+:$PYTHONPATH}" uv run python -m track_anywhere_cli.main "$@")
   else
     ta "$@"
   fi
@@ -93,6 +93,7 @@ run_cli summary-accounts summary accounts
 run_cli summary-categories summary categories
 run_cli user-list user list
 run_cli credit-card-list credit-card list
+run_cli payment-profile-list payment profile list
 run_cli recurring-list recurring list
 
 printf 'Stable smoke passed for %s\n' "$BASE_URL"
