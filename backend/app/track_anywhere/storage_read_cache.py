@@ -14,6 +14,25 @@ class StorageReadCache:
         self._read_payment_profiles = deepcopy(service.payment_profiles.profiles)
         self._read_credit_card_profiles = deepcopy(service.credit_cards.profiles)
 
+    def update_read_cache(
+        self,
+        *,
+        accounts=(),
+        transactions=(),
+        categories=(),
+        recurring_items=(),
+        payment_instruments=(),
+        payment_profiles=(),
+        credit_card_profiles=(),
+    ) -> None:
+        self._replace_cached("accounts", accounts, "account_id")
+        self._replace_cached("transactions", transactions, "transaction_id")
+        self._replace_cached("categories", categories, "category_id")
+        self._replace_cached("recurring_items", recurring_items, "recurring_id")
+        self._replace_cached("payment_instruments", payment_instruments, "instrument_id")
+        self._replace_cached("payment_profiles", payment_profiles, "profile_id")
+        self._replace_cached("credit_card_profiles", credit_card_profiles, "account_id")
+
     def _cached_values(self, name: str):
         cache = getattr(self, f"_read_{name}", None)
         return deepcopy(list(cache.values())) if cache is not None else None
@@ -26,3 +45,10 @@ class StorageReadCache:
         if cache is None or key not in cache:
             return None
         return deepcopy(cache[key])
+
+    def _replace_cached(self, name: str, items, key_attr: str) -> None:
+        cache = getattr(self, f"_read_{name}", None)
+        if cache is None:
+            return
+        for item in items:
+            cache[getattr(item, key_attr)] = deepcopy(item)

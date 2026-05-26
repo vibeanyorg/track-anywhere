@@ -123,6 +123,64 @@ def test_common_writes_do_not_depend_on_legacy_full_snapshot_persistence(tmp_pat
     )
 
 
+def test_common_writes_do_not_rebuild_read_projection_after_startup(tmp_path):
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
+    token = service.owner_token
+
+    def fail_read_projection_rebuild(_service):
+        raise AssertionError("API write path rebuilt the full read projection")
+
+    service.storage.refresh_read_cache_from_service = fail_read_projection_rebuild
+
+    cash, _ = service.create_account(
+        token,
+        {"name": "Projection Cash", "type": "asset", "currency": "CNY", "opening_balance": "100"},
+        idempotency_key="projection-cash",
+    )
+    expense_account, _ = service.create_account(
+        token,
+        {"name": "Projection Expense", "type": "expense", "currency": "CNY"},
+        idempotency_key="projection-expense-account",
+    )
+    category, _ = service.ensure_category_path(
+        token,
+        {"kind": "expense", "path": "Projection / Lunch"},
+        idempotency_key="projection-food-lunch",
+    )
+    service.record_transaction(
+        token,
+        {
+            "amount": "5",
+            "currency": "CNY",
+            "from_account_id": cash.account_id,
+            "to_account_id": expense_account.account_id,
+            "purpose": "projection direct write",
+        },
+        idempotency_key="projection-transfer",
+    )
+    service.record_expense(
+        token,
+        {
+            "amount": "7",
+            "currency": "CNY",
+            "from_account_id": cash.account_id,
+            "category_id": category["category"].category_id,
+            "purpose": "projection category write",
+        },
+        idempotency_key="projection-expense",
+    )
+    service.adjust_balance(
+        token,
+        {
+            "account_id": cash.account_id,
+            "amount": "3",
+            "currency": "CNY",
+            "purpose": "projection adjust write",
+        },
+        idempotency_key="projection-adjust",
+    )
+
+
 def test_record_transaction_write_scope_has_small_sql_budget(tmp_path):
     service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
     token = service.owner_token

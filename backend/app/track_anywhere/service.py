@@ -133,32 +133,26 @@ class FinanceService(
 
     def _persist_catalog_change(self) -> None:
         self.storage.save_catalog_change(self)
-        self.storage.refresh_read_cache_from_service(self)
 
     def _persist_ledger_change(self, *transactions, include_category_history: bool = False) -> None:
         self.storage.save_ledger_change(self, transactions, include_category_history=include_category_history)
-        self.storage.refresh_read_cache_from_service(self)
 
     def _persist_reclassification_change(self, transaction, line_id: str) -> None:
         self.storage.save_reclassification_change(self, transaction, line_id)
         self.ledger.transactions[transaction.transaction_id] = transaction
-        self.storage.refresh_read_cache_from_service(self)
+        self.storage.update_read_cache(transactions=(transaction,))
 
     def _persist_user_change(self, *users) -> None:
         self.storage.save_user_change(self, users)
-        self.storage.refresh_read_cache_from_service(self)
 
     def _persist_book_change(self) -> None:
         self.storage.save_book_change(self)
-        self.storage.refresh_read_cache_from_service(self)
 
     def _persist_draft_change(self, *drafts, transactions=()) -> None:
         self.storage.save_draft_change(self, drafts, transactions=transactions)
-        self.storage.refresh_read_cache_from_service(self)
 
     def _persist_recurring_change(self, *items, drafts=()) -> None:
         self.storage.save_recurring_change(self, items, drafts=drafts)
-        self.storage.refresh_read_cache_from_service(self)
 
     def _persist_finance_change(self, *, funds=(), budgets: bool = False, transactions=(), actions=()) -> None:
         self.storage.save_finance_change(
@@ -168,19 +162,15 @@ class FinanceService(
             transactions=transactions,
             actions=actions,
         )
-        self.storage.refresh_read_cache_from_service(self)
 
     def _persist_investment_change(self, *, events=(), valuations=(), transactions=()) -> None:
         self.storage.save_investment_change(self, events=events, valuations=valuations, transactions=transactions)
-        self.storage.refresh_read_cache_from_service(self)
 
     def _persist_credit_card_profile_change(self, *profiles) -> None:
         self.storage.save_credit_card_profile_change(self, profiles)
-        self.storage.refresh_read_cache_from_service(self)
 
     def _persist_payment_profile_change(self) -> None:
         self.storage.save_payment_profile_change(self)
-        self.storage.refresh_read_cache_from_service(self)
 
     def _persist_credential_change(self) -> None:
         self.storage.save_credential_change(self)
