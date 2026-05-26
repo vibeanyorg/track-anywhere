@@ -23,6 +23,25 @@ def test_api_write_use_cases_do_not_call_legacy_full_snapshot_persistence():
     assert offenders == []
 
 
+def test_legacy_full_snapshot_helpers_are_not_exposed_as_generic_save_methods():
+    repo_root = Path.cwd()
+    offenders: list[str] = []
+    forbidden_patterns = [
+        re.compile(r"\bdef _persist\("),
+        re.compile(r"\bservice\._persist\(\)"),
+        re.compile(r"\bdef save\(self, service"),
+        re.compile(r"\bstorage\.save\s*="),
+        re.compile(r"\bstorage\.save\("),
+    ]
+    for root_name in ("backend/app", "backend/tests"):
+        for path in (repo_root / root_name).rglob("*.py"):
+            for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+                if any(pattern.search(line) for pattern in forbidden_patterns):
+                    offenders.append(f"{path.relative_to(repo_root)}:{line_number}: {line.strip()}")
+
+    assert offenders == []
+
+
 def test_common_writes_do_not_depend_on_legacy_full_snapshot_persistence(tmp_path):
     service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
     token = service.owner_token

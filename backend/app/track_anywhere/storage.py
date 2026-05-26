@@ -10,7 +10,6 @@ from .assets import AssetDefinition
 from .audit import AuditEvent
 from .attachments import Attachment
 from .auth_identities import LinkedAuthIdentity
-from .categories import Category
 from .credit_cards import CreditCardProfile
 from .db_migrations import run_migrations
 from .domain_storage_loaders import DomainStorageLoaders
@@ -19,6 +18,7 @@ from . import storage_auth_models as _storage_auth_models
 from .ledger import Account
 from .storage_annotation_writers import AnnotationStorageWriters
 from .storage_auth import AuthStorageWriters
+from .storage_catalog_reads import CatalogReadStorage, _category_from_row
 from .storage_engine import create_database_engine, database_url_from_env
 from .storage_json import new_owner_token, to_jsonable
 from .storage_ledger_reads import LedgerReadStorage
@@ -26,6 +26,7 @@ from .storage_loaders import StorageLoaders
 from .storage_payment_instruments import PaymentInstrumentStorageMixin
 from .storage_payment_profiles import PaymentProfileStorageMixin
 from .storage_partial import PartialStorageWriters
+from .storage_read_cache import StorageReadCache
 from .storage_uow import StorageUnitOfWork
 from .storage_models import (
     AdjustmentAccountRecord,
@@ -47,11 +48,13 @@ _storage_auth_models.CredentialRecord
 
 
 class OrmStorage(
+    StorageReadCache,
     PartialStorageWriters,
     PaymentInstrumentStorageMixin,
     PaymentProfileStorageMixin,
     DomainStorageLoaders,
     StorageLoaders,
+    CatalogReadStorage,
     LedgerReadStorage,
     AnnotationStorageWriters,
     AuthStorageWriters,
@@ -138,22 +141,7 @@ class OrmStorage(
             service.investments.events = self._load_investment_events(session)
             service.investments.valuations = self._load_investment_valuations(session)
             service.categories.categories = {
-                row.category_id: Category(
-                    category_id=row.category_id,
-                    book_id=row.book_id,
-                    kind=row.kind,
-                    parent_id=row.parent_id,
-                    name=row.name,
-                    normalized_name=row.normalized_name,
-                    level=row.level,
-                    path_cache=row.path_cache,
-                    icon=row.icon,
-                    color=row.color,
-                    sort_order=row.sort_order,
-                    status=row.status,
-                    version=row.version,
-                )
-                for row in session.query(CategoryRecord).all()
+                row.category_id: _category_from_row(row) for row in session.query(CategoryRecord).all()
             }
             (
                 service.categories.aliases,
@@ -275,9 +263,6 @@ class OrmStorage(
                 )
             for currency, account_id in service.adjustment_account_ids.items():
                 session.merge(AdjustmentAccountRecord(currency=currency, account_id=account_id))
-
-    def save(self, service: Any) -> None:
-        self.save_full_snapshot_for_legacy_bootstrap(service)
 
 __all__ = [
     "Base",

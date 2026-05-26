@@ -86,36 +86,18 @@ class AccountUseCases:
             self.actor_for_book(token, book_id, "account:read")
         else:
             self.actor_from_token(token, "account:read")
-        accounts = list(self.ledger.accounts.values())
-        if book_id is not None:
-            accounts = [account for account in accounts if account.book_id == book_id]
-        if name:
-            lowered = name.lower()
-            accounts = [account for account in accounts if lowered in account.name.lower()]
-        if type:
-            accounts = [account for account in accounts if account.type == type]
-        if currency:
-            accounts = [account for account in accounts if account.currency == currency]
-        if institution_type:
-            accounts = [account for account in accounts if account.institution_type == institution_type]
-        if subtype:
-            accounts = [account for account in accounts if account.subtype == subtype]
-        if institution:
-            lowered = institution.lower()
-            accounts = [account for account in accounts if account.institution and lowered in account.institution.lower()]
-        return sorted(
-            accounts,
-            key=lambda account: (
-                account.type,
-                account.institution_type or "",
-                account.subtype or "",
-                account.name,
-                account.account_id,
-            ),
+        return self.storage.list_accounts(
+            book_id=book_id,
+            name=name,
+            type=type,
+            currency=currency,
+            institution_type=institution_type,
+            subtype=subtype,
+            institution=institution,
         )
 
     def get_account(self, token: str, account_id: str) -> Account:
-        account = self.ledger.get_account(account_id)
+        account = self.storage.get_account(account_id)
         self.actor_for_book(token, account.book_id, "account:read")
         return account
 
@@ -133,14 +115,8 @@ class AccountUseCases:
         if group_by not in allowed_groupings:
             raise ValidationError(f"group_by must be one of {sorted(allowed_groupings)}")
 
-        accounts = [
-            account
-            for account in self.ledger.accounts.values()
-            if account.book_id == DEFAULT_BOOK_ID
-            and (include_system or account.type in {"asset", "liability", "fund"})
-            and (currency is None or account.currency == currency)
-            and (institution_type is None or account.institution_type == institution_type)
-        ]
+        accounts = self.storage.list_accounts(book_id=DEFAULT_BOOK_ID, currency=currency, institution_type=institution_type)
+        accounts = [account for account in accounts if include_system or account.type in {"asset", "liability", "fund"}]
         balances = self.storage.account_balances(account.account_id for account in accounts)
 
         groups: dict[tuple[str, str], dict[str, Any]] = {}

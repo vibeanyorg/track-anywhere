@@ -55,7 +55,7 @@ def test_oauth_login_uses_incremental_persist(monkeypatch, tmp_path):
     def capture_login_state(**kwargs):
         saved_states.append(kwargs)
 
-    monkeypatch.setattr(service.storage, "save", fail_full_save)
+    monkeypatch.setattr(service.storage, "save_full_snapshot_for_legacy_bootstrap", fail_full_save)
     monkeypatch.setattr(service.storage, "save_auth_login_state", capture_login_state)
 
     login = service.login_oauth_identity(oauth_identity("incremental@example.com"), role="viewer")

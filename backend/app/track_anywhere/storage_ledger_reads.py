@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from copy import deepcopy
 from datetime import datetime
 from decimal import Decimal
 
@@ -24,6 +25,16 @@ class LedgerReadStorage:
         ids = sorted(set(account_ids))
         if not ids:
             return {}
+        cached_transactions = getattr(self, "_read_transactions", None)
+        if cached_transactions is not None:
+            totals: dict[tuple[str, str], Decimal] = {}
+            for transaction in cached_transactions.values():
+                for posting in transaction.postings:
+                    if posting.account_id not in ids:
+                        continue
+                    key = (posting.account_id, posting.currency)
+                    totals[key] = totals.get(key, Decimal("0")) + posting.amount
+            return totals
         totals: dict[tuple[str, str], Decimal] = {}
         with self.session_factory() as session:
             max_scale = _amount_scale_expression(session, PostingRecord.amount)
@@ -49,6 +60,9 @@ class LedgerReadStorage:
             return int(session.scalar(statement) or 0)
 
     def get_confirmed_transaction(self, transaction_id: str) -> Transaction | None:
+        cached = self._cached_get("transactions", transaction_id)
+        if cached is not None:
+            return cached
         transactions = self._load_confirmed_transactions([transaction_id])
         return transactions.get(transaction_id)
 
@@ -63,6 +77,23 @@ class LedgerReadStorage:
         limit = max(0, min(limit, 200))
         if limit == 0:
             return []
+        cached_transactions = getattr(self, "_read_transactions", None)
+        if cached_transactions is not None:
+            transactions = [transaction for transaction in cached_transactions.values() if transaction.book_id == book_id]
+            if account_id is not None:
+                transactions = [
+                    transaction
+                    for transaction in transactions
+                    if any(posting.account_id == account_id for posting in transaction.postings)
+                ]
+            if category_id is not None:
+                transactions = [
+                    transaction
+                    for transaction in transactions
+                    if any(line.category_id == category_id for line in transaction.lines)
+                ]
+            transactions.sort(key=lambda item: (item.occurred_at, item.transaction_id), reverse=True)
+            return deepcopy(transactions[:limit])
         with self.session_factory() as session:
             base_statement = select(TransactionRecord.transaction_id, TransactionRecord.occurred_at).where(
                 TransactionRecord.book_id == book_id

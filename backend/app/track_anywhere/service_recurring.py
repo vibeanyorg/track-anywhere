@@ -119,10 +119,10 @@ class RecurringUseCases:
             raise ValidationError("status must be active, paused, or cancelled")
         if kind is not None and kind not in {"paid", "reminder_only"}:
             raise ValidationError("kind must be paid or reminder_only")
-        return self.recurring.list(status=status, kind=kind, book_id=book_id)
+        return self.storage.list_recurring_items(status=status, kind=kind, book_id=book_id)
 
     def get_recurring_item(self, token: str, recurring_id: str) -> RecurringItem:
-        item = self.recurring.get(recurring_id)
+        item = self.storage.get_recurring_item(recurring_id)
         self.actor_for_book(token, item.book_id, "recurring:read")
         return item
 

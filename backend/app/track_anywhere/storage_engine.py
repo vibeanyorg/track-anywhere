@@ -34,6 +34,13 @@ def create_database_engine(database_url: str) -> Engine:
     kwargs: dict[str, Any] = {"connect_args": connect_args, "future": True}
     if is_sqlite and url.database == ":memory:":
         kwargs["poolclass"] = StaticPool
+    elif not is_sqlite:
+        kwargs.update(
+            pool_size=int(os.getenv("TRACK_ANYWHERE_DB_POOL_SIZE", "1")),
+            max_overflow=int(os.getenv("TRACK_ANYWHERE_DB_MAX_OVERFLOW", "0")),
+            pool_recycle=int(os.getenv("TRACK_ANYWHERE_DB_POOL_RECYCLE_SECONDS", "1800")),
+            pool_use_lifo=True,
+        )
     engine = create_engine(database_url, **kwargs)
     if is_sqlite:
         event.listen(engine, "connect", _enable_sqlite_secure_delete)

@@ -206,7 +206,7 @@ def test_security_failure_audit_uses_incremental_persist(monkeypatch):
     def fail_full_save(_service):
         raise AssertionError("security failure should not full-save service state")
 
-    monkeypatch.setattr(service.storage, "save", fail_full_save)
+    monkeypatch.setattr(service.storage, "save_full_snapshot_for_legacy_bootstrap", fail_full_save)
     monkeypatch.setattr(service.storage, "save_audit_event", saved_events.append)
     before = len(service.audit.events)
 

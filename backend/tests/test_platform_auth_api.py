@@ -128,7 +128,7 @@ def test_platform_oauth_token_exchange_uses_incremental_persist(monkeypatch):
     def capture_credential_event(credential, audit_event):
         saved.append((credential, audit_event))
 
-    monkeypatch.setattr(service.storage, "save", fail_full_save)
+    monkeypatch.setattr(service.storage, "save_full_snapshot_for_legacy_bootstrap", fail_full_save)
     monkeypatch.setattr(service.storage, "save_credential_and_audit_event", capture_credential_event)
 
     token = client.post(

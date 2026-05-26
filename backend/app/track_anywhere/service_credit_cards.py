@@ -11,11 +11,7 @@ from .ledger import Account
 class CreditCardUseCases:
     def list_credit_cards(self, token: str) -> list[dict[str, Any]]:
         self.actor_from_token(token, "credit-card:read")
-        accounts = [
-            account
-            for account in self.ledger.accounts.values()
-            if account.type == "liability" and account.subtype == "credit_card"
-        ]
+        accounts = self.storage.list_accounts(book_id=None, type="liability", subtype="credit_card")
         return [self._credit_card_overview(account.account_id) for account in sorted(accounts, key=lambda item: item.name)]
 
     def get_credit_card(self, token: str, account_id: str) -> dict[str, Any]:
@@ -73,15 +69,15 @@ class CreditCardUseCases:
         return result, replay
 
     def _require_credit_card_account(self, account_id: str) -> Account:
-        account = self.ledger.get_account(account_id)
+        account = self.storage.get_account(account_id)
         if account.type != "liability" or account.subtype != "credit_card":
             raise ValidationError("credit card profile requires a liability account with subtype credit_card")
         return account
 
     def _credit_card_overview(self, account_id: str, *, profile=None) -> dict[str, Any]:
         account = self._require_credit_card_account(account_id)
-        profile = profile if profile is not None else self.credit_cards.get_optional(account_id)
-        current_balance = self.ledger.balance(account_id).get(account.currency, Decimal("0"))
+        profile = profile if profile is not None else self.storage.get_credit_card_profile_optional(account_id)
+        current_balance = self.storage.account_balance(account_id).get(account.currency, Decimal("0"))
         credit_limit = profile.credit_limit if profile is not None else None
         derived_available_credit = credit_limit - current_balance if credit_limit is not None else None
         utilization_rate = None
@@ -90,7 +86,7 @@ class CreditCardUseCases:
         return {
             "account": account,
             "profile": profile,
-            "instruments": self.payment_instruments.list(book_id=account.book_id, account_id=account.account_id),
+            "instruments": self.storage.list_payment_instruments(book_id=account.book_id, account_id=account.account_id),
             "currency": account.currency,
             "current_balance": current_balance,
             "credit_limit": credit_limit,

@@ -257,7 +257,7 @@ def test_category_summary_uses_persisted_lines_only(tmp_path):
             Posting(expense_account.account_id, Decimal("12"), "CNY"),
         ],
     )
-    service._persist()
+    service._persist_ledger_change(transaction)
 
     assert transaction.lines == []
     summary = service.category_summary(token, kind="expense", currency="CNY")
@@ -265,7 +265,7 @@ def test_category_summary_uses_persisted_lines_only(tmp_path):
     assert summary["groups"] == []
     assert transaction.lines == []
     service._add_category_line_for_transaction(transaction, category)
-    service._persist()
+    service._persist_ledger_change(transaction)
 
     restarted = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
     restarted_summary = restarted.category_summary(token, kind="expense", currency="CNY")

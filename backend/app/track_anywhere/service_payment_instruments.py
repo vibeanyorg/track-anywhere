@@ -60,25 +60,25 @@ class PaymentInstrumentUseCases:
         status: str | None = "active",
     ):
         if account_id is not None:
-            account = self.ledger.get_account(account_id)
+            account = self.storage.get_account(account_id)
             book_id = account.book_id
         self.actor_for_book(token, book_id, "credit-card:read")
         if status is not None and status not in {"active", "hidden", "archived"}:
             raise ValidationError("status must be active, hidden, or archived")
-        return self.payment_instruments.list(book_id=book_id, account_id=account_id, status=status)
+        return self.storage.list_payment_instruments(book_id=book_id, account_id=account_id, status=status)
 
     def get_payment_instrument(self, token: str, instrument_id: str, *, include_inactive: bool = False):
         status = None if include_inactive else "active"
-        instrument = self.payment_instruments.get(instrument_id, status=status)
+        instrument = self.storage.get_payment_instrument(instrument_id, status=status)
         self.actor_for_book(token, instrument.book_id, "credit-card:read")
         return instrument
 
     def resolve_payment_instrument(self, token: str, instrument_ref: str, *, book_id: str = DEFAULT_BOOK_ID):
         self.actor_for_book(token, book_id, "credit-card:read")
         try:
-            instrument = self.payment_instruments.get(instrument_ref)
+            instrument = self.storage.get_payment_instrument(instrument_ref)
         except NotFound:
-            return self.payment_instruments.get_by_slug(book_id=book_id, slug=instrument_ref)
+            return self.storage.get_payment_instrument_by_slug(book_id=book_id, slug=instrument_ref)
         if instrument.book_id != book_id:
             raise NotFound(f"payment instrument not found in book: {book_id}/{instrument_ref}")
         return instrument

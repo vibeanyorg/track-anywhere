@@ -167,7 +167,7 @@ class PaymentProfileUseCases:
         self.actor_for_book(token, book_id, "ledger:read")
         if status is not None and status not in {"active", "hidden", "archived"}:
             raise ValidationError("status must be active, hidden, or archived")
-        return self.payment_profiles.list(book_id=book_id, status=status)
+        return self.storage.list_payment_profiles(book_id=book_id, status=status)
 
     def payment_profile_status(self, token: str, profile_ref: str, *, book_id: str = DEFAULT_BOOK_ID) -> dict[str, Any]:
         profile = self.resolve_payment_profile(token, profile_ref, book_id=book_id)
@@ -203,22 +203,22 @@ class PaymentProfileUseCases:
 
     def get_payment_profile(self, token: str, profile_id: str, *, include_inactive: bool = False) -> PaymentProfile:
         status = None if include_inactive else "active"
-        profile = self.payment_profiles.get(profile_id, status=status)
+        profile = self.storage.get_payment_profile(profile_id, status=status)
         self.actor_for_book(token, profile.book_id, "ledger:read")
         return profile
 
     def resolve_payment_profile(self, token: str, profile_ref: str, *, book_id: str = DEFAULT_BOOK_ID) -> PaymentProfile:
         self.actor_for_book(token, book_id, "ledger:read")
         try:
-            profile = self.payment_profiles.get(profile_ref)
+            profile = self.storage.get_payment_profile(profile_ref)
         except NotFound:
-            return self.payment_profiles.get_by_slug(book_id=book_id, slug=profile_ref)
+            return self.storage.get_payment_profile_by_slug(book_id=book_id, slug=profile_ref)
         if profile.book_id != book_id:
             raise NotFound(f"payment profile not found in book: {book_id}/{profile_ref}")
         return profile
 
     def _resolve_payment_profile_reference(self, profile_ref: str) -> PaymentProfile:
         try:
-            return self.payment_profiles.get(profile_ref)
+            return self.storage.get_payment_profile(profile_ref)
         except NotFound:
-            return self.payment_profiles.get_by_slug(book_id=DEFAULT_BOOK_ID, slug=profile_ref)
+            return self.storage.get_payment_profile_by_slug(book_id=DEFAULT_BOOK_ID, slug=profile_ref)
