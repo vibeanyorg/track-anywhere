@@ -169,6 +169,38 @@ class PaymentProfileUseCases:
             raise ValidationError("status must be active, hidden, or archived")
         return self.payment_profiles.list(book_id=book_id, status=status)
 
+    def payment_profile_status(self, token: str, profile_ref: str, *, book_id: str = DEFAULT_BOOK_ID) -> dict[str, Any]:
+        profile = self.resolve_payment_profile(token, profile_ref, book_id=book_id)
+        backing_balance = self.storage.account_balance(profile.backing_account_id).get(profile.backing_currency, Decimal("0"))
+        instrument_clearing_balance = self.storage.account_balance(profile.instrument_account_id).get(
+            profile.instrument_currency,
+            Decimal("0"),
+        )
+        effective_instrument_balance = backing_balance / profile.settlement_rate
+        return {
+            "payment": profile.slug,
+            "profile_id": profile.profile_id,
+            "display_name": profile.display_name,
+            "kind": profile.kind,
+            "settlement_mode": profile.settlement_mode,
+            "settlement_rate": profile.settlement_rate,
+            "backing_balance": {
+                "account_id": profile.backing_account_id,
+                "amount": backing_balance,
+                "currency": profile.backing_currency,
+            },
+            "effective_instrument_balance": {
+                "account_id": profile.instrument_account_id,
+                "amount": effective_instrument_balance,
+                "currency": profile.instrument_currency,
+            },
+            "instrument_clearing_balance": {
+                "account_id": profile.instrument_account_id,
+                "amount": instrument_clearing_balance,
+                "currency": profile.instrument_currency,
+            },
+        }
+
     def get_payment_profile(self, token: str, profile_id: str, *, include_inactive: bool = False) -> PaymentProfile:
         status = None if include_inactive else "active"
         profile = self.payment_profiles.get(profile_id, status=status)

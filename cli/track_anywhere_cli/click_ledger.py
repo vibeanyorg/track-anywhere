@@ -10,6 +10,7 @@ def register(root: click.Group) -> None:
     _draft_confirm(root)
     _transactions(root)
     _expense_income(root)
+    _payments(root)
     _balances(root)
 
 
@@ -190,8 +191,32 @@ def _record_command(group: click.Group, name: str = "record", command: str = "tx
 
 
 def _expense_income(root: click.Group) -> None:
-    _category_money_group(root, "expense", "from_account_id", ["--from-account-id", "--from"])
+    _expense_group(root)
     _category_money_group(root, "income", "to_account_id", ["--to-account-id", "--to"])
+
+
+def _expense_group(root: click.Group) -> None:
+    @root.group("expense")
+    def group():
+        pass
+
+    @group.command("record")
+    @click.option("--amount", required=True)
+    @click.option("--from-account-id", "--from", "from_account_id")
+    @click.option("--payment")
+    @click.option("--category-id", required=True)
+    @click.option("--purpose", required=True)
+    @click.option("--memo", default="")
+    @click.option("--occurred-at")
+    @click.option("--currency", default="CNY")
+    @click.option("--idempotency-key")
+    @output_options
+    @pass_state
+    def record_expense(state, json_mode, no_color, **kwargs):
+        if bool(kwargs.get("payment")) == bool(kwargs.get("from_account_id")):
+            raise click.UsageError("expense record requires exactly one of --payment or --from-account-id")
+        args = common_args(state, json_mode, no_color, command="expense", expense_command="record", **kwargs)
+        return run_api(args, state=state, command_path="expense.record")
 
 
 def _category_money_group(root: click.Group, group_name: str, account_dest: str, aliases: list[str]) -> None:
@@ -213,6 +238,72 @@ def _category_money_group(root: click.Group, group_name: str, account_dest: str,
     def record_category_money(state, json_mode, no_color, **kwargs):
         args = common_args(state, json_mode, no_color, command=group_name, **{f"{group_name}_command": "record"}, **kwargs)
         return run_api(args, state=state, command_path=f"{group_name}.record")
+
+
+def _payments(root: click.Group) -> None:
+    @root.group()
+    def payment():
+        """Manage payment profiles."""
+
+    @payment.group("profile")
+    def profile():
+        """Configure payment aliases."""
+
+    @profile.command("create")
+    @click.argument("slug")
+    @click.option("--display-name", required=True)
+    @click.option("--kind", default="token-backed-card", show_default=True)
+    @click.option("--instrument-account-id", required=True)
+    @click.option("--backing-account-id", required=True)
+    @click.option("--settlement-mode", default="immediate", show_default=True)
+    @click.option("--settlement-rate", default="1", show_default=True)
+    @click.option("--idempotency-key")
+    @output_options
+    @pass_state
+    def create_payment_profile(state, json_mode, no_color, slug, **kwargs):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="payment",
+            payment_command="profile",
+            profile_command="create",
+            slug=slug,
+            **kwargs,
+        )
+        return run_api(args, state=state, command_path="payment.profile.create")
+
+    @profile.command("list")
+    @click.option("--status", default="active")
+    @output_options
+    @pass_state
+    def list_payment_profiles(state, json_mode, no_color, status):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="payment",
+            payment_command="profile",
+            profile_command="list",
+            status=status,
+        )
+        return run_api(args, state=state, command_path="payment.profile.list")
+
+    @profile.command("status")
+    @click.argument("payment")
+    @output_options
+    @pass_state
+    def payment_profile_status(state, json_mode, no_color, payment):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="payment",
+            payment_command="profile",
+            profile_command="status",
+            payment=payment,
+        )
+        return run_api(args, state=state, command_path="payment.profile.status")
 
 
 def _balances(root: click.Group) -> None:

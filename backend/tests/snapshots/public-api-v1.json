@@ -260,6 +260,16 @@
     "/api/v1/oauth/token": [
       "post"
     ],
+    "/api/v1/payment-profiles": [
+      "get",
+      "post"
+    ],
+    "/api/v1/payment-profiles/{payment}/expenses": [
+      "post"
+    ],
+    "/api/v1/payment-profiles/{payment}/status": [
+      "get"
+    ],
     "/api/v1/query/accounts/{account_id}/balance": [
       "get"
     ],

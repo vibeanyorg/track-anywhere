@@ -66,10 +66,13 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
             key=command_idempotency_key(args, "tx-record"),
         )
     if args.command == "expense" and args.expense_command == "record":
+        uses_payment = bool(getattr(args, "payment", None))
+        uses_source_account = bool(getattr(args, "from_account_id", None))
+        if uses_payment == uses_source_account:
+            return 400, {"detail": "expense record requires exactly one of --payment or --from-account-id"}
         payload = {
             "amount": args.amount,
             "currency": args.currency,
-            "from_account_id": args.from_account_id,
             "category_id": args.category_id,
             "purpose": args.purpose,
         }
@@ -77,6 +80,15 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
             payload["memo"] = args.memo
         if args.occurred_at:
             payload["occurred_at"] = args.occurred_at
+        if uses_payment:
+            return requester(
+                config,
+                "POST",
+                f"/api/v1/payment-profiles/{urllib.parse.quote(args.payment)}/expenses",
+                payload,
+                key=command_idempotency_key(args, "payment-profile-expense"),
+            )
+        payload["from_account_id"] = args.from_account_id
         return requester(config, "POST", "/api/v1/expenses", payload, key=command_idempotency_key(args, "expense-record"))
     if args.command == "income" and args.income_command == "record":
         payload = {
@@ -171,6 +183,28 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
     if args.command == "balance" or (args.command == "account" and args.account_command == "balance"):
         suffix = "?include_drafts=true" if args.include_drafts else ""
         return requester(config, "GET", f"/api/v1/query/accounts/{args.account_id}/balance{suffix}")
+    if args.command == "payment" and args.payment_command == "profile" and args.profile_command == "create":
+        payload = {
+            "slug": args.slug,
+            "display_name": args.display_name,
+            "kind": args.kind.replace("-", "_"),
+            "instrument_account_id": args.instrument_account_id,
+            "backing_account_id": args.backing_account_id,
+            "settlement_mode": args.settlement_mode,
+            "settlement_rate": args.settlement_rate,
+        }
+        return requester(
+            config,
+            "POST",
+            "/api/v1/payment-profiles",
+            payload,
+            key=command_idempotency_key(args, "payment-profile-create"),
+        )
+    if args.command == "payment" and args.payment_command == "profile" and args.profile_command == "list":
+        path = with_query("/api/v1/payment-profiles", {"status": args.status})
+        return requester(config, "GET", path)
+    if args.command == "payment" and args.payment_command == "profile" and args.profile_command == "status":
+        return requester(config, "GET", f"/api/v1/payment-profiles/{urllib.parse.quote(args.payment)}/status")
     return None
 
 
