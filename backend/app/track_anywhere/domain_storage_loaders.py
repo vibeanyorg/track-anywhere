@@ -18,7 +18,7 @@ from .domain_storage_models import (
     ClassificationEventRecord,
     LedgerBookRecord,
 )
-from .storage_models import PaymentProfileRecord
+from .payment_profile_storage_models import PaymentProfileRecord
 
 
 class DomainStorageLoaders:

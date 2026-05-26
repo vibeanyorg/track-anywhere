@@ -11,6 +11,7 @@ from .click_catalog import register as register_catalog
 from .click_common import ClickState, Requester, output_options, pass_state
 from .click_investment import register as register_investment
 from .click_ledger import register as register_ledger
+from .click_payment import register as register_payment
 from .click_recurring import register as register_recurring
 from .click_system import register as register_system
 from .data_backup import create_data_backup
@@ -290,5 +291,6 @@ register_auth(cli)
 register_catalog(cli)
 register_investment(cli)
 register_ledger(cli)
+register_payment(cli)
 register_recurring(cli)
 register_system(cli)
