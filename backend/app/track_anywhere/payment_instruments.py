@@ -23,6 +23,7 @@ class PaymentInstrument:
 class PaymentInstrumentDirectory:
     def __init__(self) -> None:
         self.instruments: dict[str, PaymentInstrument] = {}
+        self._dirty_instrument_ids: set[str] = set()
 
     def create(
         self,
@@ -44,6 +45,7 @@ class PaymentInstrumentDirectory:
             last4=last4,
         )
         self.instruments[instrument.instrument_id] = instrument
+        self._dirty_instrument_ids.add(instrument.instrument_id)
         return instrument
 
     def get(self, instrument_id: str, *, status: str | None = "active") -> PaymentInstrument:
@@ -85,4 +87,11 @@ class PaymentInstrumentDirectory:
         return sorted(instruments, key=lambda item: (item.slug, item.instrument_id))
 
     def mark_clean(self) -> None:
-        return None
+        self._dirty_instrument_ids.clear()
+
+    def dirty_instruments(self) -> list[PaymentInstrument]:
+        return [
+            self.instruments[instrument_id]
+            for instrument_id in self._dirty_instrument_ids
+            if instrument_id in self.instruments
+        ]

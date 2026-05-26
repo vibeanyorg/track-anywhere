@@ -53,15 +53,15 @@ class FinancialUseCases(PaymentProfileUseCases):
             )
             return event
 
-        result = self.idempotency.run(
+        event, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="investment.event.record",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        self._persist_replay_or(replay, lambda: self._persist_investment_change(events=(event,)))
+        return event, replay
 
     def list_investment_events(self, token: str, account_id: str | None = None) -> list[InvestmentEvent]:
         if account_id is not None:
@@ -121,15 +121,15 @@ class FinancialUseCases(PaymentProfileUseCases):
             self.audit.record(operation="fund.create", actor=actor, entity_ref=fund.fund_id, details=command.model_dump())
             return fund
 
-        result = self.idempotency.run(
+        fund, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="fund.create",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        self._persist_replay_or(replay, lambda: self._persist_finance_change(funds=(fund,)))
+        return fund, replay
 
     def allocate_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = FundAllocationCommand.model_validate(payload)
@@ -164,15 +164,15 @@ class FinancialUseCases(PaymentProfileUseCases):
             )
             return {"fund": updated, "transaction": transaction}
 
-        result = self.idempotency.run(
+        result, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="fund.allocate",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        self._persist_replay_or(replay, lambda: self._persist_finance_change(funds=(result["fund"],), transactions=(result["transaction"],)))
+        return result, replay
 
     def spend_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = FundSpendCommand.model_validate(payload)
@@ -207,15 +207,15 @@ class FinancialUseCases(PaymentProfileUseCases):
             )
             return {"fund": updated, "transaction": transaction}
 
-        result = self.idempotency.run(
+        result, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="fund.spend",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        self._persist_replay_or(replay, lambda: self._persist_finance_change(funds=(result["fund"],), transactions=(result["transaction"],)))
+        return result, replay
 
     def upload_attachment(
         self,
@@ -253,15 +253,15 @@ class FinancialUseCases(PaymentProfileUseCases):
             )
             return {"attachment": attachment, "draft": draft}
 
-        result = self.idempotency.run(
+        result, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="attachment.upload",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        self._persist_replay_or(replay, lambda: self._persist_attachment_change(attachments=(result["attachment"],), drafts=(result["draft"],)))
+        return result, replay
 
     def record_reconciliation_action(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         actor = self.actor_from_token(token, "ledger:confirm")
@@ -283,12 +283,12 @@ class FinancialUseCases(PaymentProfileUseCases):
             )
             return action
 
-        result = self.idempotency.run(
+        action, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="reconciliation.record",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        self._persist_replay_or(replay, lambda: self._persist_finance_change(actions=(action,)))
+        return action, replay

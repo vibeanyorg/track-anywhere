@@ -22,15 +22,18 @@ class UserUseCases:
             )
             return user
 
-        result = self.idempotency.run(
+        user, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="user.create",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_user_change(user)
+        return user, replay
 
     def list_users(self, token: str) -> list[AppUser]:
         self.actor_from_token(token, "user:read")

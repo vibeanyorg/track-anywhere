@@ -59,15 +59,18 @@ class CreditCardUseCases:
             )
             return self._credit_card_overview(account_id, profile=profile)
 
-        result = self.idempotency.run(
+        result, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="credit_card.profile.update",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_credit_card_profile_change(result["profile"])
+        return result, replay
 
     def _require_credit_card_account(self, account_id: str) -> Account:
         account = self.ledger.get_account(account_id)

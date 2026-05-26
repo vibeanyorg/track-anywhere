@@ -28,6 +28,7 @@ class PaymentProfile:
 class PaymentProfileDirectory:
     def __init__(self) -> None:
         self.profiles: dict[str, PaymentProfile] = {}
+        self._dirty_profile_ids: set[str] = set()
 
     def create(
         self,
@@ -57,6 +58,7 @@ class PaymentProfileDirectory:
             settlement_rate=settlement_rate,
         )
         self.profiles[profile.profile_id] = profile
+        self._dirty_profile_ids.add(profile.profile_id)
         return profile
 
     def get(self, profile_id: str, *, status: str | None = "active") -> PaymentProfile:
@@ -90,5 +92,11 @@ class PaymentProfileDirectory:
         return sorted(profiles, key=lambda profile: (profile.slug, profile.profile_id))
 
     def mark_clean(self) -> None:
-        return None
+        self._dirty_profile_ids.clear()
 
+    def dirty_profiles(self) -> list[PaymentProfile]:
+        return [
+            self.profiles[profile_id]
+            for profile_id in self._dirty_profile_ids
+            if profile_id in self.profiles
+        ]

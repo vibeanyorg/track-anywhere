@@ -118,7 +118,7 @@ class FinanceService(
         )
 
     def _persist(self) -> None:
-        self.storage.save(self)
+        self.storage.save_full_snapshot_for_legacy_bootstrap(self)
         self.assets.mark_clean()
         self.credentials.mark_clean()
         self.ledger.mark_accounts_clean()
@@ -138,6 +138,48 @@ class FinanceService(
     def _persist_reclassification_change(self, transaction, line_id: str) -> None:
         self.storage.save_reclassification_change(self, transaction, line_id)
         self.ledger.transactions[transaction.transaction_id] = transaction
+
+    def _persist_user_change(self, *users) -> None:
+        self.storage.save_user_change(self, users)
+
+    def _persist_book_change(self) -> None:
+        self.storage.save_book_change(self)
+
+    def _persist_draft_change(self, *drafts, transactions=()) -> None:
+        self.storage.save_draft_change(self, drafts, transactions=transactions)
+
+    def _persist_recurring_change(self, *items, drafts=()) -> None:
+        self.storage.save_recurring_change(self, items, drafts=drafts)
+
+    def _persist_finance_change(self, *, funds=(), budgets: bool = False, transactions=(), actions=()) -> None:
+        self.storage.save_finance_change(
+            self,
+            funds=funds,
+            budgets=budgets,
+            transactions=transactions,
+            actions=actions,
+        )
+
+    def _persist_investment_change(self, *, events=(), valuations=(), transactions=()) -> None:
+        self.storage.save_investment_change(self, events=events, valuations=valuations, transactions=transactions)
+
+    def _persist_credit_card_profile_change(self, *profiles) -> None:
+        self.storage.save_credit_card_profile_change(self, profiles)
+
+    def _persist_payment_profile_change(self) -> None:
+        self.storage.save_payment_profile_change(self)
+
+    def _persist_credential_change(self) -> None:
+        self.storage.save_credential_change(self)
+
+    def _persist_attachment_change(self, *, attachments=(), drafts=()) -> None:
+        self.storage.save_attachment_change(self, attachments=attachments, drafts=drafts)
+
+    def _persist_replay_or(self, replay: bool, persist) -> None:
+        if replay:
+            self._persist_idempotency()
+        else:
+            persist()
 
     def _ensure_domain_foundations(self) -> None:
         self.books.ensure_default()

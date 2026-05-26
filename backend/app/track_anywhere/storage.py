@@ -26,6 +26,7 @@ from .storage_loaders import StorageLoaders
 from .storage_payment_instruments import PaymentInstrumentStorageMixin
 from .storage_payment_profiles import PaymentProfileStorageMixin
 from .storage_partial import PartialStorageWriters
+from .storage_uow import StorageUnitOfWork
 from .storage_models import (
     AdjustmentAccountRecord,
     AppStateRecord,
@@ -62,6 +63,9 @@ class OrmStorage(
         self.engine = create_database_engine(self.database_url)
         run_migrations(self.engine, Base.metadata)
         self.session_factory = sessionmaker(self.engine, expire_on_commit=False, future=True)
+
+    def unit_of_work(self) -> StorageUnitOfWork:
+        return StorageUnitOfWork(self)
 
     def save_audit_event(self, event: AuditEvent) -> None:
         with self.session_factory.begin() as session:
@@ -195,7 +199,7 @@ class OrmStorage(
                 service.owner_token = str(owner_state.value["token"])
                 service._startup_persist_required = True
 
-    def save(self, service: Any) -> None:
+    def save_full_snapshot_for_legacy_bootstrap(self, service: Any) -> None:
         with self.session_factory.begin() as session:
             session.execute(delete(AppStateRecord).where(AppStateRecord.key == "owner_token"))
             self._save_books(session, service.books)
@@ -271,6 +275,9 @@ class OrmStorage(
                 )
             for currency, account_id in service.adjustment_account_ids.items():
                 session.merge(AdjustmentAccountRecord(currency=currency, account_id=account_id))
+
+    def save(self, service: Any) -> None:
+        self.save_full_snapshot_for_legacy_bootstrap(service)
 
 __all__ = [
     "Base",

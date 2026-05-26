@@ -83,15 +83,18 @@ class FxUseCases:
             )
             return transaction
 
-        result = self.idempotency.run(
+        transaction, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="ledger.fx.exchange",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_ledger_change(transaction)
+        return transaction, replay
 
     def _system_fx_clearing_account_id(self, currency: str, *, book_id: str) -> str:
         for account in self.ledger.accounts.values():

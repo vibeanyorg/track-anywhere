@@ -46,15 +46,18 @@ class RecurringUseCases:
             )
             return item
 
-        result = self.idempotency.run(
+        item, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="recurring.create",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_recurring_change(item)
+        return item, replay
 
     def update_recurring_item(
         self,
@@ -90,15 +93,18 @@ class RecurringUseCases:
             )
             return candidate
 
-        result = self.idempotency.run(
+        item, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="recurring.update",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_recurring_change(item)
+        return item, replay
 
     def list_recurring_items(
         self,
@@ -177,15 +183,22 @@ class RecurringUseCases:
             )
             return result
 
-        result = self.idempotency.run(
+        result, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="recurring.draft.generate",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            draft_ids = [item["draft_id"] for item in result["created"]]
+            drafts = [self.drafts.drafts[draft_id] for draft_id in draft_ids]
+            recurring_ids = [item["recurring_id"] for item in result["created"]]
+            recurring_items = [self.recurring.items[recurring_id] for recurring_id in recurring_ids]
+            self._persist_recurring_change(*recurring_items, drafts=drafts)
+        return result, replay
 
     def _validate_recurring_references(self, command: CreateRecurringItemCommand, book_id: str) -> None:
         if command.kind != "paid":

@@ -59,9 +59,15 @@ class InvestmentUseCases:
             self.audit.record(operation="investment.event.record", actor=actor, entity_ref=event.event_id, details=command.model_dump(mode="json"))
             return event
 
-        result = self.idempotency.run(key=idempotency_key, actor=actor, operation="investment.event.record", request_hash=request_hash, fn=run)
-        self._persist()
-        return result
+        event, replay = self.idempotency.run(key=idempotency_key, actor=actor, operation="investment.event.record", request_hash=request_hash, fn=run)
+        if replay:
+            self._persist_idempotency()
+        else:
+            transactions = ()
+            if event.transaction_id in self.ledger.transactions:
+                transactions = (self.ledger.transactions[event.transaction_id],)
+            self._persist_investment_change(events=(event,), transactions=transactions)
+        return event, replay
 
     def _post_investment_event_transaction(self, command: RecordInvestmentEventCommand, book_id: str) -> str:
         assert command.cash_account_id is not None
@@ -134,9 +140,12 @@ class InvestmentUseCases:
             self.audit.record(operation="investment.valuation.record", actor=actor, entity_ref=valuation.valuation_id, details=command.model_dump(mode="json"))
             return valuation
 
-        result = self.idempotency.run(key=idempotency_key, actor=actor, operation="investment.valuation.record", request_hash=request_hash, fn=run)
-        self._persist()
-        return result
+        valuation, replay = self.idempotency.run(key=idempotency_key, actor=actor, operation="investment.valuation.record", request_hash=request_hash, fn=run)
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_investment_change(valuations=(valuation,))
+        return valuation, replay
 
     def list_investment_valuations(self, token: str, account_id: str) -> list[InvestmentValuation]:
         account = self.ledger.get_account(account_id)

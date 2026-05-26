@@ -24,15 +24,18 @@ class DraftUseCases:
             )
             return draft
 
-        result = self.idempotency.run(
+        draft, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="draft.capture",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_draft_change(draft)
+        return draft, replay
 
     def confirm_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[Transaction, bool]:
         command = ConfirmDraftCommand.model_validate(payload)
@@ -65,15 +68,18 @@ class DraftUseCases:
             )
             return transaction
 
-        result = self.idempotency.run(
+        transaction, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="draft.confirm",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_draft_change(draft, transactions=(transaction,))
+        return transaction, replay
 
     def reject_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = RejectDraftCommand.model_validate(payload)
@@ -93,15 +99,18 @@ class DraftUseCases:
             )
             return rejected
 
-        result = self.idempotency.run(
+        rejected, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="draft.reject",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_draft_change(rejected)
+        return rejected, replay
 
     def supersede_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         actor = self.actor_from_token(token, "capture:draft")
@@ -123,15 +132,18 @@ class DraftUseCases:
             )
             return replacement
 
-        result = self.idempotency.run(
+        replacement, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="draft.supersede",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_draft_change(current, replacement)
+        return replacement, replay
 
     def _draft_from_capture_command(self, command: CaptureDraftCommand, *, actor: Actor):
         proposed: list[Posting] = []

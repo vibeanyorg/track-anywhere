@@ -10,10 +10,12 @@ from .payment_instruments import PaymentInstrument
 
 class PaymentInstrumentStorageMixin:
     @staticmethod
-    def _iter_payment_instruments(service: Any) -> list[Any]:
+    def _iter_payment_instruments(service: Any, *, only_dirty: bool = False) -> list[Any]:
         instruments = getattr(service, "payment_instruments", None)
         if instruments is None:
             return []
+        if only_dirty and hasattr(instruments, "dirty_instruments"):
+            return list(instruments.dirty_instruments())
         if isinstance(instruments, dict):
             return list(instruments.values())
         container_instruments = getattr(instruments, "instruments", None)
@@ -50,8 +52,8 @@ class PaymentInstrumentStorageMixin:
             if hasattr(container, "mark_clean"):
                 container.mark_clean()
 
-    def _save_payment_instruments(self, session: Session, service: Any) -> None:
-        for instrument in self._iter_payment_instruments(service):
+    def _save_payment_instruments(self, session: Session, service: Any, *, only_dirty: bool = False) -> None:
+        for instrument in self._iter_payment_instruments(service, only_dirty=only_dirty):
             session.merge(
                 PaymentInstrumentRecord(
                     instrument_id=instrument.instrument_id,

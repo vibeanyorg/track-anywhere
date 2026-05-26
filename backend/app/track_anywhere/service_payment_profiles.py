@@ -154,7 +154,7 @@ class PaymentProfileUseCases:
         if replay:
             self._persist_idempotency()
         else:
-            self._persist()
+            self._persist_payment_profile_change()
         return profile, replay
 
     def list_payment_profiles(

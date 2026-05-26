@@ -151,15 +151,18 @@ class CredentialUseCases:
             )
             return {"revoked": True}
 
-        result = self.idempotency.run(
+        result, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="credential.revoke",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_credential_change()
+        return result, replay
 
     def revoke_credential_by_id_command(self, token: str, credential_id: str, payload: dict[str, Any], *, idempotency_key: str):
         actor = self.actor_from_token(token, "credential:write")
@@ -181,15 +184,18 @@ class CredentialUseCases:
             )
             return {"revoked": True, "credential_id": credential_id}
 
-        result = self.idempotency.run(
+        result, replay = self.idempotency.run(
             key=idempotency_key,
             actor=actor,
             operation="credential.revoke_by_id",
             request_hash=request_hash,
             fn=run,
         )
-        self._persist()
-        return result
+        if replay:
+            self._persist_idempotency()
+        else:
+            self._persist_credential_change()
+        return result, replay
 
     def record_security_failure(self, operation: str, details: dict[str, Any] | None = None) -> None:
         event = self.audit.record(operation=operation, actor=SYSTEM_ACTOR, entity_ref=None, details=details or {})

@@ -4,7 +4,7 @@ from collections.abc import Iterable
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import Numeric, case, cast, func, select
 
 from .domain_storage_models import TransactionLineRecord
 from .ledger import Posting, Transaction, TransactionLine
@@ -26,13 +26,19 @@ class LedgerReadStorage:
             return {}
         totals: dict[tuple[str, str], Decimal] = {}
         with self.session_factory() as session:
+            max_scale = _amount_scale_expression(session, PostingRecord.amount)
             rows = session.execute(
-                select(PostingRecord.account_id, PostingRecord.currency, PostingRecord.amount)
+                select(
+                    PostingRecord.account_id,
+                    PostingRecord.currency,
+                    func.sum(cast(PostingRecord.amount, Numeric)).label("amount"),
+                    max_scale.label("scale"),
+                )
                 .where(PostingRecord.account_id.in_(ids))
+                .group_by(PostingRecord.account_id, PostingRecord.currency)
             )
-            for account_id, currency, amount in rows:
-                key = (account_id, currency)
-                totals[key] = totals.get(key, Decimal("0")) + Decimal(amount)
+            for account_id, currency, amount, scale in rows:
+                totals[(account_id, currency)] = _canonical_decimal(Decimal(amount or 0), scale=int(scale or 0))
         return totals
 
     def confirmed_transaction_count(self, *, book_id: str | None = None) -> int:
@@ -205,3 +211,24 @@ class LedgerReadStorage:
             memo=row.memo,
             version=row.version,
         )
+
+
+def _canonical_decimal(value: Decimal, *, scale: int) -> Decimal:
+    if scale > 0:
+        return value.quantize(Decimal("1").scaleb(-scale))
+    normalized = value.normalize()
+    if normalized == normalized.to_integral_value():
+        return normalized.quantize(Decimal("1"))
+    return normalized
+
+
+def _amount_scale_expression(session, amount_column):
+    dialect_name = session.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        return func.max(func.length(func.split_part(amount_column, ".", 2)))
+    return func.max(
+        case(
+            (func.instr(amount_column, ".") > 0, func.length(amount_column) - func.instr(amount_column, ".")),
+            else_=0,
+        )
+    )

@@ -9,10 +9,12 @@ from .payment_profile_storage_models import PaymentProfileRecord
 
 class PaymentProfileStorageMixin:
     @staticmethod
-    def _iter_payment_profiles(service: Any) -> list[Any]:
+    def _iter_payment_profiles(service: Any, *, only_dirty: bool = False) -> list[Any]:
         profiles = getattr(service, "payment_profiles", None)
         if profiles is None:
             return []
+        if only_dirty and hasattr(profiles, "dirty_profiles"):
+            return list(profiles.dirty_profiles())
         if isinstance(profiles, dict):
             return list(profiles.values())
         container_profiles = getattr(profiles, "profiles", None)
@@ -33,8 +35,8 @@ class PaymentProfileStorageMixin:
             if hasattr(container, "mark_clean"):
                 container.mark_clean()
 
-    def _save_payment_profiles(self, session: Session, service: Any) -> None:
-        for profile in self._iter_payment_profiles(service):
+    def _save_payment_profiles(self, session: Session, service: Any, *, only_dirty: bool = False) -> None:
+        for profile in self._iter_payment_profiles(service, only_dirty=only_dirty):
             session.merge(
                 PaymentProfileRecord(
                     profile_id=profile.profile_id,

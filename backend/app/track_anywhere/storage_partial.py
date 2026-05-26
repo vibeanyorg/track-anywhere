@@ -9,9 +9,9 @@ class PartialStorageWriters:
     def save_idempotency(self, service: Any) -> None:
         dirty_credentials = service.credentials.dirty_credentials()
         dirty_receipts = service.idempotency.dirty_receipts()
-        with self.session_factory.begin() as session:
-            self._save_credentials(session, dirty_credentials)
-            self._save_idempotency_receipts(session, dirty_receipts)
+        with self.unit_of_work() as uow:
+            uow.idempotency.save_credentials(dirty_credentials)
+            uow.idempotency.save_receipts(dirty_receipts)
         service.credentials.mark_clean()
         service.idempotency.mark_clean()
 
@@ -22,21 +22,20 @@ class PartialStorageWriters:
         dirty_aliases, dirty_versions, dirty_events = service.categories.dirty_history()
         pending_events = service.audit.pending_events()
         dirty_receipts = service.idempotency.dirty_receipts()
-        with self.session_factory.begin() as session:
-            self._save_assets(session, dirty_assets)
-            self._save_categories(session, dirty_categories)
-            self._save_category_history(
-                session,
+        with self.unit_of_work() as uow:
+            uow.catalog.save_assets(dirty_assets)
+            uow.catalog.save_categories(dirty_categories)
+            uow.catalog.save_category_history(
                 service.categories,
                 aliases=dirty_aliases,
                 versions=dirty_versions,
                 events=dirty_events,
             )
             if hasattr(self, "_save_payment_instruments"):
-                self._save_payment_instruments(session, service)
-            self._save_credentials(session, dirty_credentials)
-            self._save_audit_events(session, pending_events)
-            self._save_idempotency_receipts(session, dirty_receipts)
+                uow.catalog.save_payment_instruments(service)
+            uow.idempotency.save_credentials(dirty_credentials)
+            uow.audit.save_events(pending_events)
+            uow.idempotency.save_receipts(dirty_receipts)
         service.credentials.mark_clean()
         service.assets.mark_clean()
         service.categories.mark_clean()
@@ -50,28 +49,147 @@ class PartialStorageWriters:
         dirty_aliases, dirty_versions, dirty_events = service.categories.dirty_history()
         pending_events = service.audit.pending_events()
         dirty_receipts = service.idempotency.dirty_receipts()
-        with self.session_factory.begin() as session:
-            self._save_assets(session, dirty_assets)
-            self._save_accounts(session, dirty_accounts)
-            self._save_transactions(session, transactions)
+        with self.unit_of_work() as uow:
+            uow.catalog.save_assets(dirty_assets)
+            uow.ledger.save_accounts(dirty_accounts)
+            uow.ledger.save_transactions(transactions)
             if include_category_history:
-                self._save_category_history(
-                    session,
+                uow.catalog.save_category_history(
                     service.categories,
                     aliases=dirty_aliases,
                     versions=dirty_versions,
                     events=dirty_events,
                 )
-            self._save_credentials(session, dirty_credentials)
-            self._save_audit_events(session, pending_events)
-            self._save_idempotency_receipts(session, dirty_receipts)
-            for currency, account_id in service.adjustment_account_ids.items():
-                session.merge(AdjustmentAccountRecord(currency=currency, account_id=account_id))
+            uow.idempotency.save_credentials(dirty_credentials)
+            uow.audit.save_events(pending_events)
+            uow.idempotency.save_receipts(dirty_receipts)
+            uow.ledger.save_adjustment_accounts(service.adjustment_account_ids)
         service.credentials.mark_clean()
         service.assets.mark_clean()
         service.ledger.mark_accounts_clean()
         if include_category_history:
             service.categories.mark_clean()
+        service.audit.mark_persisted()
+        service.idempotency.mark_clean()
+
+    def save_user_change(self, service: Any, users) -> None:
+        with self.unit_of_work() as uow:
+            uow.catalog.save_users(users)
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+        service.credentials.mark_clean()
+        service.audit.mark_persisted()
+        service.idempotency.mark_clean()
+
+    def save_book_change(self, service: Any) -> None:
+        with self.unit_of_work() as uow:
+            uow.catalog.save_books(service.books)
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+        service.credentials.mark_clean()
+        service.audit.mark_persisted()
+        service.idempotency.mark_clean()
+
+    def save_draft_change(self, service: Any, drafts, *, transactions=()) -> None:
+        with self.unit_of_work() as uow:
+            uow.catalog.save_drafts(drafts)
+            uow.ledger.save_transactions(transactions)
+            uow.ledger.save_accounts(service.ledger.dirty_accounts())
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+        service.credentials.mark_clean()
+        service.ledger.mark_accounts_clean()
+        service.audit.mark_persisted()
+        service.idempotency.mark_clean()
+
+    def save_recurring_change(self, service: Any, items, *, drafts=()) -> None:
+        with self.unit_of_work() as uow:
+            uow.catalog.save_recurring_items(items)
+            uow.catalog.save_drafts(drafts)
+            uow.ledger.save_accounts(service.ledger.dirty_accounts())
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+        service.credentials.mark_clean()
+        service.ledger.mark_accounts_clean()
+        service.audit.mark_persisted()
+        service.idempotency.mark_clean()
+
+    def save_finance_change(self, service: Any, *, funds=(), budgets=False, transactions=(), actions=()) -> None:
+        with self.unit_of_work() as uow:
+            uow.catalog.save_funds(funds)
+            if budgets:
+                uow.catalog.save_budgets(service.budgets)
+            uow.ledger.save_accounts(service.ledger.dirty_accounts())
+            uow.ledger.save_transactions(transactions)
+            uow.catalog.save_assets(service.assets.dirty_assets())
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+            uow.catalog.save_reconciliation_actions(actions)
+        service.credentials.mark_clean()
+        service.assets.mark_clean()
+        service.ledger.mark_accounts_clean()
+        service.audit.mark_persisted()
+        service.idempotency.mark_clean()
+
+    def save_investment_change(self, service: Any, *, events=(), valuations=(), transactions=()) -> None:
+        with self.unit_of_work() as uow:
+            uow.catalog.save_investment_events(events)
+            uow.catalog.save_investment_valuations(valuations)
+            uow.ledger.save_accounts(service.ledger.dirty_accounts())
+            uow.ledger.save_transactions(transactions)
+            uow.catalog.save_assets(service.assets.dirty_assets())
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+            uow.ledger.save_adjustment_accounts(service.adjustment_account_ids)
+        service.credentials.mark_clean()
+        service.assets.mark_clean()
+        service.ledger.mark_accounts_clean()
+        service.audit.mark_persisted()
+        service.idempotency.mark_clean()
+
+    def save_credit_card_profile_change(self, service: Any, profiles) -> None:
+        with self.unit_of_work() as uow:
+            uow.catalog.save_credit_card_profiles(profiles)
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+        service.credentials.mark_clean()
+        service.audit.mark_persisted()
+        service.idempotency.mark_clean()
+
+    def save_payment_profile_change(self, service: Any) -> None:
+        with self.unit_of_work() as uow:
+            uow.catalog.save_payment_profiles(service)
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+        service.credentials.mark_clean()
+        service.audit.mark_persisted()
+        service.idempotency.mark_clean()
+
+    def save_credential_change(self, service: Any) -> None:
+        with self.unit_of_work() as uow:
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+        service.credentials.mark_clean()
+        service.audit.mark_persisted()
+        service.idempotency.mark_clean()
+
+    def save_attachment_change(self, service: Any, *, attachments=(), drafts=()) -> None:
+        with self.unit_of_work() as uow:
+            uow.catalog.save_attachments(attachments)
+            uow.catalog.save_drafts(drafts)
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+        service.credentials.mark_clean()
         service.audit.mark_persisted()
         service.idempotency.mark_clean()
 
