@@ -35,6 +35,7 @@ from .service_reclassification import ReclassificationUseCases
 from .service_recurring import RecurringUseCases
 from .storage import OrmStorage, new_owner_token
 from .storage_json import to_jsonable
+from .payment_profiles import PaymentProfileDirectory
 from .users import UserDirectory
 
 
@@ -69,6 +70,7 @@ class FinanceService(
         self.assets = AssetCatalog()
         self.books = BookDirectory()
         self.ledger = Ledger(asset_scale_lookup=self.assets.scale_for)
+        self.payment_profiles = PaymentProfileDirectory()
         self.drafts = DraftBook()
         self.recurring = RecurringBook()
         self.budgets = BudgetBook()

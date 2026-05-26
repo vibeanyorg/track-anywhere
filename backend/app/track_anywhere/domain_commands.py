@@ -66,6 +66,26 @@ class CreateBudgetTargetCommand(StrictCommand):
     amount: Decimal | None = Field(default=None, gt=0)
     metadata: dict[str, str] = Field(default_factory=dict)
 
+
+class CreatePaymentProfileCommand(StrictCommand):
+    slug: str = Field(min_length=1, max_length=80)
+    display_name: str = Field(min_length=1, max_length=120)
+    kind: str = Field(min_length=1, max_length=40)
+    instrument_account_id: str
+    backing_account_id: str
+    settlement_mode: str = Field(min_length=1, max_length=40)
+    settlement_rate: Decimal = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _validate_first_version(self):
+        if self.kind != "token_backed_card":
+            raise ValueError("unsupported payment profile kind")
+        if self.settlement_mode != "immediate":
+            raise ValueError("unsupported payment profile settlement mode")
+        if self.settlement_rate != Decimal("1"):
+            raise ValueError("unsupported payment profile settlement rate")
+        return self
+
 class RecordFxExchangeCommand(StrictCommand):
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     from_account_id: str

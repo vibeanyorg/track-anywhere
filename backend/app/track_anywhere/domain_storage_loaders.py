@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
 from .books import BookMember, LedgerBook
 from .budgets import Budget, BudgetTarget
 from .category_models import CategoryAlias, CategoryVersion, ClassificationEvent
+from .payment_profiles import PaymentProfile
 from .domain_storage_models import (
     BookMemberRecord,
     BudgetRecord,
@@ -136,9 +136,9 @@ class DomainStorageLoaders:
         }
         return budgets, targets
 
-    def _load_payment_profiles(self, session: Session) -> dict[str, SimpleNamespace]:
+    def _load_payment_profiles(self, session: Session) -> dict[str, PaymentProfile]:
         return {
-            row.profile_id: SimpleNamespace(
+            row.profile_id: PaymentProfile(
                 profile_id=row.profile_id,
                 book_id=row.book_id,
                 slug=row.slug,

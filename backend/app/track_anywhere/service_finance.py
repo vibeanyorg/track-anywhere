@@ -15,11 +15,12 @@ from .commands import (
     RecordInvestmentEventCommand,
 )
 from .errors import NotFound, ValidationError
+from .service_payment_profiles import PaymentProfileUseCases
 from .investments import InvestmentEvent, investment_performance_report
 from .ledger import Posting
 
 
-class FinancialUseCases:
+class FinancialUseCases(PaymentProfileUseCases):
     def record_investment_event(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[InvestmentEvent, bool]:
         command = RecordInvestmentEventCommand.model_validate(payload)
         account = self.ledger.get_account(command.account_id)
