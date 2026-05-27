@@ -21,6 +21,7 @@ from .storage_partial import PartialStorageWriters
 from .storage_password_accounts import StoragePasswordAccountRepository
 from .storage_read_cache import StorageReadCache
 from .storage_snapshot_loader import StorageSnapshotLoader
+from .storage_system import SystemStatusStorageMixin
 from .storage_uow import StorageUnitOfWork
 from .storage_models import Base
 from .storage_writers import StorageWriters
@@ -37,6 +38,7 @@ class OrmStorage(
     PaymentProfileStorageMixin,
     DomainStorageLoaders,
     StorageSnapshotLoader,
+    SystemStatusStorageMixin,
     StorageLoaders,
     BackofficeReadStorage,
     CatalogReadStorage,

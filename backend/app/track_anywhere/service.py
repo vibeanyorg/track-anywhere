@@ -38,6 +38,7 @@ from .service_reclassification import ReclassificationUseCases
 from .service_reports import BookReportUseCases
 from .service_recurring import RecurringUseCases
 from .service_state_hydration import ServiceStateHydration
+from .service_system import SystemStatusUseCases
 from .storage import OrmStorage, new_owner_token
 from .payment_instruments import PaymentInstrumentDirectory
 from .payment_profiles import PaymentProfileDirectory
@@ -68,6 +69,7 @@ class FinanceService(
     FxUseCases,
     ReclassificationUseCases,
     LedgerUseCases,
+    SystemStatusUseCases,
 ):
     def __init__(
         self,

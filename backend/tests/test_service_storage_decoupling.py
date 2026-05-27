@@ -57,16 +57,24 @@ def test_storage_write_modules_do_not_read_service_dirty_state():
 
 def test_api_routers_do_not_access_storage_directly():
     offenders = []
-    allowed_files = {BACKEND / "api_routers/system.py"}
     pattern = re.compile(r"\bservice\.storage\b")
     for path in (BACKEND / "api_routers").glob("*.py"):
-        if path in allowed_files:
-            continue
         for line_number, line in enumerate(path.read_text().splitlines(), start=1):
             if pattern.search(line):
                 offenders.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: {line.strip()}")
 
     assert offenders == []
+
+
+def test_system_router_does_not_own_storage_or_migration_details():
+    source = (BACKEND / "api_routers/system.py").read_text()
+
+    assert "service.storage" not in source
+    assert "sqlalchemy" not in source
+    assert "alembic.config" not in source
+    assert "ScriptDirectory" not in source
+    assert "service.system_readiness()" in source
+    assert "service.system_status(token" in source
 
 
 def test_non_system_api_routers_do_not_import_runtime_service():

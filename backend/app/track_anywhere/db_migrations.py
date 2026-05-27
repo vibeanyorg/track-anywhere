@@ -77,6 +77,12 @@ def run_migrations(engine: Engine, metadata: MetaData | None = None) -> None:
         command.upgrade(config, "head")
 
 
+def current_alembic_head() -> str:
+    config = Config(str(ALEMBIC_INI))
+    config.set_main_option("script_location", str(ALEMBIC_DIR))
+    return str(ScriptDirectory.from_config(config).get_current_head())
+
+
 def _can_use_fast_test_schema(connection) -> bool:
     if os.getenv("TRACK_ANYWHERE_FAST_TEST_SCHEMA") != "1":
         return False
