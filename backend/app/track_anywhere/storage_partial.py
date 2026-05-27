@@ -47,15 +47,13 @@ class PartialStorageWriters:
     def save_ledger_change(self, service: Any, transactions, *, accounts=(), include_category_history: bool = False) -> None:
         dirty_credentials = service.credentials.dirty_credentials()
         dirty_assets = service.assets.dirty_assets()
-        dirty_accounts_by_id = {account.account_id: account for account in service.ledger.dirty_accounts()}
-        dirty_accounts_by_id.update({account.account_id: account for account in accounts})
-        dirty_accounts = list(dirty_accounts_by_id.values())
+        accounts = list(accounts)
         dirty_aliases, dirty_versions, dirty_events = service.categories.dirty_history()
         pending_events = service.audit.pending_events()
         dirty_receipts = service.idempotency.dirty_receipts()
         with self.unit_of_work() as uow:
             uow.catalog.save_assets(dirty_assets)
-            uow.ledger.save_accounts(dirty_accounts)
+            uow.ledger.save_accounts(accounts)
             uow.ledger.save_transactions(transactions)
             if include_category_history:
                 uow.catalog.save_category_history(
@@ -68,10 +66,9 @@ class PartialStorageWriters:
             uow.audit.save_events(pending_events)
             uow.idempotency.save_receipts(dirty_receipts)
             uow.ledger.save_adjustment_accounts(service.adjustment_account_ids)
-        self.update_read_cache(accounts=dirty_accounts, transactions=transactions)
+        self.update_read_cache(accounts=accounts, transactions=transactions)
         service.credentials.mark_clean()
         service.assets.mark_clean()
-        service.ledger.mark_accounts_clean()
         if include_category_history:
             service.categories.mark_clean()
         service.audit.mark_persisted()
@@ -98,77 +95,65 @@ class PartialStorageWriters:
         service.idempotency.mark_clean()
 
     def save_draft_change(self, service: Any, drafts, *, transactions=()) -> None:
-        dirty_accounts = service.ledger.dirty_accounts()
         with self.unit_of_work() as uow:
             uow.catalog.save_drafts(drafts)
             uow.ledger.save_transactions(transactions)
-            uow.ledger.save_accounts(dirty_accounts)
             uow.idempotency.save_credentials(service.credentials.dirty_credentials())
             uow.audit.save_events(service.audit.pending_events())
             uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
-        self.update_read_cache(accounts=dirty_accounts, transactions=transactions, drafts=drafts)
+        self.update_read_cache(transactions=transactions, drafts=drafts)
         service.credentials.mark_clean()
-        service.ledger.mark_accounts_clean()
         service.audit.mark_persisted()
         service.idempotency.mark_clean()
 
     def save_recurring_change(self, service: Any, items, *, drafts=(), accounts=()) -> None:
-        dirty_accounts_by_id = {account.account_id: account for account in service.ledger.dirty_accounts()}
-        dirty_accounts_by_id.update({account.account_id: account for account in accounts})
-        dirty_accounts = list(dirty_accounts_by_id.values())
+        accounts = list(accounts)
         with self.unit_of_work() as uow:
             uow.catalog.save_recurring_items(items)
             uow.catalog.save_drafts(drafts)
-            uow.ledger.save_accounts(dirty_accounts)
+            uow.ledger.save_accounts(accounts)
             uow.idempotency.save_credentials(service.credentials.dirty_credentials())
             uow.audit.save_events(service.audit.pending_events())
             uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
-        self.update_read_cache(accounts=dirty_accounts, drafts=drafts, recurring_items=items)
+        self.update_read_cache(accounts=accounts, drafts=drafts, recurring_items=items)
         service.credentials.mark_clean()
-        service.ledger.mark_accounts_clean()
         service.audit.mark_persisted()
         service.idempotency.mark_clean()
 
     def save_finance_change(self, service: Any, *, funds=(), budgets=False, transactions=(), accounts=(), actions=()) -> None:
-        dirty_accounts_by_id = {account.account_id: account for account in service.ledger.dirty_accounts()}
-        dirty_accounts_by_id.update({account.account_id: account for account in accounts})
-        dirty_accounts = list(dirty_accounts_by_id.values())
+        accounts = list(accounts)
         with self.unit_of_work() as uow:
             uow.catalog.save_funds(funds)
             if budgets:
                 uow.catalog.save_budgets(service.budgets)
-            uow.ledger.save_accounts(dirty_accounts)
+            uow.ledger.save_accounts(accounts)
             uow.ledger.save_transactions(transactions)
             uow.catalog.save_assets(service.assets.dirty_assets())
             uow.idempotency.save_credentials(service.credentials.dirty_credentials())
             uow.audit.save_events(service.audit.pending_events())
             uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
             uow.catalog.save_reconciliation_actions(actions)
-        self.update_read_cache(accounts=dirty_accounts, transactions=transactions)
+        self.update_read_cache(accounts=accounts, transactions=transactions)
         service.credentials.mark_clean()
         service.assets.mark_clean()
-        service.ledger.mark_accounts_clean()
         service.audit.mark_persisted()
         service.idempotency.mark_clean()
 
     def save_investment_change(self, service: Any, *, events=(), valuations=(), transactions=(), accounts=()) -> None:
-        dirty_accounts_by_id = {account.account_id: account for account in service.ledger.dirty_accounts()}
-        dirty_accounts_by_id.update({account.account_id: account for account in accounts})
-        dirty_accounts = list(dirty_accounts_by_id.values())
+        accounts = list(accounts)
         with self.unit_of_work() as uow:
             uow.catalog.save_investment_events(events)
             uow.catalog.save_investment_valuations(valuations)
-            uow.ledger.save_accounts(dirty_accounts)
+            uow.ledger.save_accounts(accounts)
             uow.ledger.save_transactions(transactions)
             uow.catalog.save_assets(service.assets.dirty_assets())
             uow.idempotency.save_credentials(service.credentials.dirty_credentials())
             uow.audit.save_events(service.audit.pending_events())
             uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
             uow.ledger.save_adjustment_accounts(service.adjustment_account_ids)
-        self.update_read_cache(accounts=dirty_accounts, transactions=transactions)
+        self.update_read_cache(accounts=accounts, transactions=transactions)
         service.credentials.mark_clean()
         service.assets.mark_clean()
-        service.ledger.mark_accounts_clean()
         service.audit.mark_persisted()
         service.idempotency.mark_clean()
 

@@ -18,3 +18,9 @@ def test_service_write_paths_do_not_stage_accounts_in_ledger_mirror():
                     offenders.append(f"{path.relative_to(repo_root)}:{line_number}: {line.strip()}")
 
     assert offenders == []
+
+
+def test_partial_writers_do_not_read_ledger_dirty_accounts():
+    source = (Path.cwd() / "backend/app/track_anywhere/storage_partial.py").read_text()
+
+    assert "ledger.dirty_accounts(" not in source
