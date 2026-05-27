@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..storage_changes import CredentialChanges, IdempotencyChanges, WriteMetadata
+from ..storage_changes import AuditChanges, CredentialChanges, IdempotencyChanges, WriteMetadata
 
 
 class StorageMetadataWriters:
@@ -12,6 +12,10 @@ class StorageMetadataWriters:
     def save_credential_change(self, changes: CredentialChanges) -> None:
         with self.unit_of_work() as uow:
             self._save_write_metadata(uow, changes.metadata)
+
+    def save_audit_change(self, changes: AuditChanges) -> None:
+        with self.unit_of_work() as uow:
+            uow.audit.save_events(changes.metadata.audit_events)
 
     @staticmethod
     def _save_write_metadata(uow, metadata: WriteMetadata) -> None:

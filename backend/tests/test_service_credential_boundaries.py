@@ -30,3 +30,10 @@ def test_credential_use_cases_are_context_scoped():
     assert "IssueCredentialCommand" not in source
     assert "RevokeCredentialCommand" not in source
     assert "secrets.token_urlsafe" not in source
+
+
+def test_security_failure_audit_uses_change_set_boundary():
+    source = (BACKEND / "service_credential_audit.py").read_text()
+
+    assert "self._commit_audit_event(event)" in source
+    assert "self.storage.save_audit_event" not in source

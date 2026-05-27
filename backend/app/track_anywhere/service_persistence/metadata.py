@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..storage_changes import CredentialChanges, IdempotencyChanges, WriteMetadata
+from ..storage_changes import AuditChanges, CredentialChanges, IdempotencyChanges, WriteMetadata
 
 
 class ServiceMetadataPersistence:
@@ -26,6 +26,11 @@ class ServiceMetadataPersistence:
     def _commit_credential_change(self) -> None:
         metadata = self._write_metadata()
         self.storage.save_credential_change(CredentialChanges(metadata=metadata))
+        self._mark_metadata_committed(metadata)
+
+    def _commit_audit_event(self, event) -> None:
+        metadata = WriteMetadata(audit_events=(event,))
+        self.storage.save_audit_change(AuditChanges(metadata=metadata))
         self._mark_metadata_committed(metadata)
 
     def _commit_replay_or(self, replay: bool, commit) -> None:

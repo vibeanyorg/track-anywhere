@@ -51,6 +51,11 @@ class CredentialChanges:
 
 
 @dataclass(frozen=True)
+class AuditChanges:
+    metadata: WriteMetadata = field(default_factory=WriteMetadata)
+
+
+@dataclass(frozen=True)
 class CatalogChanges:
     metadata: WriteMetadata = field(default_factory=WriteMetadata)
     assets: tuple[Any, ...] = ()

@@ -222,6 +222,7 @@ def test_storage_change_writers_accept_single_explicit_change_set():
         "save_startup_maintenance",
         "save_idempotency",
         "save_credential_change",
+        "save_audit_change",
         "save_catalog_change",
         "save_ledger_change",
         "save_reclassification_change",
