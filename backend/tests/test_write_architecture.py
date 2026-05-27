@@ -81,13 +81,25 @@ def test_backoffice_read_models_do_not_read_ledger_mirrors():
     repo_root = Path.cwd()
     path = repo_root / "backend/app/track_anywhere/api_routers/backoffice.py"
     offenders = []
-    patterns = [
-        re.compile(r"\bservice\.ledger\.transactions\b"),
-        re.compile(r"\bservice\.ledger\.accounts\b"),
-    ]
+    patterns = [re.compile(r"\bservice\.ledger\.transactions\b"), re.compile(r"\bservice\.ledger\.accounts\b")]
     for line_number, line in enumerate(path.read_text().splitlines(), start=1):
         if any(pattern.search(line) for pattern in patterns):
             offenders.append(f"{path.relative_to(repo_root)}:{line_number}: {line.strip()}")
+
+    assert offenders == []
+
+
+def test_startup_read_cache_is_not_hydrated_from_service_mirrors():
+    repo_root = Path.cwd()
+    offenders = []
+    checks = {
+        repo_root / "backend/app/track_anywhere/service.py": [re.compile(r"\brefresh_read_cache_from_service\b")],
+        repo_root / "backend/app/track_anywhere/storage_read_cache.py": [re.compile(r"\bservice\.ledger\.(accounts|transactions)\b")],
+    }
+    for path, patterns in checks.items():
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if any(pattern.search(line) for pattern in patterns):
+                offenders.append(f"{path.relative_to(repo_root)}:{line_number}: {line.strip()}")
 
     assert offenders == []
 
@@ -180,7 +192,7 @@ def test_common_writes_do_not_rebuild_read_projection_after_startup(tmp_path):
     def fail_read_projection_rebuild(_service):
         raise AssertionError("API write path rebuilt the full read projection")
 
-    service.storage.refresh_read_cache_from_service = fail_read_projection_rebuild
+    service.storage.refresh_read_cache_from_storage = fail_read_projection_rebuild
 
     cash, _ = service.create_account(
         token,

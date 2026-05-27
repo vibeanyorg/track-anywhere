@@ -93,7 +93,7 @@ class FinanceService(
         self._ensure_owner_credential()
         if persist_on_initialize or self._startup_persist_required:
             self._persist_startup_maintenance()
-        self.storage.refresh_read_cache_from_service(self)
+        self.storage.refresh_read_cache_from_storage()
 
     def actor_from_token(self, token: str | CredentialReference, required_scope: str | None = None) -> Actor:
         return self.credentials.verify(token, required_scope=required_scope)
