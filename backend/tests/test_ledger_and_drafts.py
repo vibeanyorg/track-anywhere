@@ -282,7 +282,7 @@ def test_category_summary_uses_persisted_lines_only(tmp_path):
     execution = restarted.budget_execution_report(token, "book_default", budget.budget_id)
     assert spending["groups"] == [{"key": "Food", "currency": "CNY", "amount": "12", "line_count": 1}]
     assert execution["spent"] == "12"
-    assert restarted.ledger.transactions[transaction.transaction_id].lines[0].category_id == category.category_id
+    assert restarted.storage.get_confirmed_transaction(transaction.transaction_id).lines[0].category_id == category.category_id
 
     with sqlite3.connect(tmp_path / "track-anywhere.sqlite3") as connection:
         line_count = connection.execute(

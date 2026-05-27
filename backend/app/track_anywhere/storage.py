@@ -14,7 +14,6 @@ from .db_migrations import run_migrations
 from .domain_storage_loaders import DomainStorageLoaders
 from .domain_storage_writers import DomainStorageWriters
 from . import storage_auth_models as _storage_auth_models
-from .ledger import Account
 from .storage_annotation_writers import AnnotationStorageWriters
 from .storage_auth import AuthStorageWriters
 from .storage_catalog_reads import CatalogReadStorage, _category_from_row
@@ -39,7 +38,6 @@ from .storage_models import (
     CreditCardProfileRecord,
     ReconciliationActionRecord,
     UserRecord,
-    AccountRecord,
 )
 from .storage_writers import StorageWriters
 from .users import AppUser
@@ -91,21 +89,6 @@ class OrmStorage(
                 for row in session.query(AssetRecord).all()
             })
             service.assets.ensure_defaults()
-            service.ledger.accounts = {
-                row.account_id: Account(
-                    account_id=row.account_id,
-                    book_id=row.book_id,
-                    name=row.name,
-                    type=row.type,
-                    currency=row.currency,
-                    institution_type=row.institution_type,
-                    subtype=row.subtype,
-                    institution=row.institution,
-                    version=row.version,
-                )
-                for row in session.query(AccountRecord).all()
-            }
-            service.ledger.mark_accounts_clean()
             service.users.users = {
                 row.user_id: AppUser(
                     user_id=row.user_id,
@@ -130,7 +113,6 @@ class OrmStorage(
                 )
                 for row in session.query(AuthIdentityRecord).all()
             }
-            service.ledger.transactions = self._load_transactions(session)
             service.drafts.drafts = self._load_drafts(session)
             service.recurring.items = self._load_recurring_items(session)
             service.budgets.funds = self._load_funds(session)
@@ -194,7 +176,6 @@ class OrmStorage(
             uow.catalog.delete_app_state("owner_token")
             uow.catalog.save_books(service.books)
             uow.catalog.save_assets(service.assets.dirty_assets())
-            uow.ledger.save_accounts(service.ledger.dirty_accounts())
             uow.catalog.save_categories(service.categories.dirty_categories())
             uow.catalog.save_category_history(
                 service.categories,

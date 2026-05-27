@@ -34,3 +34,11 @@ def test_startup_foundations_do_not_read_runtime_ledger_mirror():
 
     assert "self.ledger.accounts" not in source
     assert "self.ledger.transactions" not in source
+
+
+def test_storage_load_does_not_hydrate_runtime_ledger_mirror():
+    source = (Path.cwd() / "backend/app/track_anywhere/storage.py").read_text()
+
+    assert "service.ledger.accounts =" not in source
+    assert "service.ledger.transactions =" not in source
+    assert "ledger.dirty_accounts(" not in source

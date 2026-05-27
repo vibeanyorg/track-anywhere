@@ -190,4 +190,4 @@ def test_categories_and_transaction_links_persist(tmp_path):
     second = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
 
     assert second.get_category(token, child.category_id).secondary == "打车"
-    assert second.ledger.transactions[transaction.transaction_id].lines[0].category_id == child.category_id
+    assert second.storage.get_confirmed_transaction(transaction.transaction_id).lines[0].category_id == child.category_id

@@ -124,7 +124,6 @@ class FinanceService(
         self.storage.save_startup_maintenance(self)
         self.assets.mark_clean()
         self.credentials.mark_clean()
-        self.ledger.mark_accounts_clean()
         self.categories.mark_clean()
         self.audit.mark_persisted()
         self.idempotency.mark_clean()

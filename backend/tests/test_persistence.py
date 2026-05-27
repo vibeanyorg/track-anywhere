@@ -40,8 +40,8 @@ def test_sqlite_persistence_survives_service_restart(tmp_path):
     second = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
 
     assert second.actor_from_token(token, "account:read").actor_id == "owner"
-    assert second.ledger.get_account(cash.account_id).name == "Persisted Cash"
-    assert second.ledger.transactions[transaction.transaction_id].purpose == "lunch"
+    assert second.storage.get_account(cash.account_id).name == "Persisted Cash"
+    assert second.storage.get_confirmed_transaction(transaction.transaction_id).purpose == "lunch"
     assert second.account_balance(token, cash.account_id)["official_balance"]["amount"] == "75"
 
 
@@ -91,8 +91,8 @@ def test_confirmed_transactions_keep_memo_separate_from_purpose(tmp_path):
     assert transaction.memo == "Lunch with Alice, card ending 1234"
     assert no_memo_transaction.purpose == "snack"
     assert no_memo_transaction.memo == ""
-    assert restarted.ledger.transactions[transaction.transaction_id].memo == "Lunch with Alice, card ending 1234"
-    assert restarted.ledger.transactions[no_memo_transaction.transaction_id].memo == ""
+    assert restarted.storage.get_confirmed_transaction(transaction.transaction_id).memo == "Lunch with Alice, card ending 1234"
+    assert restarted.storage.get_confirmed_transaction(no_memo_transaction.transaction_id).memo == ""
 
 
 def test_idempotency_receipts_persist_across_restart(tmp_path):
@@ -237,7 +237,7 @@ def test_alembic_adopts_legacy_sqlite_schema_without_destroying_data(tmp_path):
 
     service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
 
-    account = service.ledger.get_account("acc_legacy")
+    account = service.storage.get_account("acc_legacy")
     assert account.name == "Legacy Cash"
     assert account.institution_type is None
 

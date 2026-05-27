@@ -107,7 +107,7 @@ def benchmark_current_incremental(service: FinanceService, state: dict[str, Any]
 
 def benchmark_legacy_full_state(service: FinanceService, state: dict[str, Any], iterations: int) -> list[float]:
     samples: list[float] = []
-    service.storage.load_into(service)
+    hydrate_legacy_full_state_for_benchmark(service)
     for index in range(iterations):
         started = time.perf_counter()
         service.ledger.create_transaction(
@@ -121,6 +121,18 @@ def benchmark_legacy_full_state(service: FinanceService, state: dict[str, Any], 
         persist_legacy_full_state_for_benchmark(service)
         samples.append(time.perf_counter() - started)
     return samples
+
+
+def hydrate_legacy_full_state_for_benchmark(service: FinanceService) -> None:
+    service.ledger.accounts = {
+        account.account_id: account
+        for account in service.storage.list_accounts(book_id=None)
+    }
+    transactions = {}
+    for book in service.books.books.values():
+        for transaction in service.storage.list_all_confirmed_transactions(book_id=book.book_id):
+            transactions[transaction.transaction_id] = transaction
+    service.ledger.transactions = transactions
 
 
 def persist_legacy_full_state_for_benchmark(service: FinanceService) -> None:
