@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 
@@ -29,3 +30,28 @@ def test_account_use_cases_are_context_scoped():
     assert "CreateAccountCommand" not in source
     assert "UpdateAccountMetadataCommand" not in source
     assert "build_transaction" not in source
+
+
+def test_account_use_cases_read_through_focused_repository():
+    checked_files = [
+        BACKEND / "service_account_queries.py",
+        BACKEND / "service_account_commands.py",
+    ]
+    offenders = []
+    forbidden = re.compile(r"\bself\.storage\.(get_account|list_accounts)\b")
+    for path in checked_files:
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if forbidden.search(line):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: {line.strip()}")
+
+    query_source = (BACKEND / "service_account_queries.py").read_text()
+    command_source = (BACKEND / "service_account_commands.py").read_text()
+    repository_source = (BACKEND / "storage_repositories/ledger.py").read_text()
+
+    assert offenders == []
+    assert "uow.accounts.list_accounts" in query_source
+    assert "uow.accounts.get_account" in query_source
+    assert "_get_account_from_storage(account_id)" in command_source
+    assert "class AccountRepository" in repository_source
+    assert "def list_accounts(" in repository_source
+    assert "def get_account(" in repository_source

@@ -5,16 +5,17 @@ from decimal import Decimal
 
 from .counterparty_storage_models import CounterpartyRecord
 from .credit_cards import CreditCardProfile
-from .storage_catalog_reads import _account_from_row, _category_from_row
+from .storage_catalog_reads import _category_from_row
 from .storage_models import AccountRecord, CategoryRecord, CreditCardProfileRecord
 from .storage_repositories.catalog import counterparty_from_record
+from .storage_repositories.ledger import account_from_record
 
 
 class StorageReadCache:
     def refresh_read_cache_from_storage(self) -> None:
         with self.session_factory() as session:
             self._read_accounts = {
-                row.account_id: _account_from_row(row)
+                row.account_id: account_from_record(row)
                 for row in session.query(AccountRecord).all()
             }
             self._read_transactions = self._load_transactions(session)

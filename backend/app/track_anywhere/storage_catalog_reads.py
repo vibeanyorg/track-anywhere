@@ -10,6 +10,7 @@ from .errors import NotFound, ValidationError
 from .ledger import Account
 from .recurring import RecurringItem
 from .storage_models import AccountRecord, CategoryRecord, CreditCardProfileRecord, RecurringItemRecord
+from .storage_repositories.ledger import account_from_record
 from .storage_repositories.workflow import recurring_item_from_record
 
 
@@ -29,7 +30,7 @@ class CatalogReadStorage:
         if accounts is None:
             with self.session_factory() as session:
                 rows = session.query(AccountRecord).all()
-            accounts = [_account_from_row(row) for row in rows]
+            accounts = [account_from_record(row) for row in rows]
         if book_id is not None:
             accounts = [account for account in accounts if account.book_id == book_id]
         if name:
@@ -69,7 +70,7 @@ class CatalogReadStorage:
             row = session.get(AccountRecord, account_id)
         if row is None:
             raise NotFound(f"account not found: {account_id}")
-        return _account_from_row(row)
+        return account_from_record(row)
 
     def list_categories(
         self,
@@ -174,20 +175,6 @@ class CatalogReadStorage:
         with self.session_factory() as session:
             row = session.get(CreditCardProfileRecord, account_id)
         return _credit_card_profile_from_row(row) if row is not None else None
-
-def _account_from_row(row: AccountRecord) -> Account:
-    return Account(
-        account_id=row.account_id,
-        book_id=row.book_id,
-        name=row.name,
-        type=row.type,
-        currency=row.currency,
-        institution_type=row.institution_type,
-        subtype=row.subtype,
-        institution=row.institution,
-        version=row.version,
-    )
-
 
 def _category_from_row(row: CategoryRecord) -> Category:
     primary, secondary = _category_names_from_path(row)

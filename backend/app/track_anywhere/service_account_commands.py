@@ -76,7 +76,7 @@ class AccountCommandUseCases:
         command = UpdateAccountMetadataCommand.model_validate(payload)
         if command.institution_type is None and command.subtype is None and command.institution is None:
             raise ValidationError("at least one account metadata field is required")
-        account = self.storage.get_account(account_id)
+        account = self._get_account_from_storage(account_id)
         actor = self.actor_for_book(token, account.book_id, "account:write")
         request_hash = self._hash_command_payload(command, {"account_id": account_id})
 

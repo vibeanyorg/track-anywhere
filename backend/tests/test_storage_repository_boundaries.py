@@ -7,12 +7,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND = REPO_ROOT / "backend/app/track_anywhere"
 
 
+def test_account_repository_owns_account_reads_and_writes():
+    source = (BACKEND / "storage_repositories/ledger.py").read_text()
+
+    assert "class AccountRepository" in source
+    assert "def list_accounts" in source
+    assert "def get_account" in source
+    assert "def save(self, accounts" in source
+    assert "self.storage._save_accounts" not in source
+
+
 def test_ledger_repository_owns_hot_ledger_writes():
     source = (BACKEND / "storage_repositories/ledger.py").read_text()
 
-    assert "def save_accounts" in source
     assert "def save_transactions" in source
-    assert "self.storage._save_accounts" not in source
     assert "self.storage._save_transactions" not in source
     assert "self.storage._save_transaction_postings" not in source
     assert "self.storage._replace_transaction_lines" not in source
@@ -88,3 +96,4 @@ def test_write_benchmark_does_not_depend_on_legacy_storage_writer_privates():
     assert "storage._save_transactions" not in source
     assert "storage._save_audit_events" not in source
     assert "storage.unit_of_work()" in source
+    assert "uow.accounts.save" in source

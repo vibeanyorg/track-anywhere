@@ -16,6 +16,6 @@ class WorkflowChangeStorageWriters:
         with self.unit_of_work() as uow:
             uow.recurring.save_items(changes.items)
             uow.drafts.save(changes.drafts)
-            uow.ledger.save_accounts(accounts)
+            uow.accounts.save(accounts)
             self._save_write_metadata(uow, changes.metadata)
         self.update_read_cache(accounts=accounts, drafts=changes.drafts, recurring_items=changes.items)

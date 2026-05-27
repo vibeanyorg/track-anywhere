@@ -21,7 +21,7 @@ class AccountQueryUseCases:
             self.actor_for_book(token, book_id, "account:read")
         else:
             self.actor_from_token(token, "account:read")
-        return self.storage.list_accounts(
+        return self._list_accounts_from_storage(
             book_id=book_id,
             name=name,
             type=type,
@@ -32,6 +32,32 @@ class AccountQueryUseCases:
         )
 
     def get_account(self, token: str, account_id: str) -> Account:
-        account = self.storage.get_account(account_id)
+        account = self._get_account_from_storage(account_id)
         self.actor_for_book(token, account.book_id, "account:read")
         return account
+
+    def _list_accounts_from_storage(
+        self,
+        *,
+        book_id: str | None = DEFAULT_BOOK_ID,
+        name: str | None = None,
+        type: str | None = None,
+        currency: str | None = None,
+        institution_type: str | None = None,
+        subtype: str | None = None,
+        institution: str | None = None,
+    ) -> list[Account]:
+        with self.storage.unit_of_work() as uow:
+            return uow.accounts.list_accounts(
+                book_id=book_id,
+                name=name,
+                type=type,
+                currency=currency,
+                institution_type=institution_type,
+                subtype=subtype,
+                institution=institution,
+            )
+
+    def _get_account_from_storage(self, account_id: str) -> Account:
+        with self.storage.unit_of_work() as uow:
+            return uow.accounts.get_account(account_id)

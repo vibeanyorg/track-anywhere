@@ -13,7 +13,7 @@ from .finance import (
     InvestmentRepository,
     ReconciliationRepository,
 )
-from .ledger import LedgerRepository, StateRepository
+from .ledger import AccountRepository, LedgerRepository, StateRepository
 from .payments import PaymentInstrumentRepository, PaymentProfileRepository
 from .security import (
     AuditRepository,

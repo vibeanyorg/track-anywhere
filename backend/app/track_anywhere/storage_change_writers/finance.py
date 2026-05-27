@@ -10,7 +10,7 @@ class FinanceChangeStorageWriters:
             uow.funds.save(changes.funds)
             if changes.budget_changes is not None:
                 uow.budgets.save(changes.budget_changes.budgets, changes.budget_changes.targets)
-            uow.ledger.save_accounts(accounts)
+            uow.accounts.save(accounts)
             uow.ledger.save_transactions(changes.transactions)
             uow.assets.save(changes.assets)
             self._save_write_metadata(uow, changes.metadata)
@@ -22,7 +22,7 @@ class FinanceChangeStorageWriters:
         with self.unit_of_work() as uow:
             uow.investments.save_events(changes.events)
             uow.investments.save_valuations(changes.valuations)
-            uow.ledger.save_accounts(accounts)
+            uow.accounts.save(accounts)
             uow.ledger.save_transactions(changes.transactions)
             uow.assets.save(changes.assets)
             self._save_write_metadata(uow, changes.metadata)

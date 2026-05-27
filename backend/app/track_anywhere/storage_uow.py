@@ -3,6 +3,7 @@ from __future__ import annotations
 from .storage_repositories import (
     AssetRepository,
     AttachmentRepository,
+    AccountRepository,
     AuditRepository,
     AuthIdentityRepository,
     BookRepository,
@@ -36,6 +37,7 @@ class StorageUnitOfWork:
     def __enter__(self):
         self._context = self.storage.session_factory.begin()
         self.session = self._context.__enter__()
+        self.accounts = AccountRepository(self.storage, self.session)
         self.ledger = LedgerRepository(self.storage, self.session)
         self.state = StateRepository(self.session)
         self.assets = AssetRepository(self.storage, self.session)
