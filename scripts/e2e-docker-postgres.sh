@@ -6,6 +6,8 @@ PROJECT_NAME="${TRACK_ANYWHERE_E2E_PROJECT:-track-anywhere-e2e-$$}"
 COMPOSE_FILE="$ROOT_DIR/compose.e2e.yaml"
 WORK_DIR="$(mktemp -d)"
 TOKEN_FILE="$WORK_DIR/machine-token"
+DOCKER_CLI_TIMEOUT_SECONDS="${TRACK_ANYWHERE_DOCKER_CLI_TIMEOUT_SECONDS:-20}"
+DOCKER_COMPOSE_TIMEOUT_SECONDS="${TRACK_ANYWHERE_DOCKER_COMPOSE_TIMEOUT_SECONDS:-900}"
 
 pick_port() {
   python - <<'PY'
@@ -28,13 +30,33 @@ TA=(uv run --extra postgres python -m track_anywhere_cli.main)
 PY=(uv run --extra postgres python)
 export PYTHONPATH="$ROOT_DIR/backend/app:$ROOT_DIR/cli${PYTHONPATH:+:$PYTHONPATH}"
 
+run_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+  python - "$timeout_seconds" "$@" <<'PY'
+import subprocess
+import sys
+
+timeout_seconds = float(sys.argv[1])
+command = sys.argv[2:]
+try:
+    raise SystemExit(subprocess.run(command, timeout=timeout_seconds).returncode)
+except subprocess.TimeoutExpired:
+    print(
+        f"command timed out after {timeout_seconds:g}s: {' '.join(command)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(124)
+PY
+}
+
 cleanup() {
   local exit_code=$?
   if [[ "$exit_code" -ne 0 ]]; then
-    "${COMPOSE[@]}" logs --no-color api postgres || true
+    run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" logs --no-color api postgres || true
   fi
   if [[ "${TRACK_ANYWHERE_E2E_KEEP:-0}" != "1" ]]; then
-    "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+    run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$WORK_DIR"
   else
     printf 'Keeping E2E project %s and work dir %s\n' "$PROJECT_NAME" "$WORK_DIR" >&2
@@ -79,7 +101,8 @@ PY
 }
 
 printf 'Starting Track Anywhere E2E stack on %s with Postgres port %s\n' "$API_URL" "$TRACK_ANYWHERE_E2E_POSTGRES_PORT"
-"${COMPOSE[@]}" up -d --build postgres api
+run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker version --format '{{.Server.Version}}' >/dev/null
+run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" up -d --build postgres api
 
 for _ in {1..90}; do
   if curl -fsS "$API_URL/api/v1/ready" >"$WORK_DIR/ready.json"; then
