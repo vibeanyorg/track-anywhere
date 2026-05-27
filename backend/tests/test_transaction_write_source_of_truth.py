@@ -99,12 +99,63 @@ def test_core_transaction_writes_use_storage_truth_when_memory_maps_are_stale(tm
     assert adjustment.postings[0].currency == "CNY"
 
 
+def test_fx_exchange_uses_storage_truth_when_memory_maps_are_stale(tmp_path):
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
+    token = service.owner_token
+    cny, _ = service.create_account(
+        token,
+        {"name": "FX Truth CNY", "type": "asset", "currency": "CNY", "opening_balance": "1000"},
+        idempotency_key="fx-truth-cny",
+    )
+    usd, _ = service.create_account(
+        token,
+        {"name": "FX Truth USD", "type": "asset", "currency": "USD"},
+        idempotency_key="fx-truth-usd",
+    )
+    fee, _ = service.create_account(
+        token,
+        {"name": "FX Truth Fee", "type": "expense", "currency": "CNY"},
+        idempotency_key="fx-truth-fee",
+    )
+
+    def fail_create_transaction(*_args, **_kwargs):
+        raise AssertionError("FX exchange called legacy in-memory transaction factory")
+
+    service.ledger.create_transaction = fail_create_transaction
+    service.ledger.accounts[cny.account_id].currency = "USD"
+    service.ledger.accounts[usd.account_id].book_id = "stale_book"
+    service.ledger.accounts[fee.account_id].type = "asset"
+
+    transaction, replay = service.record_fx_exchange(
+        token,
+        {
+            "from_account_id": cny.account_id,
+            "from_amount": "100",
+            "from_currency": "CNY",
+            "to_account_id": usd.account_id,
+            "to_amount": "10",
+            "to_currency": "USD",
+            "fee_account_id": fee.account_id,
+            "fee_amount": "2",
+            "memo": "storage truth fx",
+        },
+        idempotency_key="fx-truth-exchange",
+    )
+
+    assert replay is False
+    assert [line.line_type for line in transaction.lines] == ["fx_exchange", "fx_fee"]
+    assert Decimal(service.account_balance(token, cny.account_id)["official_balance"]["amount"]) == Decimal("898")
+    assert Decimal(service.account_balance(token, usd.account_id)["official_balance"]["amount"]) == Decimal("10")
+    assert Decimal(service.account_balance(token, fee.account_id)["official_balance"]["amount"]) == Decimal("2")
+
+
 def test_core_transaction_writes_do_not_use_in_memory_transaction_factory():
     repo_root = Path.cwd()
     files = [
         repo_root / "backend/app/track_anywhere/service_accounts.py",
         repo_root / "backend/app/track_anywhere/service_balances.py",
         repo_root / "backend/app/track_anywhere/service_drafts.py",
+        repo_root / "backend/app/track_anywhere/service_fx.py",
         repo_root / "backend/app/track_anywhere/service_ledger.py",
         repo_root / "backend/app/track_anywhere/service_payment_profiles.py",
     ]
