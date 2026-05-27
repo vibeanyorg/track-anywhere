@@ -56,7 +56,7 @@ def test_financial_use_cases_do_not_shadow_investment_use_cases():
 
 def test_core_ledger_write_use_cases_do_not_mutate_transaction_mirror():
     repo_root = Path.cwd()
-    paths = [
+    paths = list((repo_root / "backend/app/track_anywhere").glob("service_ledger*.py")) + [
         repo_root / "backend/app/track_anywhere/service.py",
         repo_root / "backend/app/track_anywhere/service_accounts.py",
         repo_root / "backend/app/track_anywhere/service_balances.py",
@@ -64,7 +64,6 @@ def test_core_ledger_write_use_cases_do_not_mutate_transaction_mirror():
         repo_root / "backend/app/track_anywhere/service_finance.py",
         repo_root / "backend/app/track_anywhere/service_fx.py",
         repo_root / "backend/app/track_anywhere/service_investments.py",
-        repo_root / "backend/app/track_anywhere/service_ledger.py",
         repo_root / "backend/app/track_anywhere/service_payment_profiles.py",
     ]
     offenders = []
