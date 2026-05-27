@@ -11,7 +11,7 @@ class FinanceChangeStorageWriters:
             if changes.budget_changes is not None:
                 uow.budgets.save(changes.budget_changes.budgets, changes.budget_changes.targets)
             uow.accounts.save(accounts)
-            uow.ledger.save_transactions(changes.transactions)
+            uow.transactions.save(changes.transactions)
             uow.assets.save(changes.assets)
             self._save_write_metadata(uow, changes.metadata)
             uow.reconciliation.save(changes.actions)
@@ -23,7 +23,7 @@ class FinanceChangeStorageWriters:
             uow.investments.save_events(changes.events)
             uow.investments.save_valuations(changes.valuations)
             uow.accounts.save(accounts)
-            uow.ledger.save_transactions(changes.transactions)
+            uow.transactions.save(changes.transactions)
             uow.assets.save(changes.assets)
             self._save_write_metadata(uow, changes.metadata)
             uow.ledger.save_adjustment_accounts(changes.adjustment_account_ids)

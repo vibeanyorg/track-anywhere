@@ -23,4 +23,5 @@ from .security import (
     PlatformGrantRepository,
     UserRepository,
 )
+from .transactions import TransactionRepository
 from .workflow import AttachmentRepository, DraftRepository, RecurringRepository

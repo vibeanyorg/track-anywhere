@@ -23,6 +23,7 @@ from .storage_repositories import (
     ReconciliationRepository,
     RecurringRepository,
     StateRepository,
+    TransactionRepository,
     UserRepository,
 )
 from .storage_password_accounts import StoragePasswordAccountRepository
@@ -38,6 +39,7 @@ class StorageUnitOfWork:
         self._context = self.storage.session_factory.begin()
         self.session = self._context.__enter__()
         self.accounts = AccountRepository(self.storage, self.session)
+        self.transactions = TransactionRepository(self.session)
         self.ledger = LedgerRepository(self.storage, self.session)
         self.state = StateRepository(self.session)
         self.assets = AssetRepository(self.storage, self.session)

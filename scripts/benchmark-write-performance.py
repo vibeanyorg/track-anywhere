@@ -141,7 +141,7 @@ def persist_legacy_full_state_for_benchmark(service: FinanceService) -> None:
         uow.books.save(service.books.books.values(), service.books.members.values())
         uow.assets.save(service.assets.assets.values())
         uow.accounts.save(service.ledger.accounts.values())
-        uow.ledger.save_transactions(service.ledger.transactions.values())
+        uow.transactions.save(service.ledger.transactions.values())
         uow.categories.save(service.categories.categories.values())
         uow.categories.save_history(
             aliases=service.categories.aliases.values(),

@@ -17,10 +17,13 @@ def test_account_repository_owns_account_reads_and_writes():
     assert "self.storage._save_accounts" not in source
 
 
-def test_ledger_repository_owns_hot_ledger_writes():
-    source = (BACKEND / "storage_repositories/ledger.py").read_text()
+def test_transaction_repository_owns_hot_ledger_reads_and_writes():
+    source = (BACKEND / "storage_repositories/transactions.py").read_text()
 
-    assert "def save_transactions" in source
+    assert "class TransactionRepository" in source
+    assert "def save(self, transactions" in source
+    assert "def list_confirmed_transactions" in source
+    assert "def get_confirmed_transaction" in source
     assert "self.storage._save_transactions" not in source
     assert "self.storage._save_transaction_postings" not in source
     assert "self.storage._replace_transaction_lines" not in source
@@ -106,3 +109,4 @@ def test_write_benchmark_does_not_depend_on_legacy_storage_writer_privates():
     assert "storage._save_audit_events" not in source
     assert "storage.unit_of_work()" in source
     assert "uow.accounts.save" in source
+    assert "uow.transactions.save" in source

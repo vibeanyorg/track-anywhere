@@ -7,7 +7,7 @@ class WorkflowChangeStorageWriters:
     def save_draft_change(self, changes: DraftChanges) -> None:
         with self.unit_of_work() as uow:
             uow.drafts.save(changes.drafts)
-            uow.ledger.save_transactions(changes.transactions)
+            uow.transactions.save(changes.transactions)
             self._save_write_metadata(uow, changes.metadata)
         self.update_read_cache(transactions=changes.transactions, drafts=changes.drafts)
 

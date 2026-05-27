@@ -10,7 +10,7 @@ from .budgets import BudgetFund
 from .drafts import DraftTransaction
 from .idempotency import CommandReceipt
 from .investments import InvestmentEvent, InvestmentValuation
-from .ledger import Posting, Transaction, TransactionLine
+from .ledger import Posting, TransactionLine
 from .recurring import RecurringItem
 from .security import Actor, Credential
 from .domain_storage_models import TransactionLineRecord
@@ -27,6 +27,7 @@ from .storage_models import (
     RecurringItemRecord,
     TransactionRecord,
 )
+from .storage_repositories.transactions import line_from_record, posting_from_record, transaction_from_record
 from .storage_repositories.workflow import recurring_item_from_record
 
 
@@ -34,43 +35,15 @@ class StorageLoaders:
     def _load_transactions(self, session: Session) -> dict[str, Transaction]:
         postings_by_transaction: dict[str, list[Posting]] = {}
         for posting in session.query(PostingRecord).order_by(PostingRecord.position).all():
-            postings_by_transaction.setdefault(posting.transaction_id, []).append(
-                Posting(posting.account_id, Decimal(posting.amount), posting.currency)
-            )
+            postings_by_transaction.setdefault(posting.transaction_id, []).append(posting_from_record(posting))
         lines_by_transaction: dict[str, list[TransactionLine]] = {}
         for line in session.query(TransactionLineRecord).order_by(TransactionLineRecord.position).all():
-            lines_by_transaction.setdefault(line.transaction_id, []).append(
-                TransactionLine(
-                    line_id=line.line_id,
-                    transaction_id=line.transaction_id,
-                    position=line.position,
-                    line_type=line.line_type,
-                    amount=Decimal(line.amount),
-                    currency=line.currency,
-                    book_id=line.book_id,
-                    category_id=line.category_id,
-                    category_version_id=line.category_version_id,
-                    category_path_snapshot=line.category_path_snapshot,
-                    counterparty_id=line.counterparty_id,
-                    project_id=line.project_id,
-                    necessity=line.necessity,
-                    reimbursement_status=line.reimbursement_status,
-                    memo=line.memo,
-                    version=line.version,
-                )
-            )
+            lines_by_transaction.setdefault(line.transaction_id, []).append(line_from_record(line))
         return {
-            row.transaction_id: Transaction(
-                transaction_id=row.transaction_id,
-                book_id=row.book_id,
-                memo=row.memo,
-                occurred_at=datetime.fromisoformat(row.occurred_at),
-                purpose=row.purpose,
-                postings=postings_by_transaction.get(row.transaction_id, []),
-                lines=lines_by_transaction.get(row.transaction_id, []),
-                reversed_by=row.reversed_by,
-                reverses_transaction_id=getattr(row, "reverses_transaction_id", None),
-                version=row.version,
+            row.transaction_id: transaction_from_record(
+                row,
+                postings_by_transaction.get(row.transaction_id, []),
+                lines_by_transaction.get(row.transaction_id, []),
             )
             for row in session.query(TransactionRecord).all()
         }
