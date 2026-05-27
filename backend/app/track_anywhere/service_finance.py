@@ -6,23 +6,18 @@ from decimal import Decimal
 from hashlib import sha256
 from typing import Any
 
+from . import commands
 from .books import DEFAULT_BOOK_ID
-from .commands import (
-    CreateFundCommand,
-    FundAllocationCommand,
-    FundSpendCommand,
-    ReconciliationActionCommand,
-    RecordInvestmentEventCommand,
-)
 from .errors import NotFound, ValidationError
 from .service_payment_profiles import PaymentProfileUseCases
 from .investments import InvestmentEvent, investment_performance_report
 from .ledger import Posting
+from .transaction_builder import build_transaction
 
 
 class FinancialUseCases(PaymentProfileUseCases):
     def record_investment_event(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[InvestmentEvent, bool]:
-        command = RecordInvestmentEventCommand.model_validate(payload)
+        command = commands.RecordInvestmentEventCommand.model_validate(payload)
         account = self.ledger.get_account(command.account_id)
         actor = self.actor_for_book(token, account.book_id, "investment:write")
         if account.type != "asset":
@@ -102,7 +97,7 @@ class FinancialUseCases(PaymentProfileUseCases):
 
     def create_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         actor = self.actor_for_book(token, DEFAULT_BOOK_ID, "budget:write")
-        command = CreateFundCommand.model_validate(payload)
+        command = commands.CreateFundCommand.model_validate(payload)
         self.assets.ensure(command.currency)
         request_hash = self._hash_command(command)
 
@@ -132,12 +127,12 @@ class FinancialUseCases(PaymentProfileUseCases):
         return fund, replay
 
     def allocate_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
-        command = FundAllocationCommand.model_validate(payload)
+        command = commands.FundAllocationCommand.model_validate(payload)
         fund = self.budgets.get(command.fund_id)
         if fund is None:
             raise NotFound(f"fund not found: {command.fund_id}")
         actor = self.actor_for_book(token, fund.book_id, "budget:write")
-        source = self.ledger.get_account(command.source_account_id)
+        source = self.storage.get_account(command.source_account_id)
         if source.book_id != fund.book_id:
             raise ValidationError("fund allocation account must belong to the fund book")
         if source.currency != command.currency or fund.currency != command.currency:
@@ -147,14 +142,19 @@ class FinancialUseCases(PaymentProfileUseCases):
 
         def run():
             current_fund = self.budgets.require_current(command.fund_id, command.expected_version)
-            transaction = self.ledger.create_transaction(
+            fund_account = self.storage.get_account(current_fund.account_id)
+            transaction = build_transaction(
                 memo=command.memo,
                 purpose="fund_allocation",
                 postings=[
                     Posting(command.source_account_id, -command.amount, command.currency),
                     Posting(current_fund.account_id, command.amount, command.currency),
                 ],
+                accounts=[source, fund_account],
+                book_id=fund.book_id,
+                scale_lookup=self.assets.scale_for,
             )
+            self.ledger.transactions[transaction.transaction_id] = transaction
             updated = self.budgets.allocate(command.fund_id, command.expected_version, command.amount, transaction.transaction_id)
             self.audit.record(
                 operation="fund.allocate",
@@ -175,12 +175,12 @@ class FinancialUseCases(PaymentProfileUseCases):
         return result, replay
 
     def spend_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
-        command = FundSpendCommand.model_validate(payload)
+        command = commands.FundSpendCommand.model_validate(payload)
         fund = self.budgets.get(command.fund_id)
         if fund is None:
             raise NotFound(f"fund not found: {command.fund_id}")
         actor = self.actor_for_book(token, fund.book_id, "budget:write")
-        expense = self.ledger.get_account(command.expense_account_id)
+        expense = self.storage.get_account(command.expense_account_id)
         if expense.book_id != fund.book_id:
             raise ValidationError("fund spend account must belong to the fund book")
         if expense.currency != command.currency or fund.currency != command.currency:
@@ -190,14 +190,19 @@ class FinancialUseCases(PaymentProfileUseCases):
 
         def run():
             current_fund = self.budgets.require_current(command.fund_id, command.expected_version)
-            transaction = self.ledger.create_transaction(
+            fund_account = self.storage.get_account(current_fund.account_id)
+            transaction = build_transaction(
                 memo=command.memo,
                 purpose="fund_spend",
                 postings=[
                     Posting(current_fund.account_id, -command.amount, command.currency),
                     Posting(command.expense_account_id, command.amount, command.currency),
                 ],
+                accounts=[fund_account, expense],
+                book_id=fund.book_id,
+                scale_lookup=self.assets.scale_for,
             )
+            self.ledger.transactions[transaction.transaction_id] = transaction
             updated = self.budgets.spend(command.fund_id, command.expected_version, command.amount, transaction.transaction_id)
             self.audit.record(
                 operation="fund.spend",
@@ -265,7 +270,7 @@ class FinancialUseCases(PaymentProfileUseCases):
 
     def record_reconciliation_action(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         actor = self.actor_from_token(token, "ledger:confirm")
-        command = ReconciliationActionCommand.model_validate(payload)
+        command = commands.ReconciliationActionCommand.model_validate(payload)
         request_hash = self._hash_command(command)
 
         def run():
