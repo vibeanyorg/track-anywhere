@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from ..storage_audit_idempotency_writers import save_audit_events, save_idempotency_receipts
+from ..storage_auth import save_credentials
 from ..storage_models import AuthIdentityRecord, UserRecord
 
 
@@ -44,27 +46,24 @@ class AuthIdentityRepository:
 
 
 class AuditRepository:
-    def __init__(self, storage, session) -> None:
-        self.storage = storage
+    def __init__(self, _storage, session) -> None:
         self.session = session
 
     def save_events(self, events: Iterable[Any]) -> None:
-        self.storage._save_audit_events(self.session, list(events))
+        save_audit_events(self.session, list(events))
 
 
 class CredentialRepository:
-    def __init__(self, storage, session) -> None:
-        self.storage = storage
+    def __init__(self, _storage, session) -> None:
         self.session = session
 
     def save(self, credentials: Iterable[Any]) -> None:
-        self.storage._save_credentials(self.session, credentials)
+        save_credentials(self.session, credentials)
 
 
 class IdempotencyRepository:
-    def __init__(self, storage, session) -> None:
-        self.storage = storage
+    def __init__(self, _storage, session) -> None:
         self.session = session
 
     def save_receipts(self, receipts: Iterable[Any]) -> None:
-        self.storage._save_idempotency_receipts(self.session, receipts)
+        save_idempotency_receipts(self.session, receipts)

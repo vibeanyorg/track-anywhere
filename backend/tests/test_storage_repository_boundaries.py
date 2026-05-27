@@ -62,6 +62,17 @@ def test_catalog_repositories_own_catalog_writes():
     assert all(item not in source for item in forbidden)
 
 
+def test_security_repositories_own_security_writes():
+    source = (BACKEND / "storage_repositories/security.py").read_text()
+
+    assert "def save_events" in source
+    assert "def save(self, credentials" in source
+    assert "def save_receipts" in source
+    assert "self.storage._save_audit_events" not in source
+    assert "self.storage._save_credentials" not in source
+    assert "self.storage._save_idempotency_receipts" not in source
+
+
 def test_write_benchmark_does_not_depend_on_legacy_storage_writer_privates():
     source = (REPO_ROOT / "scripts/benchmark-write-performance.py").read_text()
 

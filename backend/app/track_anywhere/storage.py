@@ -6,6 +6,7 @@ from .domain_storage_loaders import DomainStorageLoaders
 from .domain_storage_writers import DomainStorageWriters
 from . import storage_auth_models as _storage_auth_models
 from .storage_annotation_writers import AnnotationStorageWriters
+from .storage_audit_idempotency_writers import save_audit_events
 from .storage_auth import AuthStorageWriters
 from .storage_backoffice_reads import BackofficeReadStorage
 from .storage_catalog_reads import CatalogReadStorage
@@ -58,7 +59,7 @@ class OrmStorage(
 
     def save_audit_event(self, event: AuditEvent) -> None:
         with self.session_factory.begin() as session:
-            self._save_audit_events(session, [event])
+            save_audit_events(session, [event])
 
     def save_startup_maintenance(self, changes: StartupMaintenanceChanges) -> None:
         with self.unit_of_work() as uow:

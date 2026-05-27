@@ -3,6 +3,7 @@ from __future__ import annotations
 from .domain_storage_models import TransactionLineRecord
 from .errors import NotFound
 from .ledger import Transaction, TransactionLine
+from .storage_audit_idempotency_writers import save_audit_events, save_idempotency_receipts
 from .storage_changes import ReclassificationChanges
 from .storage_json import to_jsonable
 
@@ -18,8 +19,8 @@ class AnnotationStorageWriters:
                 versions=changes.category_history.versions,
                 events=changes.category_history.events,
             )
-            self._save_audit_events(session, changes.metadata.audit_events)
-            self._save_idempotency_receipts(session, changes.metadata.idempotency_receipts)
+            save_audit_events(session, changes.metadata.audit_events)
+            save_idempotency_receipts(session, changes.metadata.idempotency_receipts)
 
     def _upsert_transaction_line(self, session, line: TransactionLine) -> None:
         self._upsert_record(

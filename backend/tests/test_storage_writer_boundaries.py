@@ -31,3 +31,4 @@ def test_storage_writer_facade_stays_context_scoped():
     assert "LedgerStorageWriters" not in source
     assert "WorkflowStorageWriters" not in source
     assert "FinanceStorageWriters" not in source
+    assert "AuditIdempotencyStorageWriters" not in source

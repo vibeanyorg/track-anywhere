@@ -5,38 +5,44 @@ from .auth_identities import LinkedAuthIdentity
 from .domain_storage_models import BookMemberRecord, LedgerBookRecord
 from .oauth_grants import AuthorizationGrant, DeviceGrant
 from .security import Actor
+from .storage_audit_idempotency_writers import save_audit_events
 from .storage_auth_models import CredentialRecord
 from .storage_auth_models import OAuthAuthorizationGrantRecord, OAuthDeviceGrantRecord
 from .storage_json import to_jsonable
 from .storage_models import AuthIdentityRecord, UserRecord
+from .storage_upsert_writers import upsert_record
 from .users import AppUser
+
+
+def save_credentials(session, credentials) -> None:
+    for credential in credentials:
+        upsert_record(
+            session,
+            CredentialRecord,
+            {
+                "token_hash": credential.token_hash,
+                "actor_id": credential.actor.actor_id,
+                "actor_type": credential.actor.actor_type,
+                "scopes": sorted(credential.actor.scopes),
+                "issued_at": credential.issued_at.isoformat(),
+                "expires_at": credential.expires_at.isoformat(),
+                "jti": credential.jti,
+                "revoked_at": credential.revoked_at.isoformat() if credential.revoked_at else None,
+                "auth_kind": credential.auth_kind,
+                "name": credential.name,
+                "description": credential.description,
+                "key_prefix": credential.key_prefix,
+                "created_by_actor_id": credential.created_by_actor_id,
+                "last_used_at": credential.last_used_at.isoformat() if credential.last_used_at else None,
+                "rotated_from_jti": credential.rotated_from_jti,
+            },
+            ["token_hash"],
+        )
 
 
 class AuthStorageWriters:
     def _save_credentials(self, session, credentials) -> None:
-        for credential in credentials:
-            self._upsert_record(
-                session,
-                CredentialRecord,
-                {
-                    "token_hash": credential.token_hash,
-                    "actor_id": credential.actor.actor_id,
-                    "actor_type": credential.actor.actor_type,
-                    "scopes": sorted(credential.actor.scopes),
-                    "issued_at": credential.issued_at.isoformat(),
-                    "expires_at": credential.expires_at.isoformat(),
-                    "jti": credential.jti,
-                    "revoked_at": credential.revoked_at.isoformat() if credential.revoked_at else None,
-                    "auth_kind": credential.auth_kind,
-                    "name": credential.name,
-                    "description": credential.description,
-                    "key_prefix": credential.key_prefix,
-                    "created_by_actor_id": credential.created_by_actor_id,
-                    "last_used_at": credential.last_used_at.isoformat() if credential.last_used_at else None,
-                    "rotated_from_jti": credential.rotated_from_jti,
-                },
-                ["token_hash"],
-            )
+        save_credentials(session, credentials)
 
     def save_credential(self, credential) -> None:
         with self.session_factory.begin() as session:
@@ -45,7 +51,7 @@ class AuthStorageWriters:
     def save_credential_and_audit_event(self, credential, audit_event: AuditEvent) -> None:
         with self.session_factory.begin() as session:
             self._save_credentials(session, [credential])
-            self._save_audit_events(session, [audit_event])
+            save_audit_events(session, [audit_event])
 
     def save_credential_issue_state(self, *, book, member, credentials, audit_event: AuditEvent) -> None:
         with self.session_factory.begin() as session:
@@ -74,7 +80,7 @@ class AuthStorageWriters:
                 )
             )
             self._save_credentials(session, credentials)
-            self._save_audit_events(session, [audit_event])
+            save_audit_events(session, [audit_event])
 
     def save_authorization_grant(self, grant: AuthorizationGrant) -> None:
         with self.session_factory.begin() as session:
@@ -196,7 +202,7 @@ class AuthStorageWriters:
                 )
             )
             self._save_credentials(session, [credential])
-            self._save_audit_events(session, [audit_event])
+            save_audit_events(session, [audit_event])
 
 
 def _authorization_grant(row) -> AuthorizationGrant:
