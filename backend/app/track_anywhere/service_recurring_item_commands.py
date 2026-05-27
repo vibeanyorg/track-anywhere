@@ -67,7 +67,7 @@ class RecurringItemCommandUseCases:
         command = UpdateRecurringItemCommand.model_validate(payload)
         if not command.model_dump(exclude_none=True, exclude={"schema_version"}):
             raise ValidationError("at least one recurring item field is required")
-        item = self.storage.get_recurring_item(recurring_id)
+        item = self._get_recurring_item_from_storage(recurring_id)
         actor = self.actor_for_book(token, item.book_id, "recurring:write")
         request_hash = self._hash_command_payload(command, {"recurring_id": recurring_id})
 

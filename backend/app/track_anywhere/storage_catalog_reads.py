@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
 from decimal import Decimal
 
 from .books import DEFAULT_BOOK_ID
@@ -9,8 +8,9 @@ from .category_models import normalize_key
 from .credit_cards import CreditCardProfile
 from .errors import NotFound, ValidationError
 from .ledger import Account
-from .recurring import Recurrence, RecurringItem
+from .recurring import RecurringItem
 from .storage_models import AccountRecord, CategoryRecord, CreditCardProfileRecord, RecurringItemRecord
+from .storage_repositories.workflow import recurring_item_from_record
 
 
 class CatalogReadStorage:
@@ -146,7 +146,7 @@ class CatalogReadStorage:
         if items is None:
             with self.session_factory() as session:
                 rows = session.query(RecurringItemRecord).all()
-            items = [_recurring_item_from_row(row) for row in rows]
+            items = [recurring_item_from_record(row) for row in rows]
         if book_id is not None:
             items = [item for item in items if item.book_id == book_id]
         if status is not None:
@@ -163,7 +163,7 @@ class CatalogReadStorage:
             row = session.get(RecurringItemRecord, recurring_id)
         if row is None:
             raise NotFound(f"recurring item not found: {recurring_id}")
-        return _recurring_item_from_row(row)
+        return recurring_item_from_record(row)
 
     def get_credit_card_profile_optional(self, account_id: str) -> CreditCardProfile | None:
         cached = self._cached_get("credit_card_profiles", account_id)
@@ -216,32 +216,6 @@ def _category_names_from_path(row: CategoryRecord) -> tuple[str, str | None]:
     if row.level == 2 and len(parts) >= 2:
         return parts[0], parts[-1]
     return (parts[0] if parts else row.name), None
-
-
-def _recurring_item_from_row(row: RecurringItemRecord) -> RecurringItem:
-    return RecurringItem(
-        recurring_id=row.recurring_id,
-        name=row.name,
-        kind=row.kind,
-        status=row.status,
-        book_id=row.book_id,
-        amount=Decimal(row.amount) if row.amount is not None else None,
-        currency=row.currency,
-        provider=row.provider,
-        reference=row.reference,
-        recurrence=Recurrence(**row.recurrence),
-        reminder_days=list(row.reminder_days),
-        anchor_date=date.fromisoformat(row.anchor_date),
-        source_account_id=row.source_account_id,
-        category_id=row.category_id,
-        last_draft_renewal_date=(
-            date.fromisoformat(row.last_draft_renewal_date)
-            if row.last_draft_renewal_date
-            else None
-        ),
-        last_draft_id=row.last_draft_id,
-        version=row.version,
-    )
 
 
 def _credit_card_profile_from_row(row: CreditCardProfileRecord) -> CreditCardProfile:

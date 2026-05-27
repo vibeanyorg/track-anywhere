@@ -22,7 +22,7 @@ class RecurringReminderUseCases:
             payload["as_of"] = as_of
         command = CheckRecurringCommand.model_validate(payload)
         reminders = []
-        for item in self.storage.list_recurring_items(status="active", book_id=book_id):
+        for item in self._list_recurring_items_from_storage(status="active", book_id=book_id):
             for reminder in due_reminders(item, command.as_of, command.window_days):
                 reminders.append(self._recurring_reminder_payload(item, reminder))
         reminders.sort(key=lambda item: (item["reminder_date"], item["renewal_date"], item["name"]))

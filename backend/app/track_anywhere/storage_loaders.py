@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy.orm import Session
@@ -11,8 +11,10 @@ from .drafts import DraftTransaction
 from .idempotency import CommandReceipt
 from .investments import InvestmentEvent, InvestmentValuation
 from .ledger import Posting, Transaction, TransactionLine
-from .recurring import Recurrence, RecurringItem
+from .recurring import RecurringItem
 from .security import Actor, Credential
+from .domain_storage_models import TransactionLineRecord
+from .storage_auth_models import CredentialRecord
 from .storage_models import (
     AuditEventRecord,
     DraftPostingRecord,
@@ -25,8 +27,7 @@ from .storage_models import (
     RecurringItemRecord,
     TransactionRecord,
 )
-from .storage_auth_models import CredentialRecord
-from .domain_storage_models import TransactionLineRecord
+from .storage_repositories.workflow import recurring_item_from_record
 
 
 class StorageLoaders:
@@ -100,27 +101,7 @@ class StorageLoaders:
 
     def _load_recurring_items(self, session: Session) -> dict[str, RecurringItem]:
         return {
-            row.recurring_id: RecurringItem(
-                recurring_id=row.recurring_id,
-                name=row.name,
-                kind=row.kind,
-                status=row.status,
-                book_id=row.book_id,
-                amount=Decimal(row.amount) if row.amount is not None else None,
-                currency=row.currency,
-                provider=row.provider,
-                reference=row.reference,
-                recurrence=Recurrence(**row.recurrence),
-                reminder_days=list(row.reminder_days),
-                anchor_date=date.fromisoformat(row.anchor_date),
-                source_account_id=row.source_account_id,
-                category_id=row.category_id,
-                last_draft_renewal_date=(
-                    date.fromisoformat(row.last_draft_renewal_date) if row.last_draft_renewal_date else None
-                ),
-                last_draft_id=row.last_draft_id,
-                version=row.version,
-            )
+            row.recurring_id: recurring_item_from_record(row)
             for row in session.query(RecurringItemRecord).all()
         }
 

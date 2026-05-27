@@ -27,7 +27,7 @@ class RecurringDraftUseCases:
 
         def run():
             result = {"as_of": command.as_of.isoformat(), "created": [], "skipped": []}
-            for item in self.storage.list_recurring_items(status="active", book_id=book_id):
+            for item in self._list_recurring_items_from_storage(status="active", book_id=book_id):
                 renewal_date = last_renewal_date(item, command.as_of)
                 if renewal_date is None:
                     result["skipped"].append(self._recurring_skip(item, "not_due", None))

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
 from typing import Any, Iterable
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
+from ..errors import NotFound
+from ..recurring import Recurrence, RecurringItem
 from ..storage_json import to_jsonable
 from ..storage_models import AttachmentRecord, DraftPostingRecord, DraftRecord, RecurringItemRecord
 
@@ -49,6 +53,29 @@ class RecurringRepository:
     def __init__(self, _storage, session) -> None:
         self.session = session
 
+    def list_items(
+        self,
+        *,
+        status: str | None = None,
+        kind: str | None = None,
+        book_id: str | None = None,
+    ) -> list[RecurringItem]:
+        statement = select(RecurringItemRecord)
+        if book_id is not None:
+            statement = statement.where(RecurringItemRecord.book_id == book_id)
+        if status is not None:
+            statement = statement.where(RecurringItemRecord.status == status)
+        if kind is not None:
+            statement = statement.where(RecurringItemRecord.kind == kind)
+        items = [recurring_item_from_record(row) for row in self.session.scalars(statement)]
+        return sorted(items, key=lambda item: (item.status, item.name, item.recurring_id))
+
+    def get_item(self, recurring_id: str) -> RecurringItem:
+        row = self.session.get(RecurringItemRecord, recurring_id)
+        if row is None:
+            raise NotFound(f"recurring item not found: {recurring_id}")
+        return recurring_item_from_record(row)
+
     def save_items(self, items: Iterable[Any]) -> None:
         for item in items:
             recurrence = {"type": item.recurrence.type, "day": item.recurrence.day}
@@ -77,6 +104,30 @@ class RecurringRepository:
                     version=item.version,
                 )
             )
+
+
+def recurring_item_from_record(row: RecurringItemRecord) -> RecurringItem:
+    return RecurringItem(
+        recurring_id=row.recurring_id,
+        name=row.name,
+        kind=row.kind,
+        status=row.status,
+        book_id=row.book_id,
+        amount=Decimal(row.amount) if row.amount is not None else None,
+        currency=row.currency,
+        provider=row.provider,
+        reference=row.reference,
+        recurrence=Recurrence(**row.recurrence),
+        reminder_days=list(row.reminder_days),
+        anchor_date=date.fromisoformat(row.anchor_date),
+        source_account_id=row.source_account_id,
+        category_id=row.category_id,
+        last_draft_renewal_date=(
+            date.fromisoformat(row.last_draft_renewal_date) if row.last_draft_renewal_date else None
+        ),
+        last_draft_id=row.last_draft_id,
+        version=row.version,
+    )
 
 
 class AttachmentRepository:
