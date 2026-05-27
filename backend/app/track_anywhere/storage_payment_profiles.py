@@ -50,27 +50,6 @@ class PaymentProfileStorageMixin:
                 return profile
         raise NotFound(f"payment profile slug not found in book: {book_id}/{slug}")
 
-    def _save_payment_profiles(self, session: Session, profiles) -> None:
-        for profile in profiles:
-            session.merge(
-                PaymentProfileRecord(
-                    profile_id=profile.profile_id,
-                    book_id=profile.book_id,
-                    slug=profile.slug,
-                    display_name=profile.display_name,
-                    kind=profile.kind,
-                    instrument_account_id=profile.instrument_account_id,
-                    instrument_currency=profile.instrument_currency,
-                    backing_account_id=profile.backing_account_id,
-                    backing_currency=profile.backing_currency,
-                    settlement_mode=profile.settlement_mode,
-                    settlement_rate=str(profile.settlement_rate),
-                    status=profile.status,
-                    version=profile.version,
-                )
-            )
-
-
 def _payment_profile_from_row(row: PaymentProfileRecord) -> PaymentProfile:
     return PaymentProfile(
         profile_id=row.profile_id,

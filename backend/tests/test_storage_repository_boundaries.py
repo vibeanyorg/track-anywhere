@@ -40,6 +40,28 @@ def test_finance_repositories_own_finance_writes():
     assert "self.storage._save_investment_valuations" not in source
 
 
+def test_catalog_repositories_own_catalog_writes():
+    source = (BACKEND / "storage_repositories/catalog.py").read_text()
+
+    assert "def save(self, assets" in source
+    assert "def save(self, books" in source
+    assert "def save(self, categories" in source
+    assert "def save_history" in source
+    assert "def save(self, counterparties" in source
+    assert "def save(self, instruments" in source
+    assert "def save(self, profiles" in source
+    forbidden = [
+        "self.storage._save_assets",
+        "self.storage._save_books",
+        "self.storage._save_categories",
+        "self.storage._save_category_history",
+        "self.storage._save_counterparties",
+        "self.storage._save_payment_instruments",
+        "self.storage._save_payment_profiles",
+    ]
+    assert all(item not in source for item in forbidden)
+
+
 def test_write_benchmark_does_not_depend_on_legacy_storage_writer_privates():
     source = (REPO_ROOT / "scripts/benchmark-write-performance.py").read_text()
 

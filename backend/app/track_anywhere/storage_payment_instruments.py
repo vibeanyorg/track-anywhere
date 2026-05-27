@@ -58,23 +58,6 @@ class PaymentInstrumentStorageMixin:
                 return instrument
         raise NotFound(f"payment instrument slug not found in book: {book_id}/{slug}")
 
-    def _save_payment_instruments(self, session: Session, instruments) -> None:
-        for instrument in instruments:
-            session.merge(
-                PaymentInstrumentRecord(
-                    instrument_id=instrument.instrument_id,
-                    book_id=instrument.book_id,
-                    slug=instrument.slug,
-                    display_name=instrument.display_name,
-                    kind=instrument.kind,
-                    account_id=instrument.account_id,
-                    last4=instrument.last4,
-                    status=instrument.status,
-                    version=instrument.version,
-                )
-            )
-
-
 def _payment_instrument_from_row(row: PaymentInstrumentRecord) -> PaymentInstrument:
     return PaymentInstrument(
         instrument_id=row.instrument_id,

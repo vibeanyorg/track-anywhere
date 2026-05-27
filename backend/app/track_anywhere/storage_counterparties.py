@@ -76,21 +76,6 @@ class CounterpartyStorageMixin:
                 return counterparty
         raise NotFound(f"counterparty name not found in book: {book_id}/{name}")
 
-    def _save_counterparties(self, session: Session, counterparties) -> None:
-        for counterparty in counterparties:
-            session.merge(
-                CounterpartyRecord(
-                    counterparty_id=counterparty.counterparty_id,
-                    book_id=counterparty.book_id,
-                    slug=counterparty.slug,
-                    name=counterparty.name,
-                    kind=counterparty.kind,
-                    status=counterparty.status,
-                    version=counterparty.version,
-                )
-            )
-
-
 def _counterparty_from_row(row: CounterpartyRecord) -> Counterparty:
     return Counterparty(
         counterparty_id=row.counterparty_id,

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from .storage_changes import (
     AttachmentChanges,
     BookDirectoryChanges,
@@ -18,7 +16,6 @@ from .storage_changes import (
     UserChanges,
     WriteMetadata,
 )
-from .storage_models import AssetRecord, CategoryRecord
 
 
 class StorageMetadataWriters:
@@ -158,49 +155,6 @@ class ProfileChangeStorageWriters:
             self._save_write_metadata(uow, changes.metadata)
         self.update_read_cache(drafts=changes.drafts)
 
-
-class CoreEntityStorageWriters:
-    def _save_assets(self, session, assets) -> None:
-        for asset in assets:
-            self._upsert_record(
-                session,
-                AssetRecord,
-                {
-                    "asset_code": asset.asset_code,
-                    "kind": asset.kind,
-                    "scale": asset.scale,
-                    "display_scale": asset.display_scale if asset.display_scale is not None else asset.scale,
-                    "name": asset.name,
-                    "status": asset.status,
-                    "version": asset.version,
-                },
-                ["asset_code"],
-            )
-
-    def _save_categories(self, session, categories) -> None:
-        for category in categories:
-            self._upsert_record(
-                session,
-                CategoryRecord,
-                {
-                    "category_id": category.category_id,
-                    "book_id": category.book_id,
-                    "kind": category.kind,
-                    "parent_id": category.parent_id,
-                    "name": category.name,
-                    "normalized_name": category.normalized_name,
-                    "level": category.level,
-                    "path_cache": category.path_cache,
-                    "icon": category.icon,
-                    "color": category.color,
-                    "sort_order": category.sort_order,
-                    "status": category.status,
-                    "version": category.version,
-                },
-                ["category_id"],
-            )
-
-
 class PartialStorageWriters(
     StorageMetadataWriters,
     CatalogChangeStorageWriters,
@@ -209,6 +163,5 @@ class PartialStorageWriters(
     WorkflowChangeStorageWriters,
     FinanceChangeStorageWriters,
     ProfileChangeStorageWriters,
-    CoreEntityStorageWriters,
 ):
     pass

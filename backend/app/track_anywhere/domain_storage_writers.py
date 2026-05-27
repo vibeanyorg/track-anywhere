@@ -3,44 +3,14 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from .domain_storage_models import (
-    BookMemberRecord,
     CategoryAliasRecord,
     CategoryVersionRecord,
     ClassificationEventRecord,
-    LedgerBookRecord,
 )
 from .storage_json import to_jsonable
 
 
 class DomainStorageWriters:
-    def _save_books(self, session: Session, books, members) -> None:
-        for book in books:
-            session.merge(
-                LedgerBookRecord(
-                    book_id=book.book_id,
-                    name=book.name,
-                    kind=book.kind,
-                    base_currency=book.base_currency,
-                    timezone=book.timezone,
-                    status=book.status,
-                    template_key=book.template_key,
-                    settings=to_jsonable(book.settings),
-                    created_by=book.created_by,
-                    version=book.version,
-                )
-            )
-        for member in members:
-            session.merge(
-                BookMemberRecord(
-                    book_id=member.book_id,
-                    user_id=member.user_id,
-                    role=member.role,
-                    status=member.status,
-                    scopes=list(member.scopes),
-                    version=member.version,
-                )
-            )
-
     def _save_category_history(
         self,
         session: Session,
