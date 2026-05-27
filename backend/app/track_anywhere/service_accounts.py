@@ -179,7 +179,7 @@ class AccountUseCases:
         command = UpdateAccountMetadataCommand.model_validate(payload)
         if command.institution_type is None and command.subtype is None and command.institution is None:
             raise ValidationError("at least one account metadata field is required")
-        account = self.ledger.get_account(account_id)
+        account = self.storage.get_account(account_id)
         actor = self.actor_for_book(token, account.book_id, "account:write")
         request_hash = self._hash_command_payload(command, {"account_id": account_id})
 
@@ -191,6 +191,7 @@ class AccountUseCases:
             if command.institution is not None:
                 account.institution = command.institution
             account.version += 1
+            self.ledger.accounts[account.account_id] = account
             self.ledger.mark_account_dirty(account.account_id)
             self.audit.record(
                 operation="account.metadata.update",

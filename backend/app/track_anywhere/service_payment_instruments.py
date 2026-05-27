@@ -10,7 +10,7 @@ from .errors import NotFound, ValidationError
 class PaymentInstrumentUseCases:
     def create_payment_instrument(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = CreatePaymentInstrumentCommand.model_validate(payload)
-        account = self.ledger.get_account(command.account_id)
+        account = self.storage.get_account(command.account_id)
         actor = self.actor_for_book(token, account.book_id, "credit-card:write")
         self._validate_payment_instrument_account(command.kind, account)
         request_hash = self._hash_command(command)
