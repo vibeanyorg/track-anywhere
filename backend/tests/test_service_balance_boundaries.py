@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 
@@ -28,3 +29,17 @@ def test_balance_use_cases_are_context_scoped():
     assert "BalanceAdjustmentCommand" not in source
     assert "build_transaction" not in source
     assert "_system_adjustment_account" not in source
+
+
+def test_system_account_helpers_read_through_focused_repository():
+    source = (BACKEND / "service_balance_system_accounts.py").read_text()
+    forbidden = re.compile(r"\bself\.storage\.(get_account|list_accounts)\b")
+    offenders = [
+        f"service_balance_system_accounts.py:{line_number}: {line.strip()}"
+        for line_number, line in enumerate(source.splitlines(), start=1)
+        if forbidden.search(line)
+    ]
+
+    assert offenders == []
+    assert "_get_account_from_storage" in source
+    assert "_list_accounts_from_storage" in source

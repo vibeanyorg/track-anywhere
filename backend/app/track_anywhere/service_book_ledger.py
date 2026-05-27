@@ -9,13 +9,13 @@ from .errors import ValidationError
 class BookLedgerUseCases:
     def list_book_transactions(self, token: str, book_id: str, *, limit: int = 20) -> list[Any]:
         self.actor_for_book(token, book_id, "ledger:read")
-        return self.storage.list_confirmed_transactions(book_id=book_id, limit=limit)
+        return self._list_transactions_from_storage(book_id=book_id, limit=limit)
 
     def record_book_transaction(self, token: str, book_id: str, payload: dict[str, Any], *, idempotency_key: str):
         self.actor_for_book(token, book_id, "ledger:confirm")
         command = RecordTransactionCommand.model_validate(payload)
         for account_id in (command.from_account_id, command.to_account_id):
-            if self.storage.get_account(account_id).book_id != book_id:
+            if self._get_account_from_storage(account_id).book_id != book_id:
                 raise ValidationError("book transaction accounts must belong to the route book")
         return self.record_transaction(token, payload, idempotency_key=idempotency_key)
 

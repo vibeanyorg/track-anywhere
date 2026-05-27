@@ -11,7 +11,7 @@ from .transaction_builder import build_transaction
 class LedgerReversalUseCases:
     def reverse_transaction(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = ReverseTransactionCommand.model_validate(payload)
-        transaction = self.storage.get_confirmed_transaction(command.transaction_id)
+        transaction = self._get_transaction_from_storage(command.transaction_id)
         if transaction is None:
             raise NotFound(f"transaction not found: {command.transaction_id}")
         if transaction.reversed_by is not None:

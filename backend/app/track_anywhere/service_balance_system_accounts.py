@@ -14,7 +14,7 @@ class SystemAccountUseCases:
         account_id = self.adjustment_account_ids.get(key) or self.adjustment_account_ids.get(currency)
         if account_id is not None:
             try:
-                return self.storage.get_account(account_id)
+                return self._get_account_from_storage(account_id)
             except NotFound:
                 for account in created_accounts or ():
                     if account.account_id == account_id:
@@ -99,10 +99,10 @@ class SystemAccountUseCases:
             raise ValidationError("income category requires an income from-account")
 
     def _transaction_account(self, account_id: str):
-        return self.storage.get_account(account_id)
+        return self._get_account_from_storage(account_id)
 
     def _find_system_account(self, *, type: str, currency: str, book_id: str, subtype: str):
-        matches = self.storage.list_accounts(
+        matches = self._list_accounts_from_storage(
             book_id=book_id,
             type=type,
             currency=currency,

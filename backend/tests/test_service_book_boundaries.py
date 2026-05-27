@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 
@@ -30,3 +31,17 @@ def test_book_use_cases_are_context_scoped():
     assert "CreateBudgetCommand" not in source
     assert "RecordTransactionCommand" not in source
     assert "UpdateCategoryCommand" not in source
+
+
+def test_book_ledger_use_cases_read_through_focused_repositories():
+    source = (BACKEND / "service_book_ledger.py").read_text()
+    forbidden = re.compile(r"\bself\.storage\.(get_account|list_confirmed_transactions)\b")
+    offenders = [
+        f"service_book_ledger.py:{line_number}: {line.strip()}"
+        for line_number, line in enumerate(source.splitlines(), start=1)
+        if forbidden.search(line)
+    ]
+
+    assert offenders == []
+    assert "_get_account_from_storage" in source
+    assert "_list_transactions_from_storage" in source
