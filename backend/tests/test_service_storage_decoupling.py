@@ -63,10 +63,24 @@ def test_api_routers_do_not_access_storage_directly():
 def test_high_churn_ledger_router_uses_service_dependency_boundary():
     path = BACKEND / "api_routers/ledger.py"
     source = path.read_text()
+    ports = (BACKEND / "api_service_ports.py").read_text()
 
     assert "from ..api_runtime import service" not in source
-    assert "class LedgerRouteService(Protocol)" in source
-    assert "LedgerService = Annotated[LedgerRouteService, Depends(get_service)]" in source
+    assert "from ..api_service_ports import LedgerService" in source
+    assert "class LedgerRouteService(AuditRecorder, Protocol)" in ports
+    assert "LedgerService = Annotated[LedgerRouteService, Depends(get_service)]" in ports
+    assert "recorder=service" in source
+
+
+def test_high_churn_catalog_router_uses_service_dependency_boundary():
+    path = BACKEND / "api_routers/catalog.py"
+    source = path.read_text()
+    ports = (BACKEND / "api_service_ports.py").read_text()
+
+    assert "from ..api_runtime import service" not in source
+    assert "from ..api_service_ports import CatalogService" in source
+    assert "class CatalogRouteService(AuditRecorder, Protocol)" in ports
+    assert "CatalogService = Annotated[CatalogRouteService, Depends(get_service)]" in ports
     assert "recorder=service" in source
 
 
