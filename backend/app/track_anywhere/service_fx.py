@@ -89,7 +89,6 @@ class FxUseCases:
                     memo=command.memo,
                     scale_lookup=self.assets.scale_for,
                 )
-            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="ledger.fx.exchange",
                 actor=actor,

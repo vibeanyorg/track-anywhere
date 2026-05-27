@@ -72,7 +72,6 @@ class FinancialUseCases(PaymentProfileUseCases):
                 book_id=fund.book_id,
                 scale_lookup=self.assets.scale_for,
             )
-            self.ledger.transactions[transaction.transaction_id] = transaction
             updated = self.budgets.allocate(command.fund_id, command.expected_version, command.amount, transaction.transaction_id)
             self.audit.record(
                 operation="fund.allocate",
@@ -120,7 +119,6 @@ class FinancialUseCases(PaymentProfileUseCases):
                 book_id=fund.book_id,
                 scale_lookup=self.assets.scale_for,
             )
-            self.ledger.transactions[transaction.transaction_id] = transaction
             updated = self.budgets.spend(command.fund_id, command.expected_version, command.amount, transaction.transaction_id)
             self.audit.record(
                 operation="fund.spend",

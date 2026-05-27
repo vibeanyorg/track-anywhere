@@ -40,11 +40,14 @@ class InvestmentUseCases:
             if cash_account.type != "asset":
                 raise ValidationError("investment cash account must be an asset account")
         request_hash = self._hash_command(command)
+        created_transaction = None
 
         def run():
+            nonlocal created_transaction
             linked_transaction_id = command.transaction_id
             if command.cash_account_id is not None:
-                linked_transaction_id = self._post_investment_event_transaction(command, account.book_id)
+                created_transaction = self._post_investment_event_transaction(command, account.book_id)
+                linked_transaction_id = created_transaction.transaction_id
             event = self.investments.record(
                 book_id=account.book_id,
                 account_id=command.account_id,
@@ -64,13 +67,11 @@ class InvestmentUseCases:
         if replay:
             self._persist_idempotency()
         else:
-            transactions = ()
-            if event.transaction_id in self.ledger.transactions:
-                transactions = (self.ledger.transactions[event.transaction_id],)
+            transactions = (created_transaction,) if created_transaction is not None else ()
             self._persist_investment_change(events=(event,), transactions=transactions)
         return event, replay
 
-    def _post_investment_event_transaction(self, command: RecordInvestmentEventCommand, book_id: str) -> str:
+    def _post_investment_event_transaction(self, command: RecordInvestmentEventCommand, book_id: str):
         assert command.cash_account_id is not None
         cash_account = self.storage.get_account(command.cash_account_id)
         investment_account = self.storage.get_account(command.account_id)
@@ -116,8 +117,7 @@ class InvestmentUseCases:
             memo=command.memo,
             scale_lookup=self.assets.scale_for,
         )
-        self.ledger.transactions[transaction.transaction_id] = transaction
-        return transaction.transaction_id
+        return transaction
 
     def list_investment_events(self, token: str, account_id: str | None = None) -> list[InvestmentEvent]:
         if account_id is not None:

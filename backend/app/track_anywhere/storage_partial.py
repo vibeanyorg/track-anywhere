@@ -44,10 +44,12 @@ class PartialStorageWriters:
         service.audit.mark_persisted()
         service.idempotency.mark_clean()
 
-    def save_ledger_change(self, service: Any, transactions, *, include_category_history: bool = False) -> None:
+    def save_ledger_change(self, service: Any, transactions, *, accounts=(), include_category_history: bool = False) -> None:
         dirty_credentials = service.credentials.dirty_credentials()
         dirty_assets = service.assets.dirty_assets()
-        dirty_accounts = service.ledger.dirty_accounts()
+        dirty_accounts_by_id = {account.account_id: account for account in service.ledger.dirty_accounts()}
+        dirty_accounts_by_id.update({account.account_id: account for account in accounts})
+        dirty_accounts = list(dirty_accounts_by_id.values())
         dirty_aliases, dirty_versions, dirty_events = service.categories.dirty_history()
         pending_events = service.audit.pending_events()
         dirty_receipts = service.idempotency.dirty_receipts()

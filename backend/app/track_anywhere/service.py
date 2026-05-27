@@ -135,12 +135,16 @@ class FinanceService(
     def _persist_catalog_change(self) -> None:
         self.storage.save_catalog_change(self)
 
-    def _persist_ledger_change(self, *transactions, include_category_history: bool = False) -> None:
-        self.storage.save_ledger_change(self, transactions, include_category_history=include_category_history)
+    def _persist_ledger_change(self, *transactions, accounts=(), include_category_history: bool = False) -> None:
+        self.storage.save_ledger_change(
+            self,
+            transactions,
+            accounts=accounts,
+            include_category_history=include_category_history,
+        )
 
     def _persist_reclassification_change(self, transaction, line_id: str) -> None:
         self.storage.save_reclassification_change(self, transaction, line_id)
-        self.ledger.transactions[transaction.transaction_id] = transaction
         self.storage.update_read_cache(transactions=(transaction,))
 
     def _persist_user_change(self, *users) -> None:

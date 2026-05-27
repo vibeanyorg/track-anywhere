@@ -61,6 +61,8 @@ def test_fund_flows_use_storage_truth_when_memory_maps_are_stale(tmp_path):
     assert replay is False
     assert allocation["transaction"].purpose == "fund_allocation"
     assert spend["transaction"].purpose == "fund_spend"
+    assert allocation["transaction"].transaction_id not in service.ledger.transactions
+    assert spend["transaction"].transaction_id not in service.ledger.transactions
     assert Decimal(service.account_balance(token, cash.account_id)["official_balance"]["amount"]) == Decimal("60")
     assert Decimal(service.account_balance(token, fund.account_id)["official_balance"]["amount"]) == Decimal("25")
     assert Decimal(service.account_balance(token, expense.account_id)["official_balance"]["amount"]) == Decimal("15")

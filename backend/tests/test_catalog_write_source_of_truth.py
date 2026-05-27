@@ -34,6 +34,7 @@ def test_account_metadata_update_uses_storage_truth_when_memory_map_is_stale(tmp
     assert replay is False
     assert updated.book_id == original_book_id
     assert updated.subtype == "debit_card"
+    assert service.ledger.accounts[account.account_id].subtype == "stale_subtype"
     assert persisted.subtype == "debit_card"
     assert persisted.institution == "Storage Truth Bank"
 

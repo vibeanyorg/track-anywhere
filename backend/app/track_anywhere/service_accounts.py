@@ -51,7 +51,6 @@ class AccountUseCases:
                     book_id=book_id,
                     scale_lookup=self.assets.scale_for,
                 )
-                self.ledger.transactions[transaction.transaction_id] = transaction
                 created_transactions.append(transaction)
             self.audit.record(
                 operation="account.create",
@@ -191,8 +190,6 @@ class AccountUseCases:
             if command.institution is not None:
                 account.institution = command.institution
             account.version += 1
-            self.ledger.accounts[account.account_id] = account
-            self.ledger.mark_account_dirty(account.account_id)
             self.audit.record(
                 operation="account.metadata.update",
                 actor=actor,
@@ -211,5 +208,5 @@ class AccountUseCases:
         if replay:
             self._persist_idempotency()
         else:
-            self._persist_ledger_change()
+            self._persist_ledger_change(accounts=(account,))
         return account, replay

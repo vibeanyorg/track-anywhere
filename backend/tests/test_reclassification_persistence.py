@@ -48,6 +48,7 @@ def test_reclassification_uses_database_line_not_dirty_memory(tmp_path):
     assert replay is False
     assert updated.lines[0].line_id == line_id
     assert updated.lines[0].category_id == dining.category_id
+    assert updated.transaction_id not in service.ledger.transactions
     with sqlite3.connect(database_path) as connection:
         rows = connection.execute(
             """

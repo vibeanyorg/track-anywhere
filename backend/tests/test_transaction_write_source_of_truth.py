@@ -30,6 +30,7 @@ def test_account_opening_balance_does_not_use_in_memory_transaction_factory(tmp_
         for transaction in service.list_transactions(token, limit=10)
         if transaction.purpose == "opening_balance"
     )
+    assert opening.transaction_id not in service.ledger.transactions
     assert [(posting.account_id, str(posting.amount), posting.currency) for posting in opening.postings][0] == (
         account.account_id,
         "42",
@@ -97,6 +98,9 @@ def test_core_transaction_writes_use_storage_truth_when_memory_maps_are_stale(tm
     assert transfer.book_id == cash.book_id
     assert expense.lines[0].category_id == category.category_id
     assert adjustment.postings[0].currency == "CNY"
+    assert transfer.transaction_id not in service.ledger.transactions
+    assert expense.transaction_id not in service.ledger.transactions
+    assert adjustment.transaction_id not in service.ledger.transactions
 
 
 def test_fx_exchange_uses_storage_truth_when_memory_maps_are_stale(tmp_path):
@@ -147,6 +151,7 @@ def test_fx_exchange_uses_storage_truth_when_memory_maps_are_stale(tmp_path):
     assert Decimal(service.account_balance(token, cny.account_id)["official_balance"]["amount"]) == Decimal("898")
     assert Decimal(service.account_balance(token, usd.account_id)["official_balance"]["amount"]) == Decimal("10")
     assert Decimal(service.account_balance(token, fee.account_id)["official_balance"]["amount"]) == Decimal("2")
+    assert transaction.transaction_id not in service.ledger.transactions
 
 
 def test_core_transaction_writes_do_not_use_in_memory_transaction_factory():
@@ -203,6 +208,42 @@ def test_reverse_transaction_uses_storage_truth_when_memory_transaction_is_missi
     assert service.account_balance(token, cash.account_id)["official_balance"]["amount"] == "100"
 
 
+def test_confirm_draft_does_not_write_transaction_mirror(tmp_path):
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Draft Truth Cash", "type": "asset", "currency": "CNY", "opening_balance": "100"},
+        idempotency_key="draft-truth-cash",
+    )
+    expense, _ = service.create_account(
+        token,
+        {"name": "Draft Truth Expense", "type": "expense", "currency": "CNY"},
+        idempotency_key="draft-truth-expense-account",
+    )
+    draft, _ = service.capture_draft(
+        token,
+        {
+            "memo": "draft truth spend",
+            "amount": "12",
+            "source_account_id": cash.account_id,
+            "expense_account_id": expense.account_id,
+        },
+        idempotency_key="draft-truth-capture",
+    )
+
+    transaction, replay = service.confirm_draft(
+        token,
+        {"draft_id": draft.draft_id, "expected_version": draft.version},
+        idempotency_key="draft-truth-confirm",
+    )
+
+    assert replay is False
+    assert transaction.transaction_id not in service.ledger.transactions
+    assert service.get_transaction(token, transaction.transaction_id).purpose == "draft_confirmed"
+    assert service.account_balance(token, cash.account_id)["official_balance"]["amount"] == "88"
+
+
 def test_payment_profile_expense_uses_storage_truth_when_memory_maps_are_stale(tmp_path):
     service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
     token = service.owner_token
@@ -254,3 +295,4 @@ def test_payment_profile_expense_uses_storage_truth_when_memory_maps_are_stale(t
     assert [line.line_type for line in transaction.lines] == ["expense", "fx_exchange"]
     assert service.account_balance(token, card.account_id)["official_balance"]["amount"] == "0.00"
     assert service.account_balance(token, usd24.account_id)["official_balance"]["amount"] == "96.60"
+    assert transaction.transaction_id not in service.ledger.transactions

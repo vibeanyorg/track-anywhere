@@ -62,7 +62,6 @@ class DraftUseCases:
             draft.state = "confirmed"
             draft.version += 1
             self.drafts.drafts[draft.draft_id] = draft
-            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="draft.confirm",
                 actor=actor,

@@ -34,7 +34,6 @@ class BalanceUseCases:
                 accounts=[account, adjustment_account],
                 scale_lookup=self.assets.scale_for,
             )
-            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="ledger.balance.adjust",
                 actor=actor,

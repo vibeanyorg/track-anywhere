@@ -91,7 +91,6 @@ class PaymentProfileUseCases:
                 memo=f"{profile.display_name} {profile.backing_currency}-backed card settlement",
                 scale_lookup=self.assets.scale_for,
             )
-            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="payment_profile.expense.record",
                 actor=actor,

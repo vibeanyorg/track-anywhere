@@ -56,9 +56,32 @@ def test_financial_use_cases_do_not_shadow_investment_use_cases():
 
 def test_core_ledger_write_use_cases_do_not_mutate_transaction_mirror():
     repo_root = Path.cwd()
-    path = repo_root / "backend/app/track_anywhere/service_ledger.py"
+    paths = [
+        repo_root / "backend/app/track_anywhere/service.py",
+        repo_root / "backend/app/track_anywhere/service_accounts.py",
+        repo_root / "backend/app/track_anywhere/service_balances.py",
+        repo_root / "backend/app/track_anywhere/service_drafts.py",
+        repo_root / "backend/app/track_anywhere/service_finance.py",
+        repo_root / "backend/app/track_anywhere/service_fx.py",
+        repo_root / "backend/app/track_anywhere/service_investments.py",
+        repo_root / "backend/app/track_anywhere/service_ledger.py",
+        repo_root / "backend/app/track_anywhere/service_payment_profiles.py",
+    ]
     offenders = []
     pattern = re.compile(r"\bself\.ledger\.transactions\[")
+    for path in paths:
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if pattern.search(line):
+                offenders.append(f"{path.relative_to(repo_root)}:{line_number}: {line.strip()}")
+
+    assert offenders == []
+
+
+def test_backoffice_transactions_do_not_read_transaction_mirror():
+    repo_root = Path.cwd()
+    path = repo_root / "backend/app/track_anywhere/api_routers/backoffice.py"
+    offenders = []
+    pattern = re.compile(r"\bservice\.ledger\.transactions\b")
     for line_number, line in enumerate(path.read_text().splitlines(), start=1):
         if pattern.search(line):
             offenders.append(f"{path.relative_to(repo_root)}:{line_number}: {line.strip()}")

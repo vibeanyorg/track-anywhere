@@ -185,7 +185,12 @@ def list_transactions(
 ):
     try:
         _require_backoffice(token)
-        transactions = list(service.ledger.transactions.values())
+        book_ids = [book_id] if book_id is not None else [book.book_id for book in service.books.list(status=None)]
+        transactions = [
+            transaction
+            for current_book_id in book_ids
+            for transaction in service.storage.list_all_confirmed_transactions(book_id=current_book_id)
+        ]
         if category_id is not None:
             transactions = [
                 transaction

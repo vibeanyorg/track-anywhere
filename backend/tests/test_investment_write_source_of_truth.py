@@ -46,6 +46,7 @@ def test_cash_backed_investment_event_uses_storage_truth_when_memory_maps_are_st
     linked = service.get_transaction(token, event.transaction_id)
     assert linked.purpose == "investment_buy"
     assert [line.line_type for line in linked.lines] == ["investment_buy"]
+    assert event.transaction_id not in service.ledger.transactions
     assert Decimal(service.account_balance(token, cash.account_id)["official_balance"]["amount"]) == Decimal("800")
     assert Decimal(service.account_balance(token, wealth.account_id)["official_balance"]["amount"]) == Decimal("200")
 

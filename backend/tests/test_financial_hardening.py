@@ -258,7 +258,7 @@ def test_investment_event_can_link_to_ledger_transaction_and_valuation_persists(
     )
 
     assert event.transaction_id is not None
-    assert first.ledger.transactions[event.transaction_id].book_id == "book_default"
+    assert first.get_transaction(token, event.transaction_id).book_id == "book_default"
     assert first.account_balance(token, cash.account_id)["official_balance"]["amount"] == "0.00"
     assert first.account_balance(token, wealth.account_id)["official_balance"]["amount"] == "5000.00"
 
