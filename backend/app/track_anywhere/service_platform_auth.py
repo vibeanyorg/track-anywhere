@@ -2,7 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from .platform_auth_models import normalize_user_code
+from .errors import PolicyDenied
+from .platform_auth_models import (
+    DEVICE_GRANT_TYPE,
+    OAuthDeviceTokenCommand,
+    OAuthRevokeCommand,
+    OAuthTokenCommand,
+    OAuthTokenError,
+    normalize_user_code,
+)
 from .security import hash_secret
 
 
@@ -47,8 +55,44 @@ class PlatformAuthUseCases:
     def authorize_platform_oauth(self, exchange: Any, command: Any, actor: Any):
         return exchange.authorize(command, actor, grant_store=self._platform_grant_store())
 
+    def list_platform_oauth_clients(self, token) -> list[dict[str, object]]:
+        try:
+            self.actor_from_token(token, "credential:write")
+            return self.platform_key_exchange.list_clients()
+        except PolicyDenied as exc:
+            self.record_security_failure("oauth.client_list_denied", {"reason": str(exc)})
+            raise
+
+    def register_platform_oauth_client(self, payload: Any) -> dict[str, object]:
+        return self.platform_key_exchange.register_client(payload)
+
+    def authorize_platform_oauth_request(self, token, payload: Any):
+        try:
+            actor = self.actor_from_token(token)
+            return self.authorize_platform_oauth(self.platform_key_exchange, payload, actor)
+        except PolicyDenied as exc:
+            self.record_security_failure("oauth.authorize_denied", {"client_id": payload.client_id, "reason": str(exc)})
+            raise
+
+    def exchange_platform_oauth_token_payload(self, payload: dict[str, Any]) -> dict[str, object]:
+        try:
+            if payload.get("grant_type") == DEVICE_GRANT_TYPE:
+                command = OAuthDeviceTokenCommand.model_validate(payload)
+                return self.exchange_platform_device_code(self.platform_key_exchange, command)
+            command = OAuthTokenCommand.model_validate(payload)
+            return self.exchange_platform_code(self.platform_key_exchange, command)
+        except OAuthTokenError as exc:
+            self.record_security_failure("oauth.token_denied", {"reason": exc.error})
+            raise
+        except PolicyDenied as exc:
+            self.record_security_failure("oauth.token_denied", {"reason": str(exc)})
+            raise
+
     def create_platform_device_authorization(self, exchange: Any, command: Any, issuer: str):
         return exchange.create_device_authorization(command, issuer, grant_store=self._platform_grant_store())
+
+    def create_platform_device_authorization_request(self, payload: Any, issuer: str) -> dict[str, object]:
+        return self.create_platform_device_authorization(self.platform_key_exchange, payload, issuer)
 
     def approve_platform_device_user_code(
         self,
@@ -90,3 +134,7 @@ class PlatformAuthUseCases:
 
     def revoke_platform_token(self, exchange: Any, command: Any):
         return exchange.revoke(command, credentials=self.credentials, credential_writer=self._platform_credential_writer())
+
+    def revoke_platform_oauth_token_payload(self, payload: dict[str, Any]) -> dict[str, bool]:
+        command = OAuthRevokeCommand.model_validate(payload)
+        return self.revoke_platform_token(self.platform_key_exchange, command)

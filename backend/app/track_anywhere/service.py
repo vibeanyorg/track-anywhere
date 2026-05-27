@@ -40,6 +40,7 @@ from .service_recurring import RecurringUseCases
 from .service_state_hydration import ServiceStateHydration
 from .service_system import SystemStatusUseCases
 from .storage import OrmStorage, new_owner_token
+from .platform_auth import PlatformKeyExchange
 from .payment_instruments import PaymentInstrumentDirectory
 from .payment_profiles import PaymentProfileDirectory
 from .users import UserDirectory
@@ -99,6 +100,7 @@ class FinanceService(
         self.attachments = AttachmentIntake(self.config)
         self.users = UserDirectory()
         self.auth_identities = AuthIdentityDirectory()
+        self.platform_key_exchange = PlatformKeyExchange()
         self.reconciliation_actions: list[dict[str, object]] = []
         self.adjustment_account_ids: dict[str, str] = {}
         self.owner_token = new_owner_token()
