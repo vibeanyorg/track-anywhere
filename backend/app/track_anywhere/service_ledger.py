@@ -222,11 +222,7 @@ class LedgerUseCases:
             if version.category_id in category_ids or version.category_version_id in category_version_ids
         ]
         category_versions.sort(key=lambda version: (version.category_id, version.valid_from, version.category_version_id))
-        accounts = [
-            self.ledger.accounts[account_id]
-            for account_id in sorted(account_ids)
-            if account_id in self.ledger.accounts
-        ]
+        accounts = [self.storage.get_account(account_id) for account_id in sorted(account_ids)]
         return {
             "schema_version": "tx-snapshot.v1",
             "captured_at": datetime.now(timezone.utc),
