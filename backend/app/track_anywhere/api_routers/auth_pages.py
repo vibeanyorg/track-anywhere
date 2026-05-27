@@ -7,10 +7,10 @@ from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from ..api_auth_runtime import auth_cookie_secure, auth_settings
 from ..api_browser_sessions import browser_sessions
 from ..api_ports.auth_pages import AuthPagesService
 from ..api_sessions import CSRF_COOKIE, SESSION_COOKIE, set_browser_session_cookies
-from ..api_runtime import auth_cookie_secure, auth_settings
 from ..errors import PolicyDenied, ValidationError
 from ..password_auth import PasswordAccount, PasswordSignupCommand
 from ..platform_auth import OAuthAuthorizeCommand

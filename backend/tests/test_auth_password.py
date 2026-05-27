@@ -10,6 +10,7 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient
 
+from track_anywhere import api_auth_runtime
 from track_anywhere.api import app, service
 from track_anywhere.api_routers import auth as auth_router
 from track_anywhere.security import DeploymentSecurityConfig
@@ -26,7 +27,9 @@ def _production_config() -> DeploymentSecurityConfig:
 
 def test_password_signup_requires_allowlist_outside_local_mode(monkeypatch):
     assert app is not None
-    monkeypatch.setattr(service, "config", _production_config())
+    production_config = _production_config()
+    monkeypatch.setattr(service, "config", production_config)
+    monkeypatch.setattr(api_auth_runtime, "deployment_config", production_config)
     monkeypatch.setattr(
         auth_router,
         "auth_settings",
@@ -48,7 +51,9 @@ def test_password_signup_requires_allowlist_outside_local_mode(monkeypatch):
 def test_password_signup_allowlist_permits_non_local_signup(monkeypatch):
     assert app is not None
     email = f"allowed-password-{uuid4().hex}@example.com"
-    monkeypatch.setattr(service, "config", _production_config())
+    production_config = _production_config()
+    monkeypatch.setattr(service, "config", production_config)
+    monkeypatch.setattr(api_auth_runtime, "deployment_config", production_config)
     monkeypatch.setattr(
         auth_router,
         "auth_settings",
@@ -69,7 +74,9 @@ def test_password_signup_allowlist_permits_non_local_signup(monkeypatch):
 def test_password_signup_cookie_secure_can_be_disabled_for_loopback_tunnel(monkeypatch):
     assert app is not None
     email = f"loopback-password-{uuid4().hex}@example.com"
-    monkeypatch.setattr(service, "config", _production_config())
+    production_config = _production_config()
+    monkeypatch.setattr(service, "config", production_config)
+    monkeypatch.setattr(api_auth_runtime, "deployment_config", production_config)
     monkeypatch.setenv("TRACK_ANYWHERE_AUTH_COOKIE_SECURE", "0")
     monkeypatch.setattr(
         auth_router,

@@ -6,8 +6,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+from .api_auth_runtime import ALLOWED_ORIGINS, auth_cookie_secure, auth_settings
+from .api_config import deployment_config_from_env as _deployment_config_from_env
 from .api_routes import router
-from .api_runtime import ALLOWED_ORIGINS, _deployment_config_from_env, auth_cookie_secure, auth_settings, service
+from .api_runtime import service
 
 
 def create_app() -> FastAPI:

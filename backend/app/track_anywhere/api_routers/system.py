@@ -3,11 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import JSONResponse
 
+from ..api_auth_runtime import auth_cookie_secure
 from ..api_browser_sessions import browser_sessions
 from ..api_dependencies import AuthToken
 from ..api_ports.system import SystemService
 from ..api_sessions import set_browser_session_cookies
-from ..api_runtime import auth_cookie_secure
 from ..errors import PolicyDenied
 from .common import protected
 

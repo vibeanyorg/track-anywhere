@@ -4,9 +4,10 @@ from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request
 
+from .api_auth_runtime import ALLOWED_ORIGINS
 from .api_browser_sessions import browser_sessions
 from .api_sessions import SESSION_COOKIE
-from .api_runtime import ALLOWED_ORIGINS, service as runtime_service
+from .api_runtime import service as runtime_service
 from .errors import SecurityPreconditionFailed
 from .security import CredentialReference, validate_web_security
 
