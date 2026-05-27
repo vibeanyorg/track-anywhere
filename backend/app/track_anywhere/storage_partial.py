@@ -18,7 +18,7 @@ from .storage_changes import (
     UserChanges,
     WriteMetadata,
 )
-from .storage_models import AccountRecord, AdjustmentAccountRecord, AssetRecord, CategoryRecord
+from .storage_models import AssetRecord, CategoryRecord
 
 
 class StorageMetadataWriters:
@@ -175,25 +175,6 @@ class CoreEntityStorageWriters:
                     "version": asset.version,
                 },
                 ["asset_code"],
-            )
-
-    def _save_accounts(self, session, accounts) -> None:
-        for account in accounts:
-            self._upsert_record(
-                session,
-                AccountRecord,
-                {
-                    "account_id": account.account_id,
-                    "book_id": account.book_id,
-                    "name": account.name,
-                    "type": account.type,
-                    "currency": account.currency,
-                    "institution_type": account.institution_type,
-                    "subtype": account.subtype,
-                    "institution": account.institution,
-                    "version": account.version,
-                },
-                ["account_id"],
             )
 
     def _save_categories(self, session, categories) -> None:

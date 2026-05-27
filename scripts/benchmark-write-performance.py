@@ -137,21 +137,20 @@ def hydrate_legacy_full_state_for_benchmark(service: FinanceService) -> None:
 
 def persist_legacy_full_state_for_benchmark(service: FinanceService) -> None:
     storage = service.storage
-    with storage.session_factory.begin() as session:
-        storage._save_books(session, service.books.books.values(), service.books.members.values())
-        storage._save_assets(session, service.assets.assets.values())
-        storage._save_accounts(session, service.ledger.accounts.values())
-        storage._save_transactions(session, service.ledger.transactions.values())
-        storage._save_categories(session, service.categories.categories.values())
-        storage._save_category_history(
-            session,
+    with storage.unit_of_work() as uow:
+        uow.books.save(service.books.books.values(), service.books.members.values())
+        uow.assets.save(service.assets.assets.values())
+        uow.ledger.save_accounts(service.ledger.accounts.values())
+        uow.ledger.save_transactions(service.ledger.transactions.values())
+        uow.categories.save(service.categories.categories.values())
+        uow.categories.save_history(
             aliases=service.categories.aliases.values(),
             versions=service.categories.versions.values(),
             events=service.categories.events.values(),
         )
-        storage._save_credentials(session, service.credentials._credentials.values())
-        storage._save_audit_events(session, service.audit.events)
-        storage._save_idempotency_receipts(session, service.idempotency._receipts.values())
+        uow.credentials.save(service.credentials._credentials.values())
+        uow.audit.save_events(service.audit.events)
+        uow.idempotency.save_receipts(service.idempotency._receipts.values())
 
 
 def summarize(
