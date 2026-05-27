@@ -31,6 +31,5 @@ class ServiceLedgerPersistence:
             metadata=metadata,
         )
         self.storage.save_reclassification_change(changes)
-        self.storage.update_read_cache(transactions=(transaction,))
         self._mark_metadata_committed(metadata)
         self.categories.mark_clean()

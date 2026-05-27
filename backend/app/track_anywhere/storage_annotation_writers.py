@@ -21,6 +21,7 @@ class AnnotationStorageWriters:
             )
             save_audit_events(session, changes.metadata.audit_events)
             save_idempotency_receipts(session, changes.metadata.idempotency_receipts)
+        self.update_read_cache(transactions=(changes.transaction,))
 
     def _upsert_transaction_line(self, session, line: TransactionLine) -> None:
         self._upsert_record(
