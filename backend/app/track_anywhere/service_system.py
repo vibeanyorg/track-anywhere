@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .db_migrations import current_alembic_head
+from .errors import PolicyDenied
 
 
 class SystemStatusUseCases:
@@ -32,3 +33,24 @@ class SystemStatusUseCases:
         if include_counts:
             payload["counts"] = self.storage.status_table_counts()
         return payload
+
+    def local_dev_session(self) -> dict[str, object]:
+        if self.config.mode != "local":
+            raise PolicyDenied("dev session is only available in local mode")
+        return {
+            "credential_token": self.owner_token,
+            "identity": {"provider": "local", "subject": "owner", "email": None, "name": "Local Owner"},
+        }
+
+    def local_dev_token(self) -> dict[str, object]:
+        if self.config.mode != "local":
+            raise PolicyDenied("dev token is only available in local mode")
+        actor = self.actor_from_token(self.owner_token)
+        return {
+            "token": self.owner_token,
+            "actor": {
+                "actor_id": actor.actor_id,
+                "actor_type": actor.actor_type,
+                "scopes": sorted(actor.scopes),
+            },
+        }

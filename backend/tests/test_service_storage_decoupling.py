@@ -69,12 +69,24 @@ def test_api_routers_do_not_access_storage_directly():
 def test_system_router_does_not_own_storage_or_migration_details():
     source = (BACKEND / "api_routers/system.py").read_text()
 
+    assert "from ..api_runtime import service" not in source
     assert "service.storage" not in source
+    assert "service.config" not in source
+    assert "service.owner_token" not in source
     assert "sqlalchemy" not in source
     assert "alembic.config" not in source
     assert "ScriptDirectory" not in source
     assert "service.system_readiness()" in source
     assert "service.system_status(token" in source
+
+
+def test_system_router_uses_service_dependency_boundary():
+    source = (BACKEND / "api_routers/system.py").read_text()
+    ports = (BACKEND / "api_ports/system.py").read_text()
+
+    assert "from ..api_ports.system import SystemService" in source
+    assert "class SystemRouteService(Protocol)" in ports
+    assert "SystemService = Annotated[SystemRouteService, ServiceDependency]" in ports
 
 
 def test_non_system_api_routers_do_not_import_runtime_service():
