@@ -54,7 +54,7 @@ class CounterpartyUseCases:
         self.actor_for_book(token, book_id, "ledger:read")
         if status is not None and status not in {"active", "hidden", "archived"}:
             raise ValidationError("status must be active, hidden, or archived")
-        return self.storage.list_counterparties(book_id=book_id, kind=kind, status=status, name=name)
+        return self._list_counterparties_from_storage(book_id=book_id, kind=kind, status=status, name=name)
 
     def get_counterparty(self, token: str, counterparty_ref: str, *, book_id: str = DEFAULT_BOOK_ID):
         self.actor_for_book(token, book_id, "ledger:read")
@@ -62,7 +62,7 @@ class CounterpartyUseCases:
 
     def _resolve_counterparty_reference(self, counterparty_ref: str, *, book_id: str = DEFAULT_BOOK_ID):
         try:
-            counterparty = self.storage.get_counterparty(counterparty_ref)
+            counterparty = self._get_counterparty_from_storage(counterparty_ref)
         except NotFound:
             pass
         else:
@@ -70,9 +70,9 @@ class CounterpartyUseCases:
                 raise NotFound(f"counterparty not found in book: {book_id}/{counterparty_ref}")
             return counterparty
         try:
-            return self.storage.get_counterparty_by_slug(book_id=book_id, slug=counterparty_ref)
+            return self._get_counterparty_by_slug_from_storage(book_id=book_id, slug=counterparty_ref)
         except NotFound:
-            return self.storage.get_counterparty_by_name(book_id=book_id, name=counterparty_ref)
+            return self._get_counterparty_by_name_from_storage(book_id=book_id, name=counterparty_ref)
 
     def _resolve_counterparty_for_write(self, counterparty_ref: str | None, *, book_id: str = DEFAULT_BOOK_ID):
         if counterparty_ref is None:
@@ -87,3 +87,51 @@ class CounterpartyUseCases:
             raise NotFound(f"counterparty not found: {counterparty_ref}") from exc
         self.counterparties.counterparties[counterparty.counterparty_id] = counterparty
         return counterparty
+
+    def _list_counterparties_from_storage(
+        self,
+        *,
+        book_id: str | None = DEFAULT_BOOK_ID,
+        kind: str | None = None,
+        status: str | None = "active",
+        name: str | None = None,
+    ):
+        with self.storage.unit_of_work() as uow:
+            return uow.counterparties.list_counterparties(
+                book_id=book_id,
+                kind=kind,
+                status=status,
+                name=name,
+            )
+
+    def _get_counterparty_from_storage(self, counterparty_id: str, *, status: str | None = "active"):
+        with self.storage.unit_of_work() as uow:
+            return uow.counterparties.get_counterparty(counterparty_id, status=status)
+
+    def _get_counterparty_by_slug_from_storage(
+        self,
+        *,
+        book_id: str,
+        slug: str,
+        status: str | None = "active",
+    ):
+        with self.storage.unit_of_work() as uow:
+            return uow.counterparties.get_counterparty_by_slug(
+                book_id=book_id,
+                slug=slug,
+                status=status,
+            )
+
+    def _get_counterparty_by_name_from_storage(
+        self,
+        *,
+        book_id: str,
+        name: str,
+        status: str | None = "active",
+    ):
+        with self.storage.unit_of_work() as uow:
+            return uow.counterparties.get_counterparty_by_name(
+                book_id=book_id,
+                name=name,
+                status=status,
+            )

@@ -5,9 +5,9 @@ from decimal import Decimal
 
 from .counterparty_storage_models import CounterpartyRecord
 from .credit_cards import CreditCardProfile
-from .storage_counterparties import _counterparty_from_row
 from .storage_catalog_reads import _account_from_row, _category_from_row
 from .storage_models import AccountRecord, CategoryRecord, CreditCardProfileRecord
+from .storage_repositories.catalog import counterparty_from_record
 
 
 class StorageReadCache:
@@ -23,7 +23,7 @@ class StorageReadCache:
                 for row in session.query(CategoryRecord).all()
             }
             self._read_counterparties = {
-                row.counterparty_id: _counterparty_from_row(row)
+                row.counterparty_id: counterparty_from_record(row)
                 for row in session.query(CounterpartyRecord).all()
             }
             self._read_drafts = self._load_drafts(session)

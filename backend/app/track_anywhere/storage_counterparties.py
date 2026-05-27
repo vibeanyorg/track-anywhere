@@ -6,12 +6,13 @@ from .books import DEFAULT_BOOK_ID
 from .counterparties import Counterparty, normalize_counterparty_name, normalize_counterparty_slug
 from .counterparty_storage_models import CounterpartyRecord
 from .errors import NotFound
+from .storage_repositories.catalog import counterparty_from_record
 
 
 class CounterpartyStorageMixin:
     def _load_counterparties(self, session: Session) -> dict[str, Counterparty]:
         return {
-            row.counterparty_id: _counterparty_from_row(row)
+            row.counterparty_id: counterparty_from_record(row)
             for row in session.query(CounterpartyRecord).all()
         }
 
@@ -27,7 +28,7 @@ class CounterpartyStorageMixin:
         if counterparties is None:
             with self.session_factory() as session:
                 rows = session.query(CounterpartyRecord).all()
-            counterparties = [_counterparty_from_row(row) for row in rows]
+            counterparties = [counterparty_from_record(row) for row in rows]
         counterparties = [item for item in counterparties if item.book_id == book_id]
         if kind is not None:
             counterparties = [item for item in counterparties if item.kind == kind]
@@ -48,7 +49,7 @@ class CounterpartyStorageMixin:
             row = session.get(CounterpartyRecord, counterparty_id)
         if row is None or (status is not None and row.status != status):
             raise NotFound(f"counterparty not found: {counterparty_id}")
-        return _counterparty_from_row(row)
+        return counterparty_from_record(row)
 
     def get_counterparty_by_slug(
         self,
@@ -75,14 +76,3 @@ class CounterpartyStorageMixin:
             if counterparty.name.casefold() == name:
                 return counterparty
         raise NotFound(f"counterparty name not found in book: {book_id}/{name}")
-
-def _counterparty_from_row(row: CounterpartyRecord) -> Counterparty:
-    return Counterparty(
-        counterparty_id=row.counterparty_id,
-        book_id=row.book_id,
-        slug=row.slug,
-        name=row.name,
-        kind=row.kind,
-        status=row.status,
-        version=row.version,
-    )
