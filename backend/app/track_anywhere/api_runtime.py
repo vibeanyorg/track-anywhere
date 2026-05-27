@@ -42,7 +42,6 @@ browser_sessions = BrowserSessionStore()
 ALLOWED_ORIGINS = _allowed_origins()
 auth_settings = auth_settings_from_env(mode=service.config.mode)
 oauth_registry = build_oauth_registry(auth_settings)
-platform_key_exchange = service.platform_key_exchange
 
 
 def auth_cookie_secure() -> bool:

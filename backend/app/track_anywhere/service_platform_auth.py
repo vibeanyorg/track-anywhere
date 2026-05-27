@@ -33,16 +33,19 @@ class _PlatformGrantStore:
         self._service._commit_authorization_grant_change(grant)
 
     def load_authorization_grant(self, code_hash: str):
-        return self._service.storage.load_authorization_grant(code_hash)
+        with self._service.storage.unit_of_work() as uow:
+            return uow.platform_grants.load_authorization_grant(code_hash)
 
     def save_device_grant(self, grant) -> None:
         self._service._commit_device_grant_change(grant)
 
     def load_device_grant_by_device_hash(self, device_code_hash: str):
-        return self._service.storage.load_device_grant_by_device_hash(device_code_hash)
+        with self._service.storage.unit_of_work() as uow:
+            return uow.platform_grants.load_device_grant_by_device_hash(device_code_hash)
 
     def load_device_grant_by_user_hash(self, user_code_hash: str):
-        return self._service.storage.load_device_grant_by_user_hash(user_code_hash)
+        with self._service.storage.unit_of_work() as uow:
+            return uow.platform_grants.load_device_grant_by_user_hash(user_code_hash)
 
 
 class PlatformAuthUseCases:

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from .oauth_grants import AuthorizationGrant, DeviceGrant
-from .security import Actor
 from .storage_auth_models import CredentialRecord
 from .storage_auth_models import OAuthAuthorizationGrantRecord, OAuthDeviceGrantRecord
 from .storage_upsert_writers import upsert_record
@@ -74,57 +72,3 @@ def save_device_grants(session, grants) -> None:
                 approved_at=grant.approved_at.isoformat() if grant.approved_at else None,
             )
         )
-
-
-class AuthStorageWriters:
-    def load_authorization_grant(self, code_hash: str) -> AuthorizationGrant | None:
-        with self.session_factory() as session:
-            row = session.get(OAuthAuthorizationGrantRecord, code_hash)
-            return _authorization_grant(row) if row is not None else None
-
-    def load_device_grant_by_device_hash(self, device_code_hash: str) -> DeviceGrant | None:
-        with self.session_factory() as session:
-            row = session.get(OAuthDeviceGrantRecord, device_code_hash)
-            return _device_grant(row) if row is not None else None
-
-    def load_device_grant_by_user_hash(self, user_code_hash: str) -> DeviceGrant | None:
-        with self.session_factory() as session:
-            row = session.query(OAuthDeviceGrantRecord).filter_by(user_code_hash=user_code_hash).first()
-            return _device_grant(row) if row is not None else None
-
-
-def _authorization_grant(row) -> AuthorizationGrant:
-    from datetime import datetime
-    return AuthorizationGrant(
-        code_hash=row.code_hash,
-        client_id=row.client_id,
-        redirect_uri=row.redirect_uri,
-        actor=Actor(row.actor_id, row.actor_type, frozenset(row.actor_scopes)),
-        scopes=tuple(row.scopes),
-        code_challenge=row.code_challenge,
-        resource=row.resource,
-        expires_at=datetime.fromisoformat(row.expires_at),
-        used=row.used,
-    )
-
-
-def _device_grant(row) -> DeviceGrant:
-    from datetime import datetime
-    actor = None
-    if row.approved_actor_id and row.approved_actor_type and row.approved_actor_scopes is not None:
-        actor = Actor(row.approved_actor_id, row.approved_actor_type, frozenset(row.approved_actor_scopes))
-    return DeviceGrant(
-        device_code_hash=row.device_code_hash,
-        user_code_hash=row.user_code_hash,
-        client_id=row.client_id,
-        scopes=tuple(row.scopes),
-        resource=row.resource,
-        status=row.status,
-        expires_at=datetime.fromisoformat(row.expires_at),
-        interval_seconds=row.interval_seconds,
-        created_at=datetime.fromisoformat(row.created_at),
-        last_poll_at=datetime.fromisoformat(row.last_poll_at) if row.last_poll_at else None,
-        poll_count=row.poll_count,
-        approved_actor=actor,
-        approved_at=datetime.fromisoformat(row.approved_at) if row.approved_at else None,
-    )

@@ -5,7 +5,6 @@ from .domain_storage_loaders import DomainStorageLoaders
 from .domain_storage_writers import DomainStorageWriters
 from . import storage_auth_models as _storage_auth_models
 from .storage_annotation_writers import AnnotationStorageWriters
-from .storage_auth import AuthStorageWriters
 from .storage_backoffice_reads import BackofficeReadStorage
 from .storage_catalog_reads import CatalogReadStorage
 from .storage_changes import StartupMaintenanceChanges
@@ -45,7 +44,6 @@ class OrmStorage(
     DraftReadStorage,
     LedgerReadStorage,
     AnnotationStorageWriters,
-    AuthStorageWriters,
     DomainStorageWriters,
     StorageWriters,
 ):

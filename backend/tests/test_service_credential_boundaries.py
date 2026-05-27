@@ -74,11 +74,23 @@ def test_platform_auth_credentials_use_service_change_set_writer():
 
 def test_platform_auth_grants_use_service_change_set_writer():
     storage_auth = (BACKEND / "storage_auth.py").read_text()
+    storage_source = (BACKEND / "storage.py").read_text()
+    storage_repositories = (BACKEND / "storage_repositories/security.py").read_text()
     service_platform_auth = (BACKEND / "service_platform_auth.py").read_text()
 
+    assert "AuthStorageWriters" not in storage_source
+    assert "class AuthStorageWriters" not in storage_auth
     assert "def save_authorization_grant(" not in storage_auth
     assert "def save_device_grant(" not in storage_auth
+    assert "def load_authorization_grant(" in storage_repositories
+    assert "def load_device_grant_by_device_hash(" in storage_repositories
+    assert "def load_device_grant_by_user_hash(" in storage_repositories
     assert "grant_store=self.storage" not in service_platform_auth
+    assert "self._service.storage.load_authorization_grant" not in service_platform_auth
+    assert "self._service.storage.load_device_grant" not in service_platform_auth
+    assert "uow.platform_grants.load_authorization_grant" in service_platform_auth
+    assert "uow.platform_grants.load_device_grant_by_device_hash" in service_platform_auth
+    assert "uow.platform_grants.load_device_grant_by_user_hash" in service_platform_auth
     assert "save_authorization_grant_change" not in service_platform_auth
     assert "save_device_grant_change" not in service_platform_auth
     assert "self._service._commit_authorization_grant_change(grant)" in service_platform_auth
