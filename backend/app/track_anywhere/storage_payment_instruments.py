@@ -6,7 +6,7 @@ from .books import DEFAULT_BOOK_ID
 from .errors import NotFound
 from .payment_instrument_storage_models import PaymentInstrumentRecord
 from .payment_instruments import PaymentInstrument
-from .storage_repositories.catalog import payment_instrument_from_record
+from .storage_repositories.payments import payment_instrument_from_record
 
 
 class PaymentInstrumentStorageMixin:

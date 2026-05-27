@@ -19,6 +19,7 @@ from .domain_storage_models import (
     LedgerBookRecord,
 )
 from .payment_profile_storage_models import PaymentProfileRecord
+from .storage_repositories.payments import payment_profile_from_record
 
 
 class DomainStorageLoaders:
@@ -138,20 +139,6 @@ class DomainStorageLoaders:
 
     def _load_payment_profiles(self, session: Session) -> dict[str, PaymentProfile]:
         return {
-            row.profile_id: PaymentProfile(
-                profile_id=row.profile_id,
-                book_id=row.book_id,
-                slug=row.slug,
-                display_name=row.display_name,
-                kind=row.kind,
-                instrument_account_id=row.instrument_account_id,
-                instrument_currency=row.instrument_currency,
-                backing_account_id=row.backing_account_id,
-                backing_currency=row.backing_currency,
-                settlement_mode=row.settlement_mode,
-                settlement_rate=Decimal(row.settlement_rate),
-                status=row.status,
-                version=row.version,
-            )
+            row.profile_id: payment_profile_from_record(row)
             for row in session.query(PaymentProfileRecord).all()
         }

@@ -23,7 +23,7 @@ def test_payment_instrument_use_cases_read_through_focused_repository():
                 offenders.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: {line.strip()}")
 
     service_source = (BACKEND / "service_payment_instruments.py").read_text()
-    repository_source = (BACKEND / "storage_repositories/catalog.py").read_text()
+    repository_source = (BACKEND / "storage_repositories/payments.py").read_text()
 
     assert offenders == []
     assert "uow.payment_instruments.list_instruments" in service_source

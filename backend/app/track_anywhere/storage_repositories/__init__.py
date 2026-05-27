@@ -5,8 +5,6 @@ from .catalog import (
     BookRepository,
     CategoryRepository,
     CounterpartyRepository,
-    PaymentInstrumentRepository,
-    PaymentProfileRepository,
 )
 from .finance import (
     BudgetRepository,
@@ -16,6 +14,7 @@ from .finance import (
     ReconciliationRepository,
 )
 from .ledger import LedgerRepository, StateRepository
+from .payments import PaymentInstrumentRepository, PaymentProfileRepository
 from .security import (
     AuditRepository,
     AuthIdentityRepository,

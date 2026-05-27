@@ -48,14 +48,22 @@ def test_catalog_repositories_own_catalog_writes():
     assert "def save(self, categories" in source
     assert "def save_history" in source
     assert "def save(self, counterparties" in source
-    assert "def save(self, instruments" in source
-    assert "def save(self, profiles" in source
     forbidden = [
         "self.storage._save_assets",
         "self.storage._save_books",
         "self.storage._save_categories",
         "self.storage._save_category_history",
         "self.storage._save_counterparties",
+    ]
+    assert all(item not in source for item in forbidden)
+
+
+def test_payment_repositories_own_payment_writes():
+    source = (BACKEND / "storage_repositories/payments.py").read_text()
+
+    assert "def save(self, instruments" in source
+    assert "def save(self, profiles" in source
+    forbidden = [
         "self.storage._save_payment_instruments",
         "self.storage._save_payment_profiles",
     ]
