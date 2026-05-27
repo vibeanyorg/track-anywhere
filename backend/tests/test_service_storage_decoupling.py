@@ -12,6 +12,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND = REPO_ROOT / "backend/app/track_anywhere"
 
 
+def _assert_router_uses_service_boundary(filename: str, alias: str, protocol: str, ports: str | None = None) -> None:
+    source = (BACKEND / f"api_routers/{filename}").read_text()
+    ports = ports or (BACKEND / "api_service_ports.py").read_text()
+
+    assert "from ..api_runtime import service" not in source
+    assert f"from ..api_service_ports import {alias}" in source
+    assert f"class {protocol}(AuditRecorder, Protocol)" in ports
+    assert f"{alias} = Annotated[{protocol}, Depends(get_service)]" in ports
+    assert "recorder=service" in source
+
+
 def test_storage_write_methods_do_not_accept_service_object():
     offenders: list[str] = []
     for path in BACKEND.rglob("storage*.py"):
@@ -60,28 +71,25 @@ def test_api_routers_do_not_access_storage_directly():
     assert offenders == []
 
 
-def test_high_churn_ledger_router_uses_service_dependency_boundary():
-    path = BACKEND / "api_routers/ledger.py"
-    source = path.read_text()
-    ports = (BACKEND / "api_service_ports.py").read_text()
+def test_non_system_api_routers_do_not_import_runtime_service():
+    offenders = []
+    allowed_files = {BACKEND / "api_routers/system.py"}
+    forbidden = "from ..api_runtime import service"
+    for path in (BACKEND / "api_routers").glob("*.py"):
+        if path in allowed_files:
+            continue
+        if forbidden in path.read_text():
+            offenders.append(str(path.relative_to(REPO_ROOT)))
 
-    assert "from ..api_runtime import service" not in source
-    assert "from ..api_service_ports import LedgerService" in source
-    assert "class LedgerRouteService(AuditRecorder, Protocol)" in ports
-    assert "LedgerService = Annotated[LedgerRouteService, Depends(get_service)]" in ports
-    assert "recorder=service" in source
+    assert offenders == []
+
+
+def test_high_churn_ledger_router_uses_service_dependency_boundary():
+    _assert_router_uses_service_boundary("ledger.py", "LedgerService", "LedgerRouteService")
 
 
 def test_high_churn_catalog_router_uses_service_dependency_boundary():
-    path = BACKEND / "api_routers/catalog.py"
-    source = path.read_text()
-    ports = (BACKEND / "api_service_ports.py").read_text()
-
-    assert "from ..api_runtime import service" not in source
-    assert "from ..api_service_ports import CatalogService" in source
-    assert "class CatalogRouteService(AuditRecorder, Protocol)" in ports
-    assert "CatalogService = Annotated[CatalogRouteService, Depends(get_service)]" in ports
-    assert "recorder=service" in source
+    _assert_router_uses_service_boundary("catalog.py", "CatalogService", "CatalogRouteService")
 
 
 def test_catalog_adjacent_write_routers_use_service_dependency_boundaries():
@@ -93,12 +101,7 @@ def test_catalog_adjacent_write_routers_use_service_dependency_boundaries():
     ]
 
     for filename, alias, protocol in expectations:
-        source = (BACKEND / f"api_routers/{filename}").read_text()
-        assert "from ..api_runtime import service" not in source
-        assert f"from ..api_service_ports import {alias}" in source
-        assert f"class {protocol}(AuditRecorder, Protocol)" in ports
-        assert f"{alias} = Annotated[{protocol}, Depends(get_service)]" in ports
-        assert "recorder=service" in source
+        _assert_router_uses_service_boundary(filename, alias, protocol, ports)
 
 
 def test_operational_write_routers_use_service_dependency_boundaries():
@@ -109,12 +112,32 @@ def test_operational_write_routers_use_service_dependency_boundaries():
     ]
 
     for filename, alias, protocol in expectations:
-        source = (BACKEND / f"api_routers/{filename}").read_text()
-        assert "from ..api_runtime import service" not in source
-        assert f"from ..api_service_ports import {alias}" in source
-        assert f"class {protocol}(AuditRecorder, Protocol)" in ports
-        assert f"{alias} = Annotated[{protocol}, Depends(get_service)]" in ports
-        assert "recorder=service" in source
+        _assert_router_uses_service_boundary(filename, alias, protocol, ports)
+
+
+def test_remaining_business_routers_use_service_dependency_boundaries():
+    ports = (BACKEND / "api_service_ports.py").read_text()
+    expectations = [
+        ("finance.py", "FinanceService", "FinanceRouteService"),
+        ("books.py", "BookService", "BookRouteService"),
+        ("backoffice.py", "BackofficeService", "BackofficeRouteService"),
+    ]
+
+    for filename, alias, protocol in expectations:
+        _assert_router_uses_service_boundary(filename, alias, protocol, ports)
+
+
+def test_backoffice_router_does_not_reach_into_service_registries():
+    source = (BACKEND / "api_routers/backoffice.py").read_text()
+    offenders = []
+    forbidden = [
+        re.compile(r"\bservice\.(books|users|auth_identities|categories|recurring|ledger)\b"),
+    ]
+    for line_number, line in enumerate(source.splitlines(), start=1):
+        if any(pattern.search(line) for pattern in forbidden):
+            offenders.append(f"api_routers/backoffice.py:{line_number}: {line.strip()}")
+
+    assert offenders == []
 
 
 def test_api_error_auditing_has_no_runtime_singleton_fallback():

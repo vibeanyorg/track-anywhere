@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from ..api_dependencies import AuthToken
 from ..api_errors import raise_command_error
-from ..api_runtime import service
+from ..api_service_ports import BackofficeService
 from ..api_serialization import serialize
 from ..errors import TrackAnywhereError
 from ..service_auth import ROLE_SCOPES
@@ -17,9 +17,9 @@ router = APIRouter(prefix="/backoffice", tags=["backoffice"])
 
 
 @router.get("/roles", dependencies=protected)
-def list_roles(token: AuthToken):
+def list_roles(token: AuthToken, service: BackofficeService):
     try:
-        _require_backoffice(token)
+        _require_backoffice(token, service)
         return [
             {"role": role, "scopes": sorted(scopes)}
             for role, scopes in sorted(ROLE_SCOPES.items())
@@ -31,6 +31,7 @@ def list_roles(token: AuthToken):
 @router.get("/books", dependencies=protected)
 def list_books(
     token: AuthToken,
+    service: BackofficeService,
     kind: str | None = None,
     base_currency: str | None = None,
     status: str | None = None,
@@ -38,8 +39,8 @@ def list_books(
     ordering: str = "book_id",
 ):
     try:
-        _require_backoffice(token)
-        items = serialize(service.books.list(status=None))
+        _require_backoffice(token, service)
+        items = serialize(service.backoffice_books())
         return _filter_rows(
             items,
             exact={"kind": kind, "base_currency": base_currency, "status": status},
@@ -55,6 +56,7 @@ def list_books(
 @router.get("/book-members", dependencies=protected)
 def list_book_members(
     token: AuthToken,
+    service: BackofficeService,
     book_id: str | None = None,
     user_id: str | None = None,
     role: str | None = None,
@@ -63,8 +65,8 @@ def list_book_members(
     ordering: str = "book_id",
 ):
     try:
-        _require_backoffice(token)
-        items = serialize(list(service.books.members.values()))
+        _require_backoffice(token, service)
+        items = serialize(service.backoffice_book_members())
         return _filter_rows(
             items,
             exact={"book_id": book_id, "user_id": user_id, "role": role, "status": status},
@@ -80,6 +82,7 @@ def list_book_members(
 @router.get("/accounts", dependencies=protected)
 def list_accounts(
     token: AuthToken,
+    service: BackofficeService,
     book_id: str | None = None,
     type: str | None = None,
     currency: str | None = None,
@@ -89,7 +92,7 @@ def list_accounts(
     ordering: str = "account_id",
 ):
     try:
-        _require_backoffice(token)
+        _require_backoffice(token, service)
         accounts = service.backoffice_accounts(
             book_id=book_id,
             type=type,
@@ -111,10 +114,15 @@ def list_accounts(
 
 
 @router.get("/ledger-users", dependencies=protected)
-def list_ledger_users(token: AuthToken, search: str | None = None, ordering: str = "username"):
+def list_ledger_users(
+    token: AuthToken,
+    service: BackofficeService,
+    search: str | None = None,
+    ordering: str = "username",
+):
     try:
-        _require_backoffice(token)
-        items = serialize(list(service.users.users.values()))
+        _require_backoffice(token, service)
+        items = serialize(service.backoffice_users())
         return _filter_rows(
             items,
             exact={},
@@ -130,6 +138,7 @@ def list_ledger_users(token: AuthToken, search: str | None = None, ordering: str
 @router.get("/auth-identities", dependencies=protected)
 def list_auth_identities(
     token: AuthToken,
+    service: BackofficeService,
     provider: str | None = None,
     status: str | None = None,
     email_verified: bool | None = None,
@@ -137,8 +146,8 @@ def list_auth_identities(
     ordering: str = "provider",
 ):
     try:
-        _require_backoffice(token)
-        items = serialize(list(service.auth_identities.identities.values()))
+        _require_backoffice(token, service)
+        items = serialize(service.backoffice_auth_identities())
         return _filter_rows(
             items,
             exact={"provider": provider, "status": status, "email_verified": email_verified},
@@ -154,6 +163,7 @@ def list_auth_identities(
 @router.get("/categories", dependencies=protected)
 def list_categories(
     token: AuthToken,
+    service: BackofficeService,
     book_id: str | None = None,
     kind: str | None = None,
     status: str | None = None,
@@ -161,8 +171,8 @@ def list_categories(
     ordering: str = "path_cache",
 ):
     try:
-        _require_backoffice(token)
-        items = serialize(list(service.categories.categories.values()))
+        _require_backoffice(token, service)
+        items = serialize(service.backoffice_categories())
         return _filter_rows(
             items,
             exact={"book_id": book_id, "kind": kind, "status": status},
@@ -178,6 +188,7 @@ def list_categories(
 @router.get("/transactions", dependencies=protected)
 def list_transactions(
     token: AuthToken,
+    service: BackofficeService,
     book_id: str | None = None,
     category_id: str | None = None,
     reversed_by: str | None = None,
@@ -185,7 +196,7 @@ def list_transactions(
     ordering: str = "-occurred_at",
 ):
     try:
-        _require_backoffice(token)
+        _require_backoffice(token, service)
         transactions = service.backoffice_transactions(book_id=book_id, category_id=category_id)
         items = serialize(transactions)
         return _filter_rows(
@@ -203,6 +214,7 @@ def list_transactions(
 @router.get("/recurring-items", dependencies=protected)
 def list_recurring_items(
     token: AuthToken,
+    service: BackofficeService,
     book_id: str | None = None,
     kind: str | None = None,
     status: str | None = None,
@@ -211,8 +223,8 @@ def list_recurring_items(
     ordering: str = "name",
 ):
     try:
-        _require_backoffice(token)
-        items = serialize(list(service.recurring.items.values()))
+        _require_backoffice(token, service)
+        items = serialize(service.backoffice_recurring_items())
         return _filter_rows(
             items,
             exact={"book_id": book_id, "kind": kind, "status": status, "currency": currency},
@@ -228,6 +240,7 @@ def list_recurring_items(
 @router.get("/audit-events", dependencies=protected)
 def list_audit_events(
     token: AuthToken,
+    service: BackofficeService,
     operation: str | None = None,
     actor_id: str | None = None,
     actor_type: str | None = None,
@@ -236,7 +249,7 @@ def list_audit_events(
     ordering: str = "-created_at",
 ):
     try:
-        _require_backoffice(token)
+        _require_backoffice(token, service)
         items = serialize(service.backoffice_audit_events())
         return _filter_rows(
             items,
@@ -255,7 +268,7 @@ def list_audit_events(
         raise_command_error(exc, "backoffice.audit_event.list", recorder=service)
 
 
-def _require_backoffice(token: AuthToken) -> None:
+def _require_backoffice(token: AuthToken, service: BackofficeService) -> None:
     service.require_backoffice(token)
 
 
