@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 from track_anywhere.security import DeploymentSecurityConfig
@@ -24,8 +25,8 @@ def test_cash_backed_investment_event_uses_storage_truth_when_memory_maps_are_st
         raise AssertionError("investment event called legacy in-memory transaction factory")
 
     service.ledger.create_transaction = fail_create_transaction
-    service.ledger.accounts[cash.account_id].currency = "USD"
-    service.ledger.accounts[wealth.account_id].book_id = "stale_book"
+    service.ledger.accounts[cash.account_id] = replace(cash, currency="USD")
+    service.ledger.accounts[wealth.account_id] = replace(wealth, book_id="stale_book")
 
     event, replay = service.record_investment_event(
         token,
@@ -59,8 +60,7 @@ def test_investment_valuation_uses_storage_truth_when_memory_maps_are_stale(tmp_
         {"name": "Valuation Truth Wealth", "type": "asset", "currency": "CNY"},
         idempotency_key="valuation-truth-wealth",
     )
-    service.ledger.accounts[wealth.account_id].currency = "USD"
-    service.ledger.accounts[wealth.account_id].book_id = "stale_book"
+    service.ledger.accounts[wealth.account_id] = replace(wealth, currency="USD", book_id="stale_book")
 
     valuation, replay = service.record_investment_valuation(
         token,

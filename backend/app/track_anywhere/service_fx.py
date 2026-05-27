@@ -23,10 +23,19 @@ class FxUseCases:
         self.assets.validate_amount(command.to_currency, command.to_amount, field_name="to_amount")
         actor = self.actor_for_book(token, source.book_id, "ledger:confirm")
         request_hash = self._hash_command(command)
+        created_accounts = []
 
         def run():
-            from_clearing_account = self._system_fx_clearing_account(command.from_currency, book_id=source.book_id)
-            to_clearing_account = self._system_fx_clearing_account(command.to_currency, book_id=source.book_id)
+            from_clearing_account = self._system_fx_clearing_account(
+                command.from_currency,
+                book_id=source.book_id,
+                created_accounts=created_accounts,
+            )
+            to_clearing_account = self._system_fx_clearing_account(
+                command.to_currency,
+                book_id=source.book_id,
+                created_accounts=created_accounts,
+            )
             from_clearing_account_id = from_clearing_account.account_id
             to_clearing_account_id = to_clearing_account.account_id
             accounts = [
@@ -109,5 +118,5 @@ class FxUseCases:
         if replay:
             self._persist_idempotency()
         else:
-            self._persist_ledger_change(transaction)
+            self._persist_ledger_change(transaction, accounts=created_accounts)
         return transaction, replay

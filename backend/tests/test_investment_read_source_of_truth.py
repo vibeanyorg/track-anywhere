@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
@@ -23,8 +25,7 @@ def test_investment_reads_use_storage_truth_when_memory_maps_are_stale(tmp_path)
         },
         idempotency_key="investment-read-truth-valuation",
     )
-    service.ledger.accounts[wealth.account_id].currency = "USD"
-    service.ledger.accounts[wealth.account_id].book_id = "stale_book"
+    service.ledger.accounts[wealth.account_id] = replace(wealth, currency="USD", book_id="stale_book")
 
     events = service.list_investment_events(token, wealth.account_id)
     valuations = service.list_investment_valuations(token, wealth.account_id)

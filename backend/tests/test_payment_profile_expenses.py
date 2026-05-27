@@ -55,7 +55,15 @@ def _setup_safepal_payment_profile(*, opening_balance: str = "277.44", idempoten
 
 
 def _system_account_id(service: FinanceService, *, account_type: str, currency: str, subtype: str) -> str:
-    for account in service.ledger.accounts.values():
+    accounts = service.storage.list_accounts(
+        book_id="book_default",
+        type=account_type,
+        currency=currency,
+        institution_type="system",
+        subtype=subtype,
+        institution="track-anywhere",
+    )
+    for account in accounts:
         if (
             account.type == account_type
             and account.currency == currency

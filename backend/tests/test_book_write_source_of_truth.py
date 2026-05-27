@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
@@ -24,8 +26,8 @@ def test_book_scoped_transaction_uses_storage_truth_when_memory_maps_are_stale(t
         {"name": "Travel Truth Food", "type": "expense", "currency": "CNY"},
         idempotency_key="book-truth-food",
     )
-    service.ledger.accounts[cash.account_id].book_id = "stale_book"
-    service.ledger.accounts[food.account_id].book_id = "stale_book"
+    service.ledger.accounts[cash.account_id] = replace(cash, book_id="stale_book")
+    service.ledger.accounts[food.account_id] = replace(food, book_id="stale_book")
 
     transaction, replay = service.record_book_transaction(
         token,

@@ -107,6 +107,7 @@ def benchmark_current_incremental(service: FinanceService, state: dict[str, Any]
 
 def benchmark_legacy_full_state(service: FinanceService, state: dict[str, Any], iterations: int) -> list[float]:
     samples: list[float] = []
+    service.storage.load_into(service)
     for index in range(iterations):
         started = time.perf_counter()
         service.ledger.create_transaction(

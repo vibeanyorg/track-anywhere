@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import re
 from decimal import Decimal
 from pathlib import Path
@@ -58,8 +59,8 @@ def test_core_transaction_writes_use_storage_truth_when_memory_maps_are_stale(tm
         idempotency_key="truth-write-category",
     )
 
-    service.ledger.accounts[cash.account_id].currency = "USD"
-    service.ledger.accounts[expense_account.account_id].book_id = "stale_book"
+    service.ledger.accounts[cash.account_id] = replace(cash, currency="USD")
+    service.ledger.accounts[expense_account.account_id] = replace(expense_account, book_id="stale_book")
     service.categories.categories[category.category_id].kind = "income"
 
     transfer, _ = service.record_transaction(
@@ -126,9 +127,9 @@ def test_fx_exchange_uses_storage_truth_when_memory_maps_are_stale(tmp_path):
         raise AssertionError("FX exchange called legacy in-memory transaction factory")
 
     service.ledger.create_transaction = fail_create_transaction
-    service.ledger.accounts[cny.account_id].currency = "USD"
-    service.ledger.accounts[usd.account_id].book_id = "stale_book"
-    service.ledger.accounts[fee.account_id].type = "asset"
+    service.ledger.accounts[cny.account_id] = replace(cny, currency="USD")
+    service.ledger.accounts[usd.account_id] = replace(usd, book_id="stale_book")
+    service.ledger.accounts[fee.account_id] = replace(fee, type="asset")
 
     transaction, replay = service.record_fx_exchange(
         token,
@@ -275,8 +276,8 @@ def test_payment_profile_expense_uses_storage_truth_when_memory_maps_are_stale(t
         },
         idempotency_key="payment-truth-profile",
     )
-    service.ledger.accounts[card.account_id].currency = "EUR"
-    service.ledger.accounts[usd24.account_id].book_id = "stale_book"
+    service.ledger.accounts[card.account_id] = replace(card, currency="EUR")
+    service.ledger.accounts[usd24.account_id] = replace(usd24, book_id="stale_book")
     service.categories.categories[category.category_id].kind = "income"
 
     transaction, replay = service.record_payment_profile_expense(

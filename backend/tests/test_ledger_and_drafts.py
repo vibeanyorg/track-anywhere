@@ -23,6 +23,8 @@ def test_confirmed_transactions_must_balance():
         {"name": "Food", "type": "expense", "currency": "CNY"},
         idempotency_key="acc-food",
     )
+    service.ledger.accounts[cash.account_id] = cash
+    service.ledger.accounts[expense.account_id] = expense
 
     with pytest.raises(ValidationError):
         service.ledger.create_transaction(
@@ -254,6 +256,8 @@ def test_category_summary_uses_persisted_lines_only(tmp_path):
         {"target_type": "category_node", "target_id": category.category_id},
         idempotency_key="legacy-line-budget-target",
     )
+    service.ledger.accounts[cash.account_id] = cash
+    service.ledger.accounts[expense_account.account_id] = expense_account
     transaction = service.ledger.create_transaction(
         "line-only categorized tx",
         [
@@ -268,7 +272,7 @@ def test_category_summary_uses_persisted_lines_only(tmp_path):
 
     assert summary["groups"] == []
     assert transaction.lines == []
-    service._add_category_line_for_transaction(transaction, category)
+    service._add_category_line_for_transaction(transaction, category, accounts=(cash, expense_account))
     service._persist_ledger_change(transaction)
 
     restarted = FinanceService(DeploymentSecurityConfig(), database_url=database_url)

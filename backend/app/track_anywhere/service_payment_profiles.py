@@ -44,6 +44,7 @@ class PaymentProfileUseCases:
 
         actor = self.actor_for_book(token, profile.book_id, "ledger:confirm")
         request_hash = self._hash_command(command)
+        created_accounts = []
 
         def run():
             confirmed_backing_balance = self.storage.account_balance(profile.backing_account_id).get(
@@ -57,11 +58,17 @@ class PaymentProfileUseCases:
                 "expense",
                 profile.instrument_currency,
                 book_id=profile.book_id,
+                created_accounts=created_accounts,
             )
-            fx_backing_account = self._system_fx_clearing_account(profile.backing_currency, book_id=profile.book_id)
+            fx_backing_account = self._system_fx_clearing_account(
+                profile.backing_currency,
+                book_id=profile.book_id,
+                created_accounts=created_accounts,
+            )
             fx_instrument_account = self._system_fx_clearing_account(
                 profile.instrument_currency,
                 book_id=profile.book_id,
+                created_accounts=created_accounts,
             )
             expense_account_id = expense_account.account_id
             fx_backing_account_id = fx_backing_account.account_id
@@ -119,7 +126,7 @@ class PaymentProfileUseCases:
         if replay:
             self._persist_idempotency()
         else:
-            self._persist_ledger_change(transaction)
+            self._persist_ledger_change(transaction, accounts=created_accounts)
         return transaction, replay
 
     def create_payment_profile(self, token: str, payload: dict[str, Any], *, idempotency_key: str):

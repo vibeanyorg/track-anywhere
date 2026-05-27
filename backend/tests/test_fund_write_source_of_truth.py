@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 from track_anywhere.security import DeploymentSecurityConfig
@@ -29,9 +30,9 @@ def test_fund_flows_use_storage_truth_when_memory_maps_are_stale(tmp_path):
         raise AssertionError("fund flow called legacy in-memory transaction factory")
 
     service.ledger.create_transaction = fail_create_transaction
-    service.ledger.accounts[cash.account_id].currency = "USD"
-    service.ledger.accounts[expense.account_id].book_id = "stale_book"
-    service.ledger.accounts[fund.account_id].currency = "USD"
+    service.ledger.accounts[cash.account_id] = replace(cash, currency="USD")
+    service.ledger.accounts[expense.account_id] = replace(expense, book_id="stale_book")
+    service.ledger.accounts[fund.account_id] = replace(service.storage.get_account(fund.account_id), currency="USD")
 
     allocation, replay = service.allocate_fund(
         token,

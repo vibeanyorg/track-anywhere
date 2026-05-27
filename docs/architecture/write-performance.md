@@ -15,30 +15,30 @@ Latest local result on 2026-05-27:
 ```json
 {
   "current_incremental_ms": {
-    "max": 2.553,
-    "median": 1.683,
-    "min": 1.425,
-    "p95": 2.529
+    "max": 1.748,
+    "median": 1.46,
+    "min": 1.34,
+    "p95": 1.584
   },
   "iterations": 20,
   "legacy_full_state_ms": {
-    "max": 268.89,
-    "median": 205.282,
-    "min": 198.759,
-    "p95": 234.206
+    "max": 412.763,
+    "median": 361.15,
+    "min": 357.232,
+    "p95": 387.124
   },
   "seed_transactions": 500,
-  "speedup_median": 121.97,
-  "speedup_p95": 92.61
+  "speedup_median": 247.36,
+  "speedup_p95": 244.4
 }
 ```
 
 Interpretation:
 
-- Current command-scoped incremental write median: 1.683 ms.
-- Legacy full-state baseline median: 205.282 ms.
-- Median speedup: 121.97x.
-- p95 speedup: 92.61x.
+- Current command-scoped incremental write median: 1.46 ms.
+- Legacy full-state baseline median: 361.15 ms.
+- Median speedup: 247.36x.
+- p95 speedup: 244.4x.
 
 The legacy baseline is intentionally kept in the benchmark script rather than
 production storage code, so full-state persistence cannot be called by API write

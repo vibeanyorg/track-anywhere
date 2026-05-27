@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
@@ -20,8 +22,7 @@ def test_account_metadata_update_uses_storage_truth_when_memory_map_is_stale(tmp
         idempotency_key="metadata-truth-account",
     )
     original_book_id = account.book_id
-    service.ledger.accounts[account.account_id].book_id = "stale_book"
-    service.ledger.accounts[account.account_id].subtype = "stale_subtype"
+    service.ledger.accounts[account.account_id] = replace(account, book_id="stale_book", subtype="stale_subtype")
 
     updated, replay = service.update_account_metadata(
         token,
@@ -55,8 +56,7 @@ def test_payment_instrument_create_uses_storage_truth_when_memory_map_is_stale(t
         idempotency_key="instrument-truth-card",
     )
     original_book_id = card.book_id
-    service.ledger.accounts[card.account_id].book_id = "stale_book"
-    service.ledger.accounts[card.account_id].subtype = "debit_card"
+    service.ledger.accounts[card.account_id] = replace(card, book_id="stale_book", subtype="debit_card")
 
     instrument, replay = service.create_payment_instrument(
         token,

@@ -112,8 +112,10 @@ class PartialStorageWriters:
         service.audit.mark_persisted()
         service.idempotency.mark_clean()
 
-    def save_recurring_change(self, service: Any, items, *, drafts=()) -> None:
-        dirty_accounts = service.ledger.dirty_accounts()
+    def save_recurring_change(self, service: Any, items, *, drafts=(), accounts=()) -> None:
+        dirty_accounts_by_id = {account.account_id: account for account in service.ledger.dirty_accounts()}
+        dirty_accounts_by_id.update({account.account_id: account for account in accounts})
+        dirty_accounts = list(dirty_accounts_by_id.values())
         with self.unit_of_work() as uow:
             uow.catalog.save_recurring_items(items)
             uow.catalog.save_drafts(drafts)
@@ -127,8 +129,10 @@ class PartialStorageWriters:
         service.audit.mark_persisted()
         service.idempotency.mark_clean()
 
-    def save_finance_change(self, service: Any, *, funds=(), budgets=False, transactions=(), actions=()) -> None:
-        dirty_accounts = service.ledger.dirty_accounts()
+    def save_finance_change(self, service: Any, *, funds=(), budgets=False, transactions=(), accounts=(), actions=()) -> None:
+        dirty_accounts_by_id = {account.account_id: account for account in service.ledger.dirty_accounts()}
+        dirty_accounts_by_id.update({account.account_id: account for account in accounts})
+        dirty_accounts = list(dirty_accounts_by_id.values())
         with self.unit_of_work() as uow:
             uow.catalog.save_funds(funds)
             if budgets:
@@ -147,8 +151,10 @@ class PartialStorageWriters:
         service.audit.mark_persisted()
         service.idempotency.mark_clean()
 
-    def save_investment_change(self, service: Any, *, events=(), valuations=(), transactions=()) -> None:
-        dirty_accounts = service.ledger.dirty_accounts()
+    def save_investment_change(self, service: Any, *, events=(), valuations=(), transactions=(), accounts=()) -> None:
+        dirty_accounts_by_id = {account.account_id: account for account in service.ledger.dirty_accounts()}
+        dirty_accounts_by_id.update({account.account_id: account for account in accounts})
+        dirty_accounts = list(dirty_accounts_by_id.values())
         with self.unit_of_work() as uow:
             uow.catalog.save_investment_events(events)
             uow.catalog.save_investment_valuations(valuations)

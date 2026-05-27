@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 from .books import DEFAULT_BOOK_ID
 from .commands import CreateAccountCommand, UpdateAccountMetadataCommand
@@ -19,9 +20,10 @@ class AccountUseCases:
         self.assets.validate_amount(command.currency, command.opening_balance, field_name="opening balance")
         request_hash = self._hash_command(command)
         created_transactions = []
+        created_accounts = []
 
         def run():
-            account = self.ledger.create_account(
+            account = self._new_account(
                 command.name,
                 command.type,
                 command.currency,
@@ -30,8 +32,9 @@ class AccountUseCases:
                 institution=command.institution,
                 book_id=book_id,
             )
+            created_accounts.append(account)
             if command.opening_balance:
-                equity = self.ledger.create_account(
+                equity = self._new_account(
                     f"Opening equity for {command.name}",
                     "equity",
                     command.currency,
@@ -40,6 +43,7 @@ class AccountUseCases:
                     institution="track-anywhere",
                     book_id=book_id,
                 )
+                created_accounts.append(equity)
                 transaction = build_transaction(
                     memo=f"Opening balance: {command.name}",
                     purpose="opening_balance",
@@ -70,7 +74,7 @@ class AccountUseCases:
         if replay:
             self._persist_idempotency()
         else:
-            self._persist_ledger_change(*created_transactions)
+            self._persist_ledger_change(*created_transactions, accounts=created_accounts)
         return account, replay
 
     def list_accounts(
@@ -210,3 +214,25 @@ class AccountUseCases:
         else:
             self._persist_ledger_change(accounts=(account,))
         return account, replay
+
+    @staticmethod
+    def _new_account(
+        name: str,
+        type: str,
+        currency: str,
+        *,
+        institution_type: str | None = None,
+        subtype: str | None = None,
+        institution: str | None = None,
+        book_id: str = DEFAULT_BOOK_ID,
+    ) -> Account:
+        return Account(
+            account_id=f"acc_{uuid4().hex}",
+            name=name,
+            type=type,
+            currency=currency,
+            institution_type=institution_type,
+            subtype=subtype,
+            institution=institution,
+            book_id=book_id,
+        )

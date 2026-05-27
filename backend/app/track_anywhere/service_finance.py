@@ -18,10 +18,11 @@ class FinancialUseCases(PaymentProfileUseCases):
         command = commands.CreateFundCommand.model_validate(payload)
         self.assets.ensure(command.currency)
         request_hash = self._hash_command(command)
+        created_accounts = []
 
         def run():
             book_id = self.books.ensure_default().book_id
-            account = self.ledger.create_account(
+            account = self._new_account(
                 command.name,
                 "fund",
                 command.currency,
@@ -30,6 +31,7 @@ class FinancialUseCases(PaymentProfileUseCases):
                 institution="track-anywhere",
                 book_id=book_id,
             )
+            created_accounts.append(account)
             fund = self.budgets.create(name=command.name, account_id=account.account_id, currency=command.currency, book_id=book_id)
             self.audit.record(operation="fund.create", actor=actor, entity_ref=fund.fund_id, details=command.model_dump())
             return fund
@@ -41,7 +43,7 @@ class FinancialUseCases(PaymentProfileUseCases):
             request_hash=request_hash,
             fn=run,
         )
-        self._persist_replay_or(replay, lambda: self._persist_finance_change(funds=(fund,)))
+        self._persist_replay_or(replay, lambda: self._persist_finance_change(funds=(fund,), accounts=created_accounts))
         return fund, replay
 
     def allocate_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):

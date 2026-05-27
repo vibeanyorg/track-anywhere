@@ -84,9 +84,15 @@ class LedgerUseCases:
         if category.kind != "expense":
             raise ValidationError("expense record requires an expense category")
         request_hash = self._hash_command(command)
+        created_accounts = []
 
         def run():
-            expense_account = self._system_category_account("expense", command.currency, book_id=source.book_id)
+            expense_account = self._system_category_account(
+                "expense",
+                command.currency,
+                book_id=source.book_id,
+                created_accounts=created_accounts,
+            )
             expense_account_id = expense_account.account_id
             transaction = build_transaction(
                 memo=command.memo,
@@ -118,7 +124,7 @@ class LedgerUseCases:
         if replay:
             self._persist_idempotency()
         else:
-            self._persist_ledger_change(transaction)
+            self._persist_ledger_change(transaction, accounts=created_accounts)
         return transaction, replay
 
     def record_income(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -134,9 +140,15 @@ class LedgerUseCases:
         if category.kind != "income":
             raise ValidationError("income record requires an income category")
         request_hash = self._hash_command(command)
+        created_accounts = []
 
         def run():
-            income_account = self._system_category_account("income", command.currency, book_id=target.book_id)
+            income_account = self._system_category_account(
+                "income",
+                command.currency,
+                book_id=target.book_id,
+                created_accounts=created_accounts,
+            )
             income_account_id = income_account.account_id
             transaction = build_transaction(
                 memo=command.memo,
@@ -168,7 +180,7 @@ class LedgerUseCases:
         if replay:
             self._persist_idempotency()
         else:
-            self._persist_ledger_change(transaction)
+            self._persist_ledger_change(transaction, accounts=created_accounts)
         return transaction, replay
 
     def list_transactions(

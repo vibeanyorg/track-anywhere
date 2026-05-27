@@ -41,12 +41,17 @@ class InvestmentUseCases:
                 raise ValidationError("investment cash account must be an asset account")
         request_hash = self._hash_command(command)
         created_transaction = None
+        created_accounts = []
 
         def run():
             nonlocal created_transaction
             linked_transaction_id = command.transaction_id
             if command.cash_account_id is not None:
-                created_transaction = self._post_investment_event_transaction(command, account.book_id)
+                created_transaction = self._post_investment_event_transaction(
+                    command,
+                    account.book_id,
+                    created_accounts=created_accounts,
+                )
                 linked_transaction_id = created_transaction.transaction_id
             event = self.investments.record(
                 book_id=account.book_id,
@@ -68,10 +73,10 @@ class InvestmentUseCases:
             self._persist_idempotency()
         else:
             transactions = (created_transaction,) if created_transaction is not None else ()
-            self._persist_investment_change(events=(event,), transactions=transactions)
+            self._persist_investment_change(events=(event,), transactions=transactions, accounts=created_accounts)
         return event, replay
 
-    def _post_investment_event_transaction(self, command: RecordInvestmentEventCommand, book_id: str):
+    def _post_investment_event_transaction(self, command: RecordInvestmentEventCommand, book_id: str, *, created_accounts):
         assert command.cash_account_id is not None
         cash_account = self.storage.get_account(command.cash_account_id)
         investment_account = self.storage.get_account(command.account_id)
@@ -90,7 +95,12 @@ class InvestmentUseCases:
             accounts = [investment_account, cash_account]
             line_type = "investment_sell"
         elif command.event_type == "income":
-            income_account = self._system_category_account("income", command.currency, book_id=book_id)
+            income_account = self._system_category_account(
+                "income",
+                command.currency,
+                book_id=book_id,
+                created_accounts=created_accounts,
+            )
             income_account_id = income_account.account_id
             postings = [
                 Posting(income_account_id, -command.amount, command.currency),

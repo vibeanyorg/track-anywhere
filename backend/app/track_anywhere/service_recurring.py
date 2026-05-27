@@ -159,6 +159,7 @@ class RecurringUseCases:
             raise PolicyDenied("credential lacks required scope: capture:draft")
         command = GenerateRecurringDraftsCommand.model_validate(payload)
         request_hash = self._hash_command_payload(command, {"book_id": book_id})
+        created_accounts = []
 
         def run():
             result = {"as_of": command.as_of.isoformat(), "created": [], "skipped": []}
@@ -173,7 +174,7 @@ class RecurringUseCases:
                 if item.last_draft_renewal_date == renewal_date:
                     result["skipped"].append(self._recurring_skip(item, "already_generated", renewal_date))
                     continue
-                created = self._create_recurring_draft(item, renewal_date)
+                created = self._create_recurring_draft(item, renewal_date, created_accounts=created_accounts)
                 result["created"].append(created)
             self.audit.record(
                 operation="recurring.draft.generate",
@@ -197,7 +198,7 @@ class RecurringUseCases:
             drafts = [self.drafts.drafts[draft_id] for draft_id in draft_ids]
             recurring_ids = [item["recurring_id"] for item in result["created"]]
             recurring_items = [self.recurring.items[recurring_id] for recurring_id in recurring_ids]
-            self._persist_recurring_change(*recurring_items, drafts=drafts)
+            self._persist_recurring_change(*recurring_items, drafts=drafts, accounts=created_accounts)
         return result, replay
 
     def _validate_recurring_references(self, command: CreateRecurringItemCommand, book_id: str) -> None:
@@ -240,10 +241,11 @@ class RecurringUseCases:
         if command.recurrence is not None:
             item.recurrence = Recurrence(**command.recurrence.model_dump())
 
-    def _create_recurring_draft(self, item: RecurringItem, renewal_date):
+    def _create_recurring_draft(self, item: RecurringItem, renewal_date, *, created_accounts):
         if item.amount is None or item.currency is None or item.source_account_id is None or item.category_id is None:
             raise ValidationError("paid recurring item lost required draft fields")
-        expense_account_id = self._system_category_account_id("expense", item.currency, book_id=item.book_id)
+        expense_account = self._system_category_account("expense", item.currency, book_id=item.book_id, created_accounts=created_accounts)
+        expense_account_id = expense_account.account_id
         draft = self.drafts.create(
             memo=f"Recurring renewal: {item.name} ({renewal_date.isoformat()})",
             proposed_postings=[
@@ -273,8 +275,7 @@ class RecurringUseCases:
             "status": "created",
         }
 
-    @staticmethod
-    def _recurring_skip(item: RecurringItem, reason: str, renewal_date) -> dict[str, Any]:
+    def _recurring_skip(self, item: RecurringItem, reason: str, renewal_date) -> dict[str, Any]:
         return {
             "recurring_id": item.recurring_id,
             "name": item.name,

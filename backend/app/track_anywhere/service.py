@@ -156,20 +156,21 @@ class FinanceService(
     def _persist_draft_change(self, *drafts, transactions=()) -> None:
         self.storage.save_draft_change(self, drafts, transactions=transactions)
 
-    def _persist_recurring_change(self, *items, drafts=()) -> None:
-        self.storage.save_recurring_change(self, items, drafts=drafts)
+    def _persist_recurring_change(self, *items, drafts=(), accounts=()) -> None:
+        self.storage.save_recurring_change(self, items, drafts=drafts, accounts=accounts)
 
-    def _persist_finance_change(self, *, funds=(), budgets: bool = False, transactions=(), actions=()) -> None:
+    def _persist_finance_change(self, *, funds=(), budgets: bool = False, transactions=(), accounts=(), actions=()) -> None:
         self.storage.save_finance_change(
             self,
             funds=funds,
             budgets=budgets,
             transactions=transactions,
+            accounts=accounts,
             actions=actions,
         )
 
-    def _persist_investment_change(self, *, events=(), valuations=(), transactions=()) -> None:
-        self.storage.save_investment_change(self, events=events, valuations=valuations, transactions=transactions)
+    def _persist_investment_change(self, *, events=(), valuations=(), transactions=(), accounts=()) -> None:
+        self.storage.save_investment_change(self, events=events, valuations=valuations, transactions=transactions, accounts=accounts)
 
     def _persist_credit_card_profile_change(self, *profiles) -> None:
         self.storage.save_credit_card_profile_change(self, profiles)
