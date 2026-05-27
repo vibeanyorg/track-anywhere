@@ -189,7 +189,7 @@ def test_reverse_transaction_uses_storage_truth_when_memory_transaction_is_missi
         },
         idempotency_key="reverse-truth-expense",
     )
-    service.ledger.transactions.pop(transaction.transaction_id)
+    service.ledger.transactions.pop(transaction.transaction_id, None)
 
     reversal, replay = service.reverse_transaction(
         token,

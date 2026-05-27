@@ -44,7 +44,7 @@ def test_reversal_restores_balance_and_records_reversal_link():
     )
 
     assert service.account_balance(token, cash.account_id)["official_balance"]["amount"] == "100"
-    assert transaction.reversed_by == reversal.transaction_id
+    assert service.get_transaction(token, transaction.transaction_id).reversed_by == reversal.transaction_id
     assert reversal.reverses_transaction_id == transaction.transaction_id
 
     with pytest.raises(ValidationError):

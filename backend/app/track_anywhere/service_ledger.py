@@ -46,7 +46,6 @@ class LedgerUseCases:
             )
             if command.category_id is not None:
                 self._add_category_line_for_transaction(transaction, self.storage.get_category(command.category_id))
-            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="ledger.transaction.record",
                 actor=actor,
@@ -97,7 +96,6 @@ class LedgerUseCases:
                 scale_lookup=self.assets.scale_for,
             )
             self._add_category_line_for_transaction(transaction, category)
-            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="expense.record",
                 actor=actor,
@@ -148,7 +146,6 @@ class LedgerUseCases:
                 scale_lookup=self.assets.scale_for,
             )
             self._add_category_line_for_transaction(transaction, category)
-            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="income.record",
                 actor=actor,
@@ -259,13 +256,6 @@ class LedgerUseCases:
                 scale_lookup=self.assets.scale_for,
             )
             transaction.reversed_by = reversal.transaction_id
-            legacy_transaction = self.ledger.transactions.get(transaction.transaction_id)
-            if legacy_transaction is not None:
-                legacy_transaction.reversed_by = reversal.transaction_id
-                self.ledger.transactions[transaction.transaction_id] = legacy_transaction
-            else:
-                self.ledger.transactions[transaction.transaction_id] = transaction
-            self.ledger.transactions[reversal.transaction_id] = reversal
             self.audit.record(
                 operation="ledger.reverse",
                 actor=actor,

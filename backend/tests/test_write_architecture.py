@@ -54,6 +54,18 @@ def test_financial_use_cases_do_not_shadow_investment_use_cases():
     assert shadowed_investment_methods.isdisjoint(FinancialUseCases.__dict__)
 
 
+def test_core_ledger_write_use_cases_do_not_mutate_transaction_mirror():
+    repo_root = Path.cwd()
+    path = repo_root / "backend/app/track_anywhere/service_ledger.py"
+    offenders = []
+    pattern = re.compile(r"\bself\.ledger\.transactions\[")
+    for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+        if pattern.search(line):
+            offenders.append(f"{path.relative_to(repo_root)}:{line_number}: {line.strip()}")
+
+    assert offenders == []
+
+
 def test_common_writes_do_not_depend_on_legacy_full_snapshot_persistence(tmp_path):
     service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
     token = service.owner_token
