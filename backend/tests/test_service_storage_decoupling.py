@@ -101,6 +101,22 @@ def test_catalog_adjacent_write_routers_use_service_dependency_boundaries():
         assert "recorder=service" in source
 
 
+def test_operational_write_routers_use_service_dependency_boundaries():
+    ports = (BACKEND / "api_service_ports.py").read_text()
+    expectations = [
+        ("credentials.py", "CredentialService", "CredentialRouteService"),
+        ("recurring.py", "RecurringService", "RecurringRouteService"),
+    ]
+
+    for filename, alias, protocol in expectations:
+        source = (BACKEND / f"api_routers/{filename}").read_text()
+        assert "from ..api_runtime import service" not in source
+        assert f"from ..api_service_ports import {alias}" in source
+        assert f"class {protocol}(AuditRecorder, Protocol)" in ports
+        assert f"{alias} = Annotated[{protocol}, Depends(get_service)]" in ports
+        assert "recorder=service" in source
+
+
 def test_api_error_auditing_has_no_runtime_singleton_fallback():
     errors_source = (BACKEND / "api_errors.py").read_text()
     assert "api_runtime import service" not in errors_source
