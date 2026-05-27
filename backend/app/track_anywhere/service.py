@@ -219,7 +219,7 @@ class FinanceService(
             draft.book_id = draft.book_id or self._book_id_for_postings(draft.proposed_postings)
         for item in self.recurring.items.values():
             if not item.book_id and item.source_account_id is not None:
-                item.book_id = self.ledger.get_account(item.source_account_id).book_id
+                item.book_id = self.storage.get_account(item.source_account_id).book_id
             if item.currency is not None:
                 self.assets.ensure(item.currency)
         for event in self.investments.events.values():

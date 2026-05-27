@@ -90,8 +90,8 @@ class InvestmentUseCases:
             accounts = [investment_account, cash_account]
             line_type = "investment_sell"
         elif command.event_type == "income":
-            income_account_id = self._system_category_account_id("income", command.currency, book_id=book_id)
-            income_account = self._transaction_account(income_account_id)
+            income_account = self._system_category_account("income", command.currency, book_id=book_id)
+            income_account_id = income_account.account_id
             postings = [
                 Posting(income_account_id, -command.amount, command.currency),
                 Posting(command.cash_account_id, command.amount, command.currency),

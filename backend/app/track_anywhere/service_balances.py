@@ -21,8 +21,8 @@ class BalanceUseCases:
         def run():
             if account.currency != command.currency:
                 raise ValidationError("balance adjustment currency must match account currency")
-            adjustment_account_id = self._system_adjustment_account_id(command.currency, book_id=account.book_id)
-            adjustment_account = self._transaction_account(adjustment_account_id)
+            adjustment_account = self._system_adjustment_account(command.currency, book_id=account.book_id)
+            adjustment_account_id = adjustment_account.account_id
             transaction = build_transaction(
                 memo=command.memo,
                 occurred_at=command.occurred_at,
@@ -95,20 +95,28 @@ class BalanceUseCases:
         return result
 
     def _system_adjustment_account_id(self, currency: str, *, book_id: str | None = None) -> str:
+        return self._system_adjustment_account(currency, book_id=book_id).account_id
+
+    def _system_adjustment_account(self, currency: str, *, book_id: str | None = None):
         book_id = book_id or self.books.ensure_default().book_id
         key = f"{book_id}:{currency}"
         account_id = self.adjustment_account_ids.get(key) or self.adjustment_account_ids.get(currency)
         if account_id is not None:
-            return account_id
-        account_id = self._find_system_account_id(
+            try:
+                return self.storage.get_account(account_id)
+            except NotFound:
+                for account in self.ledger.dirty_accounts():
+                    if account.account_id == account_id:
+                        return account
+        account = self._find_system_account(
             type="system",
             currency=currency,
             book_id=book_id,
             subtype="system_adjustment",
         )
-        if account_id is not None:
-            self.adjustment_account_ids[key] = account_id
-            return account_id
+        if account is not None:
+            self.adjustment_account_ids[key] = account.account_id
+            return account
         account = self.ledger.create_account(
             f"System balance adjustments {currency}",
             "system",
@@ -119,18 +127,21 @@ class BalanceUseCases:
             book_id=book_id,
         )
         self.adjustment_account_ids[key] = account.account_id
-        return account.account_id
+        return account
 
     def _system_fx_clearing_account_id(self, currency: str, *, book_id: str | None = None) -> str:
+        return self._system_fx_clearing_account(currency, book_id=book_id).account_id
+
+    def _system_fx_clearing_account(self, currency: str, *, book_id: str | None = None):
         book_id = book_id or self.books.ensure_default().book_id
-        account_id = self._find_system_account_id(
+        account = self._find_system_account(
             type="system",
             currency=currency,
             book_id=book_id,
             subtype="fx_clearing",
         )
-        if account_id is not None:
-            return account_id
+        if account is not None:
+            return account
         account = self.ledger.create_account(
             f"System FX clearing {currency}",
             "system",
@@ -140,14 +151,17 @@ class BalanceUseCases:
             institution="track-anywhere",
             book_id=book_id,
         )
-        return account.account_id
+        return account
 
     def _system_category_account_id(self, kind: str, currency: str, *, book_id: str | None = None) -> str:
+        return self._system_category_account(kind, currency, book_id=book_id).account_id
+
+    def _system_category_account(self, kind: str, currency: str, *, book_id: str | None = None):
         book_id = book_id or self.books.ensure_default().book_id
         subtype = f"{kind}_clearing"
-        account_id = self._find_system_account_id(type=kind, currency=currency, book_id=book_id, subtype=subtype)
-        if account_id is not None:
-            return account_id
+        account = self._find_system_account(type=kind, currency=currency, book_id=book_id, subtype=subtype)
+        if account is not None:
+            return account
         account = self.ledger.create_account(
             f"System {kind} {currency}",
             kind,
@@ -157,7 +171,7 @@ class BalanceUseCases:
             institution="track-anywhere",
             book_id=book_id,
         )
-        return account.account_id
+        return account
 
     def _validate_transaction_category(self, category: Category, *, from_account_id: str, to_account_id: str) -> None:
         from_account = self._transaction_account(from_account_id)
@@ -168,12 +182,9 @@ class BalanceUseCases:
             raise ValidationError("income category requires an income from-account")
 
     def _transaction_account(self, account_id: str):
-        try:
-            return self.storage.get_account(account_id)
-        except NotFound:
-            return self.ledger.get_account(account_id)
+        return self.storage.get_account(account_id)
 
-    def _find_system_account_id(self, *, type: str, currency: str, book_id: str, subtype: str) -> str | None:
+    def _find_system_account(self, *, type: str, currency: str, book_id: str, subtype: str):
         matches = self.storage.list_accounts(
             book_id=book_id,
             type=type,
@@ -182,4 +193,4 @@ class BalanceUseCases:
             subtype=subtype,
             institution="track-anywhere",
         )
-        return matches[0].account_id if matches else None
+        return matches[0] if matches else None

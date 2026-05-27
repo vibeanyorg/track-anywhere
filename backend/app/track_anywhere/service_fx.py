@@ -25,13 +25,15 @@ class FxUseCases:
         request_hash = self._hash_command(command)
 
         def run():
-            from_clearing_account_id = self._system_fx_clearing_account_id(command.from_currency, book_id=source.book_id)
-            to_clearing_account_id = self._system_fx_clearing_account_id(command.to_currency, book_id=source.book_id)
+            from_clearing_account = self._system_fx_clearing_account(command.from_currency, book_id=source.book_id)
+            to_clearing_account = self._system_fx_clearing_account(command.to_currency, book_id=source.book_id)
+            from_clearing_account_id = from_clearing_account.account_id
+            to_clearing_account_id = to_clearing_account.account_id
             accounts = [
                 source,
                 target,
-                self._transaction_account(from_clearing_account_id),
-                self._transaction_account(to_clearing_account_id),
+                from_clearing_account,
+                to_clearing_account,
             ]
             postings = [
                 Posting(command.from_account_id, -command.from_amount, command.from_currency),

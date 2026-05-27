@@ -53,19 +53,19 @@ class PaymentProfileUseCases:
             if confirmed_backing_balance < backing_amount:
                 raise ValidationError("insufficient backing balance")
 
-            expense_account_id = self._system_category_account_id(
+            expense_account = self._system_category_account(
                 "expense",
                 profile.instrument_currency,
                 book_id=profile.book_id,
             )
-            fx_backing_account_id = self._system_fx_clearing_account_id(profile.backing_currency, book_id=profile.book_id)
-            fx_instrument_account_id = self._system_fx_clearing_account_id(
+            fx_backing_account = self._system_fx_clearing_account(profile.backing_currency, book_id=profile.book_id)
+            fx_instrument_account = self._system_fx_clearing_account(
                 profile.instrument_currency,
                 book_id=profile.book_id,
             )
-            expense_account = self._transaction_account(expense_account_id)
-            fx_backing_account = self._transaction_account(fx_backing_account_id)
-            fx_instrument_account = self._transaction_account(fx_instrument_account_id)
+            expense_account_id = expense_account.account_id
+            fx_backing_account_id = fx_backing_account.account_id
+            fx_instrument_account_id = fx_instrument_account.account_id
             transaction = build_transaction(
                 memo=command.memo,
                 occurred_at=command.occurred_at,
@@ -82,7 +82,11 @@ class PaymentProfileUseCases:
                 accounts=[instrument, expense_account, backing, fx_backing_account, fx_instrument_account],
                 scale_lookup=self.assets.scale_for,
             )
-            self._add_category_line_for_transaction(transaction, category)
+            self._add_category_line_for_transaction(
+                transaction,
+                category,
+                accounts=(instrument, expense_account, backing, fx_backing_account, fx_instrument_account),
+            )
             add_transaction_line(
                 transaction,
                 line_type="fx_exchange",

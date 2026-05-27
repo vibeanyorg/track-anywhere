@@ -45,7 +45,11 @@ class LedgerUseCases:
                 scale_lookup=self.assets.scale_for,
             )
             if command.category_id is not None:
-                self._add_category_line_for_transaction(transaction, self.storage.get_category(command.category_id))
+                self._add_category_line_for_transaction(
+                    transaction,
+                    self.storage.get_category(command.category_id),
+                    accounts=(from_account, to_account),
+                )
             self.audit.record(
                 operation="ledger.transaction.record",
                 actor=actor,
@@ -82,8 +86,8 @@ class LedgerUseCases:
         request_hash = self._hash_command(command)
 
         def run():
-            expense_account_id = self._system_category_account_id("expense", command.currency, book_id=source.book_id)
-            expense_account = self._transaction_account(expense_account_id)
+            expense_account = self._system_category_account("expense", command.currency, book_id=source.book_id)
+            expense_account_id = expense_account.account_id
             transaction = build_transaction(
                 memo=command.memo,
                 occurred_at=command.occurred_at,
@@ -95,7 +99,7 @@ class LedgerUseCases:
                 accounts=[source, expense_account],
                 scale_lookup=self.assets.scale_for,
             )
-            self._add_category_line_for_transaction(transaction, category)
+            self._add_category_line_for_transaction(transaction, category, accounts=(source, expense_account))
             self.audit.record(
                 operation="expense.record",
                 actor=actor,
@@ -132,8 +136,8 @@ class LedgerUseCases:
         request_hash = self._hash_command(command)
 
         def run():
-            income_account_id = self._system_category_account_id("income", command.currency, book_id=target.book_id)
-            income_account = self._transaction_account(income_account_id)
+            income_account = self._system_category_account("income", command.currency, book_id=target.book_id)
+            income_account_id = income_account.account_id
             transaction = build_transaction(
                 memo=command.memo,
                 occurred_at=command.occurred_at,
@@ -145,7 +149,7 @@ class LedgerUseCases:
                 accounts=[income_account, target],
                 scale_lookup=self.assets.scale_for,
             )
-            self._add_category_line_for_transaction(transaction, category)
+            self._add_category_line_for_transaction(transaction, category, accounts=(income_account, target))
             self.audit.record(
                 operation="income.record",
                 actor=actor,
