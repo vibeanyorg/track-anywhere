@@ -245,6 +245,12 @@ def test_storage_change_writers_accept_single_explicit_change_set():
     assert offenders == []
 
 
+def test_storage_repositories_are_grouped_by_bounded_context():
+    assert not (BACKEND / "storage_repositories.py").exists()
+    for module in {"catalog.py", "finance.py", "ledger.py", "security.py", "workflow.py"}:
+        assert (BACKEND / f"storage_repositories/{module}").exists()
+
+
 def test_service_write_helpers_use_commit_vocabulary():
     offenders = []
     forbidden = re.compile(r"\b(def|self)\._persist_")
