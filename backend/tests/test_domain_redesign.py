@@ -161,7 +161,7 @@ def test_budget_targets_and_spending_report_use_lines(tmp_path):
     assert execution["remaining"] == "955"
 
 
-def test_budget_execution_supports_project_and_merchant_targets(tmp_path):
+def test_budget_execution_supports_project_and_counterparty_targets(tmp_path):
     service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
     token = service.owner_token
     book = service.get_book(token, "book_default")
@@ -175,7 +175,7 @@ def test_budget_execution_supports_project_and_merchant_targets(tmp_path):
     budget, _ = service.create_budget(
         token,
         book.book_id,
-        {"name": "项目商户预算", "period": "monthly", "currency": "CNY", "total_amount": "300"},
+        {"name": "项目对手方预算", "period": "monthly", "currency": "CNY", "total_amount": "300"},
         idempotency_key="dimension-budget",
     )
     project_target, _ = service.add_budget_target(
@@ -189,7 +189,7 @@ def test_budget_execution_supports_project_and_merchant_targets(tmp_path):
         token,
         book.book_id,
         budget.budget_id,
-        {"target_type": "merchant", "target_id": "merchant_didi"},
+        {"target_type": "counterparty", "target_id": "merchant_didi"},
         idempotency_key="dimension-counterparty-target",
     )
     transaction, _ = service.record_expense(

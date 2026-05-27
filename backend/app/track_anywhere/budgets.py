@@ -148,7 +148,7 @@ class BudgetBook:
         metadata: dict[str, str] | None = None,
     ) -> BudgetTarget:
         self.get_budget(budget_id)
-        if target_type not in {"book", "category_node", "category_subtree", "project", "merchant"}:
+        if target_type not in {"book", "category_node", "category_subtree", "project", "counterparty"}:
             raise ValidationError("budget target type is invalid")
         if mode not in {"include", "exclude"}:
             raise ValidationError("budget target mode is invalid")

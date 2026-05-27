@@ -45,7 +45,7 @@ def test_alembic_clears_legacy_duplicate_transaction_memos(tmp_path):
         payment_instrument_columns = {row[1] for row in connection.execute("pragma table_info(payment_instruments)").fetchall()}
         counterparty_columns = {row[1] for row in connection.execute("pragma table_info(counterparties)").fetchall()}
 
-    assert version == "0015_transaction_line_counterparties"
+    assert version == "0016_budget_counterparty_targets"
     assert PAYMENT_PROFILE_COLUMNS <= payment_profile_columns
     assert PAYMENT_INSTRUMENT_COLUMNS <= payment_instrument_columns
     assert COUNTERPARTY_COLUMNS <= counterparty_columns
@@ -81,7 +81,7 @@ def test_alembic_drops_legacy_django_tables_without_dropping_track_anywhere_tabl
         payment_profile_indexes = index_columns(connection, "payment_profiles")
         counterparty_indexes = index_columns(connection, "counterparties")
 
-    assert version == "0015_transaction_line_counterparties"
+    assert version == "0016_budget_counterparty_targets"
     assert "accounts" in tables
     assert "auth_identities" in tables
     assert "payment_profiles" in tables
@@ -140,7 +140,7 @@ def test_alembic_backfills_lines_and_drops_legacy_category_columns(tmp_path):
             """
         ).fetchone()
 
-    assert version == "0015_transaction_line_counterparties"
+    assert version == "0016_budget_counterparty_targets"
     assert "category_id" not in transaction_columns
     assert "primary" not in category_columns
     assert "secondary" not in category_columns

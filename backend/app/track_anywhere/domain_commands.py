@@ -60,7 +60,7 @@ class CreateBudgetCommand(StrictCommand):
 
 
 class CreateBudgetTargetCommand(StrictCommand):
-    target_type: Literal["book", "category_node", "category_subtree", "project", "merchant"]
+    target_type: Literal["book", "category_node", "category_subtree", "project", "counterparty"]
     target_id: str | None = None
     mode: Literal["include", "exclude"] = "include"
     amount: Decimal | None = Field(default=None, gt=0)
