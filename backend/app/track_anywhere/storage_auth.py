@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from .audit import AuditEvent
 from .oauth_grants import AuthorizationGrant, DeviceGrant
 from .security import Actor
-from .storage_audit_idempotency_writers import save_audit_events
 from .storage_auth_models import CredentialRecord
 from .storage_auth_models import OAuthAuthorizationGrantRecord, OAuthDeviceGrantRecord
 from .storage_upsert_writers import upsert_record
@@ -36,18 +34,6 @@ def save_credentials(session, credentials) -> None:
 
 
 class AuthStorageWriters:
-    def _save_credentials(self, session, credentials) -> None:
-        save_credentials(session, credentials)
-
-    def save_credential(self, credential) -> None:
-        with self.session_factory.begin() as session:
-            self._save_credentials(session, [credential])
-
-    def save_credential_and_audit_event(self, credential, audit_event: AuditEvent) -> None:
-        with self.session_factory.begin() as session:
-            self._save_credentials(session, [credential])
-            save_audit_events(session, [audit_event])
-
     def save_authorization_grant(self, grant: AuthorizationGrant) -> None:
         with self.session_factory.begin() as session:
             session.merge(

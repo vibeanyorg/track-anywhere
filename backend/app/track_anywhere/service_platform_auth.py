@@ -6,7 +6,21 @@ from .platform_auth_models import normalize_user_code
 from .security import hash_secret
 
 
+class _PlatformCredentialWriter:
+    def __init__(self, service) -> None:
+        self._service = service
+
+    def save_credential(self, _credential) -> None:
+        self._service._commit_credential_change()
+
+    def save_credential_and_audit_event(self, _credential, _audit_event) -> None:
+        self._service._commit_credential_change()
+
+
 class PlatformAuthUseCases:
+    def _platform_credential_writer(self) -> _PlatformCredentialWriter:
+        return _PlatformCredentialWriter(self)
+
     def authorize_platform_oauth(self, exchange: Any, command: Any, actor: Any):
         return exchange.authorize(command, actor, grant_store=self.storage)
 
@@ -39,7 +53,7 @@ class PlatformAuthUseCases:
             grant_store=self.storage,
             credentials=self.credentials,
             audit=self.audit,
-            credential_writer=self.storage,
+            credential_writer=self._platform_credential_writer(),
         )
 
     def exchange_platform_device_code(self, exchange: Any, command: Any):
@@ -48,8 +62,8 @@ class PlatformAuthUseCases:
             grant_store=self.storage,
             credentials=self.credentials,
             audit=self.audit,
-            credential_writer=self.storage,
+            credential_writer=self._platform_credential_writer(),
         )
 
     def revoke_platform_token(self, exchange: Any, command: Any):
-        return exchange.revoke(command, credentials=self.credentials, credential_writer=self.storage)
+        return exchange.revoke(command, credentials=self.credentials, credential_writer=self._platform_credential_writer())

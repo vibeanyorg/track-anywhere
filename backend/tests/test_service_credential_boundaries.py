@@ -60,3 +60,13 @@ def test_auth_use_cases_do_not_bypass_book_member_dirty_tracking():
             offenders.append(filename)
 
     assert offenders == []
+
+
+def test_platform_auth_credentials_use_service_change_set_writer():
+    storage_auth = (BACKEND / "storage_auth.py").read_text()
+    service_platform_auth = (BACKEND / "service_platform_auth.py").read_text()
+
+    assert "def save_credential(" not in storage_auth
+    assert "def save_credential_and_audit_event" not in storage_auth
+    assert "credential_writer=self.storage" not in service_platform_auth
+    assert "self._service._commit_credential_change()" in service_platform_auth

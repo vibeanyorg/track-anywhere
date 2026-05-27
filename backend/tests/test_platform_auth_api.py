@@ -125,11 +125,11 @@ def test_platform_oauth_token_exchange_uses_incremental_persist(monkeypatch):
     def fail_startup_maintenance(_service):
         raise AssertionError("OAuth token exchange should not use startup maintenance persistence")
 
-    def capture_credential_event(credential, audit_event):
-        saved.append((credential, audit_event))
+    def capture_credential_change(changes):
+        saved.append(changes)
 
     monkeypatch.setattr(service.storage, "save_startup_maintenance", fail_startup_maintenance)
-    monkeypatch.setattr(service.storage, "save_credential_and_audit_event", capture_credential_event)
+    monkeypatch.setattr(service.storage, "save_credential_change", capture_credential_change)
 
     token = client.post(
         "/api/v1/oauth/token",
@@ -144,7 +144,8 @@ def test_platform_oauth_token_exchange_uses_incremental_persist(monkeypatch):
 
     assert token.status_code == 200
     assert len(saved) == 1
-    credential, audit_event = saved[0]
+    credential = next(item for item in saved[0].metadata.credentials if item.auth_kind == "pkce")
+    audit_event = next(item for item in saved[0].metadata.audit_events if item.operation == "oauth.pkce.exchange")
     assert credential.actor.actor_id == "owner"
     assert credential.actor.scopes == frozenset({"account:read", "book:read", "ledger:read"})
     assert audit_event.operation == "oauth.pkce.exchange"
