@@ -121,7 +121,7 @@ class InvestmentUseCases:
 
     def list_investment_events(self, token: str, account_id: str | None = None) -> list[InvestmentEvent]:
         if account_id is not None:
-            account = self.ledger.get_account(account_id)
+            account = self.storage.get_account(account_id)
             self.actor_for_book(token, account.book_id, "investment:read")
             return self.investments.list(account_id, book_id=account.book_id)
         self.actor_for_book(token, DEFAULT_BOOK_ID, "investment:read")
@@ -159,12 +159,12 @@ class InvestmentUseCases:
         return valuation, replay
 
     def list_investment_valuations(self, token: str, account_id: str) -> list[InvestmentValuation]:
-        account = self.ledger.get_account(account_id)
+        account = self.storage.get_account(account_id)
         self.actor_for_book(token, account.book_id, "investment:read")
         return self.investments.list_valuations(account_id, book_id=account.book_id)
 
     def investment_performance(self, token: str, account_id: str, *, as_of: str | None = None):
-        account = self.ledger.get_account(account_id)
+        account = self.storage.get_account(account_id)
         self.actor_for_book(token, account.book_id, "investment:read")
         try:
             as_of_datetime = datetime.fromisoformat(as_of) if as_of is not None else None
@@ -174,14 +174,15 @@ class InvestmentUseCases:
         if as_of_datetime is None:
             as_of_datetime = max((event.occurred_at for event in events), default=None)
         if as_of_datetime is None:
-            as_of_datetime = max((transaction.occurred_at for transaction in self.ledger.transactions.values()), default=None)
+            latest = self.storage.list_confirmed_transactions(book_id=account.book_id, account_id=account_id, limit=1)
+            as_of_datetime = latest[0].occurred_at if latest else None
         if as_of_datetime is None:
             as_of_datetime = datetime.now(timezone.utc)
         valuation = self.investments.latest_valuation(account_id, book_id=account.book_id, as_of=as_of_datetime)
         if valuation is not None:
             current_value, current_value_source, valuation_id = valuation.value, "valuation_snapshot", valuation.valuation_id
         else:
-            current_value, current_value_source, valuation_id = self.ledger.balance(account_id).get(account.currency, Decimal("0")), "account_balance", None
+            current_value, current_value_source, valuation_id = self.storage.account_balance(account_id).get(account.currency, Decimal("0")), "account_balance", None
         return investment_performance_report(
             account_id=account_id,
             currency=account.currency,
