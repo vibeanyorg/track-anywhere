@@ -129,7 +129,7 @@ class InvestmentUseCases:
 
     def record_investment_valuation(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[InvestmentValuation, bool]:
         command = RecordInvestmentValuationCommand.model_validate(payload)
-        account = self.ledger.get_account(command.account_id)
+        account = self.storage.get_account(command.account_id)
         actor = self.actor_for_book(token, account.book_id, "investment:write")
         if account.type != "asset":
             raise ValidationError("investment valuations can only be recorded against asset accounts")
