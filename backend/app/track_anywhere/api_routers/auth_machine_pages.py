@@ -8,11 +8,12 @@ from uuid import uuid4
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from ..api_runtime import browser_sessions, service
+from ..api_ports.auth_machine import AuthMachineService
+from ..api_runtime import browser_sessions
 from ..api_sessions import CSRF_COOKIE, SESSION_COOKIE
 from ..errors import PolicyDenied, ValidationError
 from ..platform_auth_models import DEFAULT_PLATFORM_SCOPE, parse_requested_scopes
-from .auth_pages import _error, _hidden, _page
+from .auth_page_ui import error_message, hidden_input, render_auth_page
 from .auth_scope_ui import actor_available_scope_text, approved_scope_text, scope_controls
 
 
@@ -20,16 +21,17 @@ router = APIRouter(prefix="/auth", tags=["auth-ui"], include_in_schema=False)
 
 
 @router.get("/machine-tokens")
-def machine_tokens_page(request: Request) -> HTMLResponse:
-    session = _session_context(request)
+def machine_tokens_page(request: Request, auth_service: AuthMachineService) -> HTMLResponse:
+    session = _session_context(request, auth_service)
     if isinstance(session, RedirectResponse):
         return session
-    return _machine_tokens_form(session=session, error=None)
+    return _machine_tokens_form(service=auth_service, session=session, error=None)
 
 
 @router.post("/machine-tokens")
 def create_machine_token(
     request: Request,
+    auth_service: AuthMachineService,
     name: Annotated[str, Form()] = "Local agent token",
     description: Annotated[str, Form()] = "",
     ttl_days: Annotated[str, Form()] = "365",
@@ -37,13 +39,13 @@ def create_machine_token(
     approved_scope: Annotated[list[str] | None, Form()] = None,
     scope_selection_present: Annotated[str | None, Form()] = None,
 ) -> HTMLResponse:
-    session = _session_context(request)
+    session = _session_context(request, auth_service)
     if isinstance(session, RedirectResponse):
         return session
     _verify_csrf(session, csrf_token)
     try:
         scope_text = _selected_scope_text(session, approved_scope, scope_selection_present is not None)
-        result, _replay = service.issue_machine_credential_command(
+        result, _replay = auth_service.issue_machine_credential_command(
             session["credential"],
             {
                 "name": name.strip() or "Local agent token",
@@ -54,29 +56,40 @@ def create_machine_token(
             idempotency_key=f"auth-ui-machine-{uuid4().hex}",
         )
     except (PolicyDenied, ValidationError, ValueError) as exc:
-        return _machine_tokens_form(session=session, error=str(exc), values={"name": name, "description": description, "ttl_days": ttl_days}, status_code=400)
-    return _machine_tokens_form(session=session, error=None, created_token=result["token"])
+        return _machine_tokens_form(
+            service=auth_service,
+            session=session,
+            error=str(exc),
+            values={"name": name, "description": description, "ttl_days": ttl_days},
+            status_code=400,
+        )
+    return _machine_tokens_form(service=auth_service, session=session, error=None, created_token=result["token"])
 
 
 @router.post("/machine-tokens/{credential_id}/revoke")
-def revoke_machine_token(request: Request, credential_id: str, csrf_token: Annotated[str, Form()] = "") -> HTMLResponse:
-    session = _session_context(request)
+def revoke_machine_token(
+    request: Request,
+    credential_id: str,
+    auth_service: AuthMachineService,
+    csrf_token: Annotated[str, Form()] = "",
+) -> HTMLResponse:
+    session = _session_context(request, auth_service)
     if isinstance(session, RedirectResponse):
         return session
     _verify_csrf(session, csrf_token)
     try:
-        service.revoke_credential_by_id_command(
+        auth_service.revoke_credential_by_id_command(
             session["credential"],
             credential_id,
             {"reason": "revoked from auth UI"},
             idempotency_key=f"auth-ui-machine-revoke-{credential_id}-{uuid4().hex}",
         )
     except (PolicyDenied, ValidationError, ValueError) as exc:
-        return _machine_tokens_form(session=session, error=str(exc), status_code=400)
+        return _machine_tokens_form(service=auth_service, session=session, error=str(exc), status_code=400)
     return RedirectResponse("/api/v1/auth/machine-tokens", status_code=303)
 
 
-def _session_context(request: Request) -> dict[str, Any] | RedirectResponse:
+def _session_context(request: Request, service: AuthMachineService) -> dict[str, Any] | RedirectResponse:
     session_id = request.cookies.get(SESSION_COOKIE)
     identity = browser_sessions.identity_for(session_id)
     credential = browser_sessions.credential_for(session_id)
@@ -123,6 +136,7 @@ def _ttl_minutes(ttl_days: str) -> int:
 
 def _machine_tokens_form(
     *,
+    service: AuthMachineService,
     session: dict[str, Any],
     error: str | None,
     created_token: str | None = None,
@@ -140,10 +154,10 @@ def _machine_tokens_form(
         {token_panel}
         <section>
           <h2 style="margin:0;font-size:18px">Create token</h2>
-          {_error(error)}
+          {error_message(error)}
           <form method="post" action="/api/v1/auth/machine-tokens">
-            {_hidden('csrf_token', session['csrf_token'])}
-            {_hidden('scope_selection_present', '1')}
+            {hidden_input('csrf_token', session['csrf_token'])}
+            {hidden_input('scope_selection_present', '1')}
             <label>Name<input name="name" value="{escape(form_values['name'], quote=True)}" required maxlength="120"></label>
             <label>Description<textarea name="description" maxlength="240">{escape(form_values['description'])}</textarea></label>
             <label>Expires after days<input name="ttl_days" type="number" min="1" max="3650" value="{escape(form_values['ttl_days'], quote=True)}" required></label>
@@ -151,11 +165,11 @@ def _machine_tokens_form(
             <button type="submit">Create machine token</button>
           </form>
         </section>
-        {_token_list(session)}
+        {_token_list(service, session)}
         <a class="link" href="/api/v1/auth/session-view">Back to session</a>
       </main>
     """
-    return _page("Machine tokens", body, status_code)
+    return render_auth_page("Machine tokens", body, status_code)
 
 
 def _created_token_panel(token: str | None) -> str:
@@ -170,7 +184,7 @@ def _created_token_panel(token: str | None) -> str:
     """
 
 
-def _token_list(session: dict[str, Any]) -> str:
+def _token_list(service: AuthMachineService, session: dict[str, Any]) -> str:
     tokens = [item for item in service.list_agent_credentials(session["credential"]) if item["actor_type"] == "machine"]
     if not tokens:
         return "<section class='scope-panel'><strong>Existing tokens</strong><p class='muted'>No machine tokens yet.</p></section>"
@@ -185,7 +199,7 @@ def _token_row(item: dict[str, Any], csrf_token: str) -> str:
     if item["active"]:
         revoke = f"""
           <form method="post" action="/api/v1/auth/machine-tokens/{escape(item['credential_id'], quote=True)}/revoke">
-            {_hidden('csrf_token', csrf_token)}
+            {hidden_input('csrf_token', csrf_token)}
             <button class="secondary" type="submit">Revoke</button>
           </form>
         """
