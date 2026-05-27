@@ -1,7 +1,7 @@
 """budget counterparty targets
 
 Revision ID: 0016_budget_counterparty_targets
-Revises: 0015_transaction_line_counterparties
+Revises: 0015_tx_line_counterparties
 Create Date: 2026-05-27 00:00:00.000000
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy import inspect
 
 
 revision: str = "0016_budget_counterparty_targets"
-down_revision: Union[str, Sequence[str], None] = "0015_transaction_line_counterparties"
+down_revision: Union[str, Sequence[str], None] = "0015_tx_line_counterparties"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

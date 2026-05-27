@@ -10,7 +10,7 @@ def test_alembic_migrates_budget_targets_from_merchant_to_counterparty(tmp_path)
     database_path = tmp_path / "budget-target-counterparty.sqlite3"
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
-    command.upgrade(config, "0015_transaction_line_counterparties")
+    command.upgrade(config, "0015_tx_line_counterparties")
 
     with sqlite3.connect(database_path) as connection:
         connection.execute(

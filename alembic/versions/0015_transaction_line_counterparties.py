@@ -1,6 +1,6 @@
 """transaction line counterparties
 
-Revision ID: 0015_transaction_line_counterparties
+Revision ID: 0015_tx_line_counterparties
 Revises: 0014_counterparties
 Create Date: 2026-05-27 00:00:00.000000
 
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy import inspect
 
 
-revision: str = "0015_transaction_line_counterparties"
+revision: str = "0015_tx_line_counterparties"
 down_revision: Union[str, Sequence[str], None] = "0014_counterparties"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
