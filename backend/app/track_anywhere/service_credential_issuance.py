@@ -59,14 +59,14 @@ class CredentialIssuanceUseCases:
         )
         if credential is None:
             raise ValidationError("issued credential could not be loaded")
+        metadata = self._write_metadata()
         self.storage.save_credential_issue_state(
             book=default_book,
             member=member,
-            credentials=self.credentials.dirty_credentials(),
+            credentials=metadata.credentials,
             audit_event=audit_event,
         )
-        self.credentials.mark_clean()
-        self.audit.mark_persisted()
+        self._mark_metadata_committed(metadata)
         return agent_token
 
     def issue_agent_credential_command(self, token: str, payload: dict[str, Any], *, idempotency_key: str):

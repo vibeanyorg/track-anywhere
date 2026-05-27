@@ -1,19 +1,32 @@
 from __future__ import annotations
 
-from ..storage_changes import CredentialChanges, IdempotencyChanges
+from ..storage_changes import CredentialChanges, IdempotencyChanges, WriteMetadata
 
 
 class ServiceMetadataPersistence:
+    def _idempotency_metadata(self) -> WriteMetadata:
+        return WriteMetadata(
+            credentials=tuple(self.credentials.dirty_credentials()),
+            idempotency_receipts=tuple(self.idempotency.dirty_receipts()),
+        )
+
+    def _mark_metadata_committed(self, metadata: WriteMetadata) -> None:
+        if metadata.credentials:
+            self.credentials.mark_clean()
+        if metadata.audit_events:
+            self.audit.mark_persisted()
+        if metadata.idempotency_receipts:
+            self.idempotency.mark_clean()
+
     def _commit_idempotency(self) -> None:
-        self.storage.save_idempotency(IdempotencyChanges(metadata=self._write_metadata()))
-        self.credentials.mark_clean()
-        self.idempotency.mark_clean()
+        metadata = self._idempotency_metadata()
+        self.storage.save_idempotency(IdempotencyChanges(metadata=metadata))
+        self._mark_metadata_committed(metadata)
 
     def _commit_credential_change(self) -> None:
-        self.storage.save_credential_change(CredentialChanges(metadata=self._write_metadata()))
-        self.credentials.mark_clean()
-        self.audit.mark_persisted()
-        self.idempotency.mark_clean()
+        metadata = self._write_metadata()
+        self.storage.save_credential_change(CredentialChanges(metadata=metadata))
+        self._mark_metadata_committed(metadata)
 
     def _commit_replay_or(self, replay: bool, commit) -> None:
         if replay:

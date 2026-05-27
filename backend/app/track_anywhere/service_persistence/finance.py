@@ -13,8 +13,9 @@ class ServiceFinancePersistence:
         accounts=(),
         actions=(),
     ) -> None:
+        metadata = self._write_metadata()
         changes = FinanceChanges(
-            metadata=self._write_metadata(),
+            metadata=metadata,
             funds=tuple(funds),
             budget_changes=self._budget_changes() if budgets else None,
             transactions=tuple(transactions),
@@ -23,15 +24,15 @@ class ServiceFinancePersistence:
             actions=tuple(actions),
         )
         self.storage.save_finance_change(changes)
+        self._mark_metadata_committed(metadata)
         if budgets:
             self.budgets.mark_clean()
-        self.credentials.mark_clean()
         self.assets.mark_clean()
-        self.audit.mark_persisted()
-        self.idempotency.mark_clean()
+
     def _commit_investment_change(self, *, events=(), valuations=(), transactions=(), accounts=()) -> None:
+        metadata = self._write_metadata()
         changes = InvestmentChanges(
-            metadata=self._write_metadata(),
+            metadata=metadata,
             events=tuple(events),
             valuations=tuple(valuations),
             transactions=tuple(transactions),
@@ -40,7 +41,5 @@ class ServiceFinancePersistence:
             adjustment_account_ids=dict(self.adjustment_account_ids),
         )
         self.storage.save_investment_change(changes)
-        self.credentials.mark_clean()
+        self._mark_metadata_committed(metadata)
         self.assets.mark_clean()
-        self.audit.mark_persisted()
-        self.idempotency.mark_clean()
