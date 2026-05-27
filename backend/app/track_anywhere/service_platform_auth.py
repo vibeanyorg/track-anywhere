@@ -111,6 +111,22 @@ class PlatformAuthUseCases:
             approved_scopes=approved_scopes,
         )
 
+    def approve_platform_device_user_code_for_actor(
+        self,
+        user_code: str,
+        actor: Any,
+        action: str,
+        *,
+        approved_scopes: list[str] | None,
+    ):
+        return self.approve_platform_device_user_code(
+            self.platform_key_exchange,
+            user_code,
+            actor,
+            action,
+            approved_scopes=approved_scopes,
+        )
+
     def pending_device_grant_for_user_code(self, user_code: str):
         return self._platform_grant_store().load_device_grant_by_user_hash(hash_secret(normalize_user_code(user_code)))
 
