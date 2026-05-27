@@ -18,6 +18,15 @@ def test_ledger_repository_owns_hot_ledger_writes():
     assert "self.storage._replace_transaction_lines" not in source
 
 
+def test_workflow_repositories_own_workflow_writes():
+    source = (BACKEND / "storage_repositories/workflow.py").read_text()
+
+    assert "def save(self, drafts" in source
+    assert "def save_items" in source
+    assert "self.storage._save_drafts" not in source
+    assert "self.storage._save_recurring_items" not in source
+
+
 def test_write_benchmark_does_not_depend_on_legacy_storage_writer_privates():
     source = (REPO_ROOT / "scripts/benchmark-write-performance.py").read_text()
 

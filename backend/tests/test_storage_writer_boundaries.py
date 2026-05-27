@@ -13,7 +13,6 @@ def test_storage_writer_facade_stays_context_scoped():
         "storage_audit_idempotency_writers.py",
         "storage_finance_writers.py",
         "storage_upsert_writers.py",
-        "storage_workflow_writers.py",
         "storage_writers.py",
     }
     for module in expected_modules:
@@ -31,3 +30,4 @@ def test_storage_writer_facade_stays_context_scoped():
     assert "InvestmentEventRecord" not in source
     assert "IdempotencyReceiptRecord" not in source
     assert "LedgerStorageWriters" not in source
+    assert "WorkflowStorageWriters" not in source
