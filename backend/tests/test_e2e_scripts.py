@@ -16,3 +16,13 @@ def test_docker_postgres_e2e_fails_fast_when_docker_cli_hangs():
     assert 'run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker version' in source
     assert 'run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" up' in source
     assert 'run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" down' in source
+
+
+def test_stable_smoke_bounds_http_and_cli_commands():
+    source = (REPO_ROOT / "scripts/stable-smoke.sh").read_text()
+
+    assert "HTTP_TIMEOUT_SECONDS" in source
+    assert "CLI_TIMEOUT_SECONDS" in source
+    assert "subprocess.run(command, timeout=timeout_seconds)" in source
+    assert 'run_with_timeout "$HTTP_TIMEOUT_SECONDS" curl' in source
+    assert "run_ta_with_timeout --base-url" in source

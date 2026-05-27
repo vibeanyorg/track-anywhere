@@ -6,6 +6,8 @@ BASE_URL=${TRACK_ANYWHERE_STABLE_BASE_URL:-http://127.0.0.1:12306}
 STABLE_DIR=${TRACK_ANYWHERE_STABLE_DIR:-/Users/xuyanyue/Documents/track-anywhere-stable-backend}
 TOKEN_FILE=${TRACK_ANYWHERE_TOKEN_FILE:-$STABLE_DIR/secrets/ta-token}
 CLI_BUDGET_SECONDS=${TRACK_ANYWHERE_CLI_BUDGET_SECONDS:-2.0}
+HTTP_TIMEOUT_SECONDS=${TRACK_ANYWHERE_HTTP_TIMEOUT_SECONDS:-5}
+CLI_TIMEOUT_SECONDS=${TRACK_ANYWHERE_CLI_TIMEOUT_SECONDS:-10}
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -13,13 +15,37 @@ export TRACK_ANYWHERE_API="$BASE_URL"
 export TRACK_ANYWHERE_SERVICE_URL="$BASE_URL"
 export TRACK_ANYWHERE_TOKEN_FILE="$TOKEN_FILE"
 
-run_ta() {
+run_with_timeout() {
+  timeout_seconds=$1
+  shift
+  python3 - "$timeout_seconds" "$@" <<'PY'
+import subprocess
+import sys
+
+timeout_seconds = float(sys.argv[1])
+command = sys.argv[2:]
+try:
+    raise SystemExit(subprocess.run(command, timeout=timeout_seconds).returncode)
+except subprocess.TimeoutExpired:
+    print(
+        f"command timed out after {timeout_seconds:g}s: {' '.join(command)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(124)
+PY
+}
+
+run_ta_with_timeout() {
   if [ -n "${TRACK_ANYWHERE_TA_BIN:-}" ]; then
-    "$TRACK_ANYWHERE_TA_BIN" "$@"
+    run_with_timeout "$CLI_TIMEOUT_SECONDS" "$TRACK_ANYWHERE_TA_BIN" "$@"
   elif command -v uv >/dev/null 2>&1 && [ -f "$ROOT/pyproject.toml" ]; then
-    (cd "$ROOT" && PYTHONPATH="$ROOT/backend/app:$ROOT/cli${PYTHONPATH:+:$PYTHONPATH}" uv run python -m track_anywhere_cli.main "$@")
+    (
+      cd "$ROOT"
+      PYTHONPATH="$ROOT/backend/app:$ROOT/cli${PYTHONPATH:+:$PYTHONPATH}" \
+        run_with_timeout "$CLI_TIMEOUT_SECONDS" uv run python -m track_anywhere_cli.main "$@"
+    )
   else
-    ta "$@"
+    run_with_timeout "$CLI_TIMEOUT_SECONDS" ta "$@"
   fi
 }
 
@@ -58,7 +84,7 @@ run_http() {
   label=$1
   path=$2
   start=$(python3 -c 'import time; print(time.monotonic())')
-  curl -fsS "$BASE_URL$path" > "$TMP_DIR/$label.json"
+  run_with_timeout "$HTTP_TIMEOUT_SECONDS" curl -fsS "$BASE_URL$path" > "$TMP_DIR/$label.json"
   elapsed=$(elapsed_seconds "$start")
   printf 'ok http %-18s %ss\n' "$label" "$elapsed"
 }
@@ -67,7 +93,7 @@ run_cli() {
   label=$1
   shift
   start=$(python3 -c 'import time; print(time.monotonic())')
-  run_ta --base-url "$BASE_URL" "$@" --json > "$TMP_DIR/$label.json"
+  run_ta_with_timeout --base-url "$BASE_URL" "$@" --json > "$TMP_DIR/$label.json"
   elapsed=$(elapsed_seconds "$start")
   check_cli_json "$TMP_DIR/$label.json"
   if ! assert_budget "$elapsed"; then
