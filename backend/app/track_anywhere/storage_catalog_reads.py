@@ -45,7 +45,11 @@ class CatalogReadStorage:
             accounts = [account for account in accounts if account.subtype == subtype]
         if institution:
             lowered = institution.lower()
-            accounts = [account for account in accounts if account.institution and lowered in account.institution.lower()]
+            accounts = [
+                account
+                for account in accounts
+                if account.institution and lowered in account.institution.lower()
+            ]
         return sorted(
             accounts,
             key=lambda account: (
@@ -73,7 +77,7 @@ class CatalogReadStorage:
         kind: str | None = None,
         name: str | None = None,
         parent_id: str | None = None,
-        book_id: str = DEFAULT_BOOK_ID,
+        book_id: str | None = DEFAULT_BOOK_ID,
         status: str | None = "active",
     ) -> list[Category]:
         categories = self._cached_values("categories")
@@ -81,7 +85,8 @@ class CatalogReadStorage:
             with self.session_factory() as session:
                 rows = session.query(CategoryRecord).all()
             categories = [_category_from_row(row) for row in rows]
-        categories = [category for category in categories if category.book_id == book_id]
+        if book_id is not None:
+            categories = [category for category in categories if category.book_id == book_id]
         if status is not None:
             categories = [category for category in categories if category.status == status]
         if kind is not None:
@@ -135,14 +140,15 @@ class CatalogReadStorage:
         *,
         status: str | None = None,
         kind: str | None = None,
-        book_id: str = DEFAULT_BOOK_ID,
+        book_id: str | None = DEFAULT_BOOK_ID,
     ) -> list[RecurringItem]:
         items = self._cached_values("recurring_items")
         if items is None:
             with self.session_factory() as session:
                 rows = session.query(RecurringItemRecord).all()
             items = [_recurring_item_from_row(row) for row in rows]
-        items = [item for item in items if item.book_id == book_id]
+        if book_id is not None:
+            items = [item for item in items if item.book_id == book_id]
         if status is not None:
             items = [item for item in items if item.status == status]
         if kind is not None:
@@ -228,7 +234,11 @@ def _recurring_item_from_row(row: RecurringItemRecord) -> RecurringItem:
         anchor_date=date.fromisoformat(row.anchor_date),
         source_account_id=row.source_account_id,
         category_id=row.category_id,
-        last_draft_renewal_date=date.fromisoformat(row.last_draft_renewal_date) if row.last_draft_renewal_date else None,
+        last_draft_renewal_date=(
+            date.fromisoformat(row.last_draft_renewal_date)
+            if row.last_draft_renewal_date
+            else None
+        ),
         last_draft_id=row.last_draft_id,
         version=row.version,
     )
