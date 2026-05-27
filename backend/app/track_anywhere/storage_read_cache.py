@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from decimal import Decimal
 
 from .counterparty_storage_models import CounterpartyRecord
-from .credit_cards import CreditCardProfile
-from .storage_catalog_reads import _category_from_row
+from .storage_catalog_reads import _credit_card_profile_from_row
 from .storage_models import AccountRecord, CategoryRecord, CreditCardProfileRecord
 from .storage_repositories.catalog import counterparty_from_record
+from .storage_repositories.categories import category_from_record
 from .storage_repositories.ledger import account_from_record
 
 
@@ -20,7 +19,7 @@ class StorageReadCache:
             }
             self._read_transactions = self._load_transactions(session)
             self._read_categories = {
-                row.category_id: _category_from_row(row)
+                row.category_id: category_from_record(row)
                 for row in session.query(CategoryRecord).all()
             }
             self._read_counterparties = {
@@ -32,15 +31,7 @@ class StorageReadCache:
             self._read_payment_instruments = self._load_payment_instruments(session)
             self._read_payment_profiles = self._load_payment_profiles(session)
             self._read_credit_card_profiles = {
-                row.account_id: CreditCardProfile(
-                    account_id=row.account_id,
-                    credit_limit=Decimal(row.credit_limit) if row.credit_limit is not None else None,
-                    available_credit=Decimal(row.available_credit) if row.available_credit is not None else None,
-                    statement_day=row.statement_day,
-                    due_day=row.due_day,
-                    annual_fee=Decimal(row.annual_fee) if row.annual_fee is not None else None,
-                    version=row.version,
-                )
+                row.account_id: _credit_card_profile_from_row(row)
                 for row in session.query(CreditCardProfileRecord).all()
             }
 

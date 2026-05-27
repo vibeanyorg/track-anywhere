@@ -10,6 +10,7 @@ from .errors import NotFound, ValidationError
 from .ledger import Account
 from .recurring import RecurringItem
 from .storage_models import AccountRecord, CategoryRecord, CreditCardProfileRecord, RecurringItemRecord
+from .storage_repositories.categories import category_from_record
 from .storage_repositories.ledger import account_from_record
 from .storage_repositories.workflow import recurring_item_from_record
 
@@ -85,7 +86,7 @@ class CatalogReadStorage:
         if categories is None:
             with self.session_factory() as session:
                 rows = session.query(CategoryRecord).all()
-            categories = [_category_from_row(row) for row in rows]
+            categories = [category_from_record(row) for row in rows]
         if book_id is not None:
             categories = [category for category in categories if category.book_id == book_id]
         if status is not None:
@@ -118,7 +119,7 @@ class CatalogReadStorage:
             row = session.get(CategoryRecord, category_id)
         if row is None:
             raise NotFound(f"category not found: {category_id}")
-        return _category_from_row(row)
+        return category_from_record(row)
 
     def find_category_by_path(self, *, book_id: str, kind: str, path: str) -> Category | None:
         if kind not in {"income", "expense"}:
@@ -175,35 +176,6 @@ class CatalogReadStorage:
         with self.session_factory() as session:
             row = session.get(CreditCardProfileRecord, account_id)
         return _credit_card_profile_from_row(row) if row is not None else None
-
-def _category_from_row(row: CategoryRecord) -> Category:
-    primary, secondary = _category_names_from_path(row)
-    return Category(
-        category_id=row.category_id,
-        book_id=row.book_id,
-        kind=row.kind,
-        primary=primary,
-        secondary=secondary,
-        parent_id=row.parent_id,
-        name=row.name,
-        normalized_name=row.normalized_name,
-        level=row.level,
-        path_cache=row.path_cache,
-        icon=row.icon,
-        color=row.color,
-        sort_order=row.sort_order,
-        status=row.status,
-        version=row.version,
-    )
-
-
-def _category_names_from_path(row: CategoryRecord) -> tuple[str, str | None]:
-    parts = [_clean_path_part(part) for part in (row.path_cache or "").split("/")]
-    parts = [part for part in parts if part]
-    if row.level == 2 and len(parts) >= 2:
-        return parts[0], parts[-1]
-    return (parts[0] if parts else row.name), None
-
 
 def _credit_card_profile_from_row(row: CreditCardProfileRecord) -> CreditCardProfile:
     return CreditCardProfile(

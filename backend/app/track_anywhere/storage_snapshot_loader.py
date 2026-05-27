@@ -6,7 +6,6 @@ from .assets import AssetDefinition
 from .attachments import Attachment
 from .auth_identities import LinkedAuthIdentity
 from .credit_cards import CreditCardProfile
-from .storage_catalog_reads import _category_from_row
 from .storage_models import (
     AdjustmentAccountRecord,
     AppStateRecord,
@@ -18,6 +17,7 @@ from .storage_models import (
     ReconciliationActionRecord,
     UserRecord,
 )
+from .storage_repositories.categories import category_from_record
 from .storage_snapshot import StorageSnapshot
 from .users import AppUser
 
@@ -80,7 +80,7 @@ class StorageSnapshotLoader:
                 investment_events=self._load_investment_events(session),
                 investment_valuations=self._load_investment_valuations(session),
                 categories={
-                    row.category_id: _category_from_row(row)
+                    row.category_id: category_from_record(row)
                     for row in session.query(CategoryRecord).all()
                 },
                 category_aliases=category_aliases,

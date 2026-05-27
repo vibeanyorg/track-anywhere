@@ -3,9 +3,9 @@ from __future__ import annotations
 from .catalog import (
     AssetRepository,
     BookRepository,
-    CategoryRepository,
     CounterpartyRepository,
 )
+from .categories import CategoryRepository
 from .finance import (
     BudgetRepository,
     CreditCardRepository,

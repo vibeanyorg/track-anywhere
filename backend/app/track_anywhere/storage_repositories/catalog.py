@@ -7,16 +7,10 @@ from sqlalchemy import select
 from ..books import DEFAULT_BOOK_ID
 from ..counterparties import Counterparty, normalize_counterparty_name, normalize_counterparty_slug
 from ..counterparty_storage_models import CounterpartyRecord
-from ..domain_storage_models import (
-    BookMemberRecord,
-    CategoryAliasRecord,
-    CategoryVersionRecord,
-    ClassificationEventRecord,
-    LedgerBookRecord,
-)
+from ..domain_storage_models import BookMemberRecord, LedgerBookRecord
 from ..errors import NotFound
 from ..storage_json import to_jsonable
-from ..storage_models import AssetRecord, CategoryRecord
+from ..storage_models import AssetRecord
 from ..storage_upsert_writers import upsert_record
 
 
@@ -72,94 +66,6 @@ class BookRepository:
                     scopes=list(member.scopes),
                     version=member.version,
                 )
-            )
-
-
-class CategoryRepository:
-    def __init__(self, _storage, session) -> None:
-        self.session = session
-
-    def save(self, categories: Iterable[Any]) -> None:
-        for category in categories:
-            upsert_record(
-                self.session,
-                CategoryRecord,
-                {
-                    "category_id": category.category_id,
-                    "book_id": category.book_id,
-                    "kind": category.kind,
-                    "parent_id": category.parent_id,
-                    "name": category.name,
-                    "normalized_name": category.normalized_name,
-                    "level": category.level,
-                    "path_cache": category.path_cache,
-                    "icon": category.icon,
-                    "color": category.color,
-                    "sort_order": category.sort_order,
-                    "status": category.status,
-                    "version": category.version,
-                },
-                ["category_id"],
-            )
-
-    def save_history(self, *, aliases, versions, events) -> None:
-        for alias in aliases:
-            upsert_record(
-                self.session,
-                CategoryAliasRecord,
-                {
-                    "alias_id": alias.alias_id,
-                    "book_id": alias.book_id,
-                    "category_id": alias.category_id,
-                    "alias": alias.alias,
-                    "normalized_alias": alias.normalized_alias,
-                    "locale": alias.locale,
-                    "source": alias.source,
-                    "confidence": alias.confidence,
-                    "status": alias.status,
-                    "version": alias.version,
-                },
-                ["alias_id"],
-            )
-        for version in versions:
-            upsert_record(
-                self.session,
-                CategoryVersionRecord,
-                {
-                    "category_version_id": version.category_version_id,
-                    "category_id": version.category_id,
-                    "book_id": version.book_id,
-                    "name": version.name,
-                    "parent_id": version.parent_id,
-                    "path": version.path,
-                    "icon": version.icon,
-                    "color": version.color,
-                    "valid_from": version.valid_from.isoformat(),
-                    "valid_to": version.valid_to.isoformat() if version.valid_to else None,
-                    "change_reason": version.change_reason,
-                    "version": version.version,
-                },
-                ["category_version_id"],
-            )
-        for event in events:
-            upsert_record(
-                self.session,
-                ClassificationEventRecord,
-                {
-                    "classification_event_id": event.classification_event_id,
-                    "book_id": event.book_id,
-                    "event_type": event.event_type,
-                    "source_category_id": event.source_category_id,
-                    "target_category_id": event.target_category_id,
-                    "affected_line_count": event.affected_line_count,
-                    "before": to_jsonable(event.before),
-                    "after": to_jsonable(event.after),
-                    "rollback": to_jsonable(event.rollback),
-                    "created_by": event.created_by,
-                    "created_at": event.created_at.isoformat(),
-                    "version": event.version,
-                },
-                ["classification_event_id"],
             )
 
 

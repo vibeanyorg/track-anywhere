@@ -53,17 +53,26 @@ def test_catalog_repositories_own_catalog_writes():
 
     assert "def save(self, assets" in source
     assert "def save(self, books" in source
-    assert "def save(self, categories" in source
-    assert "def save_history" in source
     assert "def save(self, counterparties" in source
     forbidden = [
         "self.storage._save_assets",
         "self.storage._save_books",
-        "self.storage._save_categories",
-        "self.storage._save_category_history",
         "self.storage._save_counterparties",
     ]
     assert all(item not in source for item in forbidden)
+
+
+def test_category_repository_owns_category_reads_and_writes():
+    source = (BACKEND / "storage_repositories/categories.py").read_text()
+
+    assert "class CategoryRepository" in source
+    assert "def list_categories" in source
+    assert "def get_category" in source
+    assert "def find_category_by_path" in source
+    assert "def save(self, categories" in source
+    assert "def save_history" in source
+    assert "self.storage._save_categories" not in source
+    assert "self.storage._save_category_history" not in source
 
 
 def test_payment_repositories_own_payment_writes():

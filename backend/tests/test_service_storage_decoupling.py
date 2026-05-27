@@ -243,7 +243,7 @@ def test_storage_write_boundaries_use_explicit_change_sets():
 
 def test_persistence_helpers_are_grouped_by_bounded_context():
     grouped_modules = {
-        "storage_repositories": {"catalog.py", "finance.py", "ledger.py", "payments.py", "security.py", "workflow.py"},
+        "storage_repositories": {"catalog.py", "categories.py", "finance.py", "ledger.py", "payments.py", "security.py", "workflow.py"},
         "service_persistence": {"catalog.py", "collectors.py", "directory.py", "finance.py", "ledger.py", "metadata.py", "startup.py", "workflow.py"},
     }
     for folder, modules in grouped_modules.items():
