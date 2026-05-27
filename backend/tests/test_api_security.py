@@ -203,10 +203,10 @@ def test_security_rejections_are_audited_and_bearer_origin_is_gated():
 def test_security_failure_audit_uses_incremental_persist(monkeypatch):
     saved_events = []
 
-    def fail_full_save(_service):
-        raise AssertionError("security failure should not full-save service state")
+    def fail_startup_maintenance(_service):
+        raise AssertionError("security failure should not use startup maintenance persistence")
 
-    monkeypatch.setattr(service.storage, "save_full_snapshot_for_legacy_bootstrap", fail_full_save)
+    monkeypatch.setattr(service.storage, "save_startup_maintenance", fail_startup_maintenance)
     monkeypatch.setattr(service.storage, "save_audit_event", saved_events.append)
     before = len(service.audit.events)
 

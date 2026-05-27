@@ -3,7 +3,6 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import delete
 from sqlalchemy.orm import sessionmaker
 
 from .assets import AssetDefinition
@@ -189,82 +188,23 @@ class OrmStorage(
                 service.owner_token = str(owner_state.value["token"])
                 service._startup_persist_required = True
 
-    def save_full_snapshot_for_legacy_bootstrap(self, service: Any) -> None:
-        with self.session_factory.begin() as session:
-            session.execute(delete(AppStateRecord).where(AppStateRecord.key == "owner_token"))
-            self._save_books(session, service.books)
-            self._save_assets(session, service.assets.assets.values())
-            self._save_accounts(session, service.ledger.accounts.values())
-            for user in service.users.users.values():
-                session.merge(
-                    UserRecord(
-                        user_id=user.user_id,
-                        username=user.username,
-                        display_name=user.display_name,
-                        version=user.version,
-                    )
-                )
-            for identity in service.auth_identities.identities.values():
-                session.merge(
-                    AuthIdentityRecord(
-                        identity_id=identity.identity_id,
-                        provider=identity.provider,
-                        subject=identity.subject,
-                        user_id=identity.user_id,
-                        email=identity.email,
-                        email_verified=identity.email_verified,
-                        display_name=identity.display_name,
-                        picture_url=identity.picture_url,
-                        status=identity.status,
-                        version=identity.version,
-                    )
-                )
-            self._save_transactions(session, service.ledger.transactions.values())
-            self._save_drafts(session, service.drafts.drafts.values())
-            self._save_recurring_items(session, service.recurring.items.values())
-            self._save_funds(session, service.budgets.funds.values())
-            self._save_budgets(session, service.budgets)
-            self._save_investment_events(session, service.investments.events.values())
-            self._save_investment_valuations(session, service.investments.valuations.values())
-            self._save_categories(session, service.categories.categories.values())
-            self._save_category_history(session, service.categories)
-            self._save_payment_instruments(session, service)
-            for profile in service.credit_cards.profiles.values():
-                session.merge(
-                    CreditCardProfileRecord(
-                        account_id=profile.account_id,
-                        credit_limit=str(profile.credit_limit) if profile.credit_limit is not None else None,
-                        available_credit=str(profile.available_credit) if profile.available_credit is not None else None,
-                        statement_day=profile.statement_day,
-                        due_day=profile.due_day,
-                        annual_fee=str(profile.annual_fee) if profile.annual_fee is not None else None,
-                        version=profile.version,
-                    )
-                )
-            self._save_payment_profiles(session, service)
-            for attachment in service.attachments.attachments.values():
-                session.merge(
-                    AttachmentRecord(
-                        attachment_id=attachment.attachment_id,
-                        storage_key=attachment.storage_key,
-                        content_hash=attachment.content_hash,
-                        mime_type=attachment.mime_type,
-                        original_filename=attachment.original_filename,
-                        scanner_status=attachment.scanner_status,
-                    )
-                )
-            self._save_credentials(session, service.credentials._credentials.values())
-            self._save_audit_events(session, service.audit.events)
-            self._save_idempotency_receipts(session, service.idempotency._receipts.values())
-            for action in service.reconciliation_actions:
-                session.merge(
-                    ReconciliationActionRecord(
-                        reconciliation_id=str(action["reconciliation_id"]),
-                        payload=to_jsonable(action),
-                    )
-                )
-            for currency, account_id in service.adjustment_account_ids.items():
-                session.merge(AdjustmentAccountRecord(currency=currency, account_id=account_id))
+    def save_startup_maintenance(self, service: Any) -> None:
+        dirty_aliases, dirty_versions, dirty_events = service.categories.dirty_history()
+        with self.unit_of_work() as uow:
+            uow.catalog.delete_app_state("owner_token")
+            uow.catalog.save_books(service.books)
+            uow.catalog.save_assets(service.assets.dirty_assets())
+            uow.ledger.save_accounts(service.ledger.dirty_accounts())
+            uow.catalog.save_categories(service.categories.dirty_categories())
+            uow.catalog.save_category_history(
+                service.categories,
+                aliases=dirty_aliases,
+                versions=dirty_versions,
+                events=dirty_events,
+            )
+            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
+            uow.audit.save_events(service.audit.pending_events())
+            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
 
 __all__ = [
     "Base",

@@ -30,6 +30,7 @@ def test_legacy_full_snapshot_helpers_are_not_exposed_as_generic_save_methods():
         re.compile(r"\bdef _persist\("),
         re.compile(r"\bservice\._persist\(\)"),
         re.compile(r"\bdef save\(self, service"),
+        re.compile("save_" + "full_snapshot"),
         re.compile(r"\bstorage\.save\s*="),
         re.compile(r"\bstorage\.save\("),
     ]
@@ -46,10 +47,10 @@ def test_common_writes_do_not_depend_on_legacy_full_snapshot_persistence(tmp_pat
     service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
     token = service.owner_token
 
-    def fail_full_snapshot(_service):
-        raise AssertionError("API write path called legacy full snapshot persistence")
+    def fail_startup_maintenance(_service):
+        raise AssertionError("API write path called startup maintenance persistence")
 
-    service.storage.save_full_snapshot_for_legacy_bootstrap = fail_full_snapshot
+    service.storage.save_startup_maintenance = fail_startup_maintenance
 
     cash, _ = service.create_account(
         token,

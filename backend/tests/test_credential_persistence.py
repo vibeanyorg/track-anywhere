@@ -36,10 +36,10 @@ def test_machine_credential_issue_uses_incremental_persistence(tmp_path):
     first = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
     owner_token = first.owner_token
 
-    def fail_full_save(_service):
-        raise AssertionError("credential issue should not use full service persistence")
+    def fail_startup_maintenance(_service):
+        raise AssertionError("credential issue should not use startup maintenance persistence")
 
-    first.storage.save_full_snapshot_for_legacy_bootstrap = fail_full_save
+    first.storage.save_startup_maintenance = fail_startup_maintenance
     credential, replay = first.issue_machine_credential_command(
         owner_token,
         {

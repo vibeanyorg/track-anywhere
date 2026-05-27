@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from sqlalchemy import delete
+
 from .storage_models import (
     AdjustmentAccountRecord,
     AppStateRecord,
@@ -60,6 +62,9 @@ class CatalogRepository:
 
     def save_books(self, books) -> None:
         self.storage._save_books(self.session, books)
+
+    def delete_app_state(self, key: str) -> None:
+        self.session.execute(delete(AppStateRecord).where(AppStateRecord.key == key))
 
     def save_users(self, users: Iterable[Any]) -> None:
         for user in users:

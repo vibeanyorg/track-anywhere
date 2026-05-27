@@ -122,13 +122,13 @@ def test_platform_oauth_token_exchange_uses_incremental_persist(monkeypatch):
     )
     code = parse_qs(urlparse(authorize.json()["redirect_uri"]).query)["code"][0]
 
-    def fail_full_save(_service):
-        raise AssertionError("OAuth token exchange should not full-save service state")
+    def fail_startup_maintenance(_service):
+        raise AssertionError("OAuth token exchange should not use startup maintenance persistence")
 
     def capture_credential_event(credential, audit_event):
         saved.append((credential, audit_event))
 
-    monkeypatch.setattr(service.storage, "save_full_snapshot_for_legacy_bootstrap", fail_full_save)
+    monkeypatch.setattr(service.storage, "save_startup_maintenance", fail_startup_maintenance)
     monkeypatch.setattr(service.storage, "save_credential_and_audit_event", capture_credential_event)
 
     token = client.post(

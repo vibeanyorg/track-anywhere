@@ -90,7 +90,7 @@ class FinanceService(
         self._ensure_domain_foundations()
         self._ensure_owner_credential()
         if persist_on_initialize or self._startup_persist_required:
-            self._persist_legacy_bootstrap_snapshot()
+            self._persist_startup_maintenance()
         self.storage.refresh_read_cache_from_service(self)
 
     def actor_from_token(self, token: str | CredentialReference, required_scope: str | None = None) -> Actor:
@@ -118,9 +118,8 @@ class FinanceService(
             name="Owner credential",
         )
 
-    def _persist_legacy_bootstrap_snapshot(self) -> None:
-        self.storage.save_full_snapshot_for_legacy_bootstrap(self)
-        self.storage.refresh_read_cache_from_service(self)
+    def _persist_startup_maintenance(self) -> None:
+        self.storage.save_startup_maintenance(self)
         self.assets.mark_clean()
         self.credentials.mark_clean()
         self.ledger.mark_accounts_clean()

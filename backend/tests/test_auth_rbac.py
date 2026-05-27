@@ -49,13 +49,13 @@ def test_oauth_login_uses_incremental_persist(monkeypatch, tmp_path):
     service = FinanceService(database_url=database_url)
     saved_states = []
 
-    def fail_full_save(_service):
-        raise AssertionError("login should not full-save service state")
+    def fail_startup_maintenance(_service):
+        raise AssertionError("login should not use startup maintenance persistence")
 
     def capture_login_state(**kwargs):
         saved_states.append(kwargs)
 
-    monkeypatch.setattr(service.storage, "save_full_snapshot_for_legacy_bootstrap", fail_full_save)
+    monkeypatch.setattr(service.storage, "save_startup_maintenance", fail_startup_maintenance)
     monkeypatch.setattr(service.storage, "save_auth_login_state", capture_login_state)
 
     login = service.login_oauth_identity(oauth_identity("incremental@example.com"), role="viewer")
