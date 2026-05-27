@@ -4,8 +4,6 @@ from sqlalchemy.orm import Session
 
 from .domain_storage_models import (
     BookMemberRecord,
-    BudgetRecord,
-    BudgetTargetRecord,
     CategoryAliasRecord,
     CategoryVersionRecord,
     ClassificationEventRecord,
@@ -108,36 +106,4 @@ class DomainStorageWriters:
                     "version": event.version,
                 },
                 ["classification_event_id"],
-            )
-
-    def _save_budgets(self, session: Session, budgets, targets) -> None:
-        for budget in budgets:
-            session.merge(
-                BudgetRecord(
-                    budget_id=budget.budget_id,
-                    book_id=budget.book_id,
-                    name=budget.name,
-                    period=budget.period,
-                    starts_on=budget.starts_on.isoformat() if budget.starts_on else None,
-                    ends_on=budget.ends_on.isoformat() if budget.ends_on else None,
-                    currency=budget.currency,
-                    total_amount=str(budget.total_amount),
-                    rollover_policy=budget.rollover_policy,
-                    alert_thresholds=list(budget.alert_thresholds),
-                    status=budget.status,
-                    version=budget.version,
-                )
-            )
-        for target in targets:
-            session.merge(
-                BudgetTargetRecord(
-                    budget_target_id=target.budget_target_id,
-                    budget_id=target.budget_id,
-                    target_type=target.target_type,
-                    target_id=target.target_id,
-                    mode=target.mode,
-                    amount=str(target.amount) if target.amount is not None else None,
-                    metadata_json=to_jsonable(target.metadata),
-                    version=target.version,
-                )
             )

@@ -11,7 +11,6 @@ BACKEND = REPO_ROOT / "backend/app/track_anywhere"
 def test_storage_writer_facade_stays_context_scoped():
     expected_modules = {
         "storage_audit_idempotency_writers.py",
-        "storage_finance_writers.py",
         "storage_upsert_writers.py",
         "storage_writers.py",
     }
@@ -31,3 +30,4 @@ def test_storage_writer_facade_stays_context_scoped():
     assert "IdempotencyReceiptRecord" not in source
     assert "LedgerStorageWriters" not in source
     assert "WorkflowStorageWriters" not in source
+    assert "FinanceStorageWriters" not in source

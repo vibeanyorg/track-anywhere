@@ -27,6 +27,19 @@ def test_workflow_repositories_own_workflow_writes():
     assert "self.storage._save_recurring_items" not in source
 
 
+def test_finance_repositories_own_finance_writes():
+    source = (BACKEND / "storage_repositories/finance.py").read_text()
+
+    assert "def save(self, funds" in source
+    assert "def save(self, budgets" in source
+    assert "def save_events" in source
+    assert "def save_valuations" in source
+    assert "self.storage._save_funds" not in source
+    assert "self.storage._save_budgets" not in source
+    assert "self.storage._save_investment_events" not in source
+    assert "self.storage._save_investment_valuations" not in source
+
+
 def test_write_benchmark_does_not_depend_on_legacy_storage_writer_privates():
     source = (REPO_ROOT / "scripts/benchmark-write-performance.py").read_text()
 
