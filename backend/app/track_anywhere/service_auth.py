@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .security import Actor
+from .security import Actor, CredentialReference
 
 
 OWNER_SCOPES = {
@@ -62,3 +62,13 @@ def scopes_for_role(role: str) -> set[str]:
         return set(ROLE_SCOPES[role])
     except KeyError as exc:
         raise ValueError(f"unknown role: {role}") from exc
+
+
+class ServiceAuthorization:
+    def actor_from_token(self, token: str | CredentialReference, required_scope: str | None = None) -> Actor:
+        return self.credentials.verify(token, required_scope=required_scope)
+
+    def actor_for_book(self, token: str, book_id: str | None, required_scope: str | None = None) -> Actor:
+        actor = self.actor_from_token(token, required_scope=required_scope)
+        self.books.require_access(book_id, actor, required_scope)
+        return actor
