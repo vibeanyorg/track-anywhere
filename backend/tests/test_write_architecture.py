@@ -7,6 +7,7 @@ from sqlalchemy import event
 
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
+from track_anywhere.service_finance import FinancialUseCases
 
 
 SERVICE_MODULES = Path("backend/app/track_anywhere").glob("service_*.py")
@@ -41,6 +42,16 @@ def test_legacy_full_snapshot_helpers_are_not_exposed_as_generic_save_methods():
                     offenders.append(f"{path.relative_to(repo_root)}:{line_number}: {line.strip()}")
 
     assert offenders == []
+
+
+def test_financial_use_cases_do_not_shadow_investment_use_cases():
+    shadowed_investment_methods = {
+        "record_investment_event",
+        "list_investment_events",
+        "investment_performance",
+    }
+
+    assert shadowed_investment_methods.isdisjoint(FinancialUseCases.__dict__)
 
 
 def test_common_writes_do_not_depend_on_legacy_full_snapshot_persistence(tmp_path):

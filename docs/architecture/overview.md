@@ -55,8 +55,8 @@ Security is a prerequisite for high-authority Agent/OCR flows, not a final harde
 
 Local development uses PostgreSQL by default. Start the local database with `docker compose up -d postgres`; the default SQLAlchemy URL is `postgresql+psycopg://track_anywhere:track_anywhere@localhost:55432/track_anywhere`. Override storage with `TRACK_ANYWHERE_DATABASE_URL` for Neon or any other Postgres target. SQLite remains available for focused tests by passing an explicit `sqlite:///...` URL.
 
-Database schema changes are applied through Alembic migrations in `alembic/versions`. Service startup runs `alembic upgrade head` programmatically before the ORM snapshot layer loads data, and Alembic records the active revision in `alembic_version`.
+Database schema changes are applied through Alembic migrations in `alembic/versions`. Service startup runs `alembic upgrade head` programmatically before repositories load persisted state, and Alembic records the active revision in `alembic_version`.
 
 For schema changes, update the SQLAlchemy models, generate a revision with `uv run alembic revision --autogenerate -m "<change>"`, inspect the generated migration, then verify with `uv run alembic upgrade head` and `uv run alembic check`.
 
-The first persistence slice keeps the domain model in memory during a request and writes an ORM snapshot after mutations. It persists accounts, transactions, postings, drafts, funds, attachments, credentials, idempotency receipts, audit events, reconciliation actions, and local owner token state. This keeps the current domain code small while leaving room to replace the snapshot layer with per-aggregate repositories later.
+Writes use command-scoped repository transactions. Each mutating use case validates against the storage-backed truth, builds the specific aggregate changes it owns, and commits those changes through `UnitOfWork` repositories together with idempotency receipts and audit events. Startup may run targeted maintenance for legacy owner-token cleanup and default-domain rows, but production API writes must not call full-service snapshot persistence.
