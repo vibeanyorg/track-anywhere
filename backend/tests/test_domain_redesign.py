@@ -199,6 +199,7 @@ def test_budget_execution_supports_project_and_merchant_targets(tmp_path):
     )
     transaction.lines[0].project_id = "project_tokyo"
     transaction.lines[0].merchant_id = "merchant_didi"
+    service._persist_ledger_change(transaction)
 
     execution = service.budget_execution_report(token, book.book_id, budget.budget_id)
 

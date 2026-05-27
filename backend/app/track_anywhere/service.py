@@ -32,6 +32,7 @@ from .service_identity import IdentityUseCases
 from .service_investments import InvestmentUseCases
 from .service_ledger import LedgerUseCases
 from .service_reclassification import ReclassificationUseCases
+from .service_reports import BookReportUseCases
 from .service_recurring import RecurringUseCases
 from .storage import OrmStorage, new_owner_token
 from .storage_json import to_jsonable
@@ -43,6 +44,7 @@ from .users import UserDirectory
 class FinanceService(
     IdentityUseCases,
     BookUseCases,
+    BookReportUseCases,
     CatalogUseCases,
     AssetUseCases,
     InvestmentUseCases,

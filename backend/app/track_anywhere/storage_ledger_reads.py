@@ -130,6 +130,29 @@ class LedgerReadStorage:
             )
             return self._transactions_from_joined_rows(rows)
 
+    def list_all_confirmed_transactions(self, *, book_id: str) -> list[Transaction]:
+        cached_transactions = getattr(self, "_read_transactions", None)
+        if cached_transactions is not None:
+            transactions = [transaction for transaction in cached_transactions.values() if transaction.book_id == book_id]
+            transactions.sort(key=lambda item: (item.occurred_at, item.transaction_id), reverse=True)
+            return deepcopy(transactions)
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(TransactionRecord, PostingRecord, TransactionLineRecord)
+                .outerjoin(PostingRecord, PostingRecord.transaction_id == TransactionRecord.transaction_id)
+                .outerjoin(TransactionLineRecord, TransactionLineRecord.transaction_id == TransactionRecord.transaction_id)
+                .where(TransactionRecord.book_id == book_id)
+                .order_by(
+                    TransactionRecord.occurred_at.desc(),
+                    TransactionRecord.transaction_id.desc(),
+                    PostingRecord.position,
+                    PostingRecord.id,
+                    TransactionLineRecord.position,
+                    TransactionLineRecord.line_id,
+                )
+            )
+            return self._transactions_from_joined_rows(rows)
+
     def _load_confirmed_transactions(self, transaction_ids: Iterable[str]) -> dict[str, Transaction]:
         ids = list(dict.fromkeys(transaction_ids))
         if not ids:
