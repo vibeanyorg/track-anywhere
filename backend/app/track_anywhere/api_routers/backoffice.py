@@ -90,16 +90,17 @@ def list_accounts(
 ):
     try:
         _require_backoffice(token)
-        items = serialize(list(service.ledger.accounts.values()))
+        accounts = service.storage.list_accounts(
+            book_id=book_id,
+            type=type,
+            currency=currency,
+            institution_type=institution_type,
+            subtype=subtype,
+        )
+        items = serialize(accounts)
         return _filter_rows(
             items,
-            exact={
-                "book_id": book_id,
-                "type": type,
-                "currency": currency,
-                "institution_type": institution_type,
-                "subtype": subtype,
-            },
+            exact={},
             search=search,
             search_fields=("account_id", "name", "institution"),
             ordering=ordering,

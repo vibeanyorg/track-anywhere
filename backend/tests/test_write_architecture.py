@@ -77,13 +77,16 @@ def test_core_ledger_write_use_cases_do_not_mutate_transaction_mirror():
     assert offenders == []
 
 
-def test_backoffice_transactions_do_not_read_transaction_mirror():
+def test_backoffice_read_models_do_not_read_ledger_mirrors():
     repo_root = Path.cwd()
     path = repo_root / "backend/app/track_anywhere/api_routers/backoffice.py"
     offenders = []
-    pattern = re.compile(r"\bservice\.ledger\.transactions\b")
+    patterns = [
+        re.compile(r"\bservice\.ledger\.transactions\b"),
+        re.compile(r"\bservice\.ledger\.accounts\b"),
+    ]
     for line_number, line in enumerate(path.read_text().splitlines(), start=1):
-        if pattern.search(line):
+        if any(pattern.search(line) for pattern in patterns):
             offenders.append(f"{path.relative_to(repo_root)}:{line_number}: {line.strip()}")
 
     assert offenders == []
