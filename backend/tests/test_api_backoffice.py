@@ -118,14 +118,17 @@ def test_backoffice_requires_admin_or_owner_scope():
 def test_password_accounts_persist_across_store_restart(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}"
     first_service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
-    first_store = first_service.create_password_account_store()
     email = f"persist-password-{uuid4().hex}@example.com"
 
-    created = first_store.create(email=email, password="correct-password-123", display_name="Persisted Password")
+    created = first_service.create_password_account(
+        email=email,
+        password="correct-password-123",
+        display_name="Persisted Password",
+        signup_allowed_emails=frozenset(),
+    )
 
     second_service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
-    second_store = second_service.create_password_account_store()
-    authenticated = second_store.authenticate(email=email, password="correct-password-123")
+    authenticated = second_service.authenticate_password_account(email=email, password="correct-password-123")
 
     assert created.email == email
     assert authenticated.email == email

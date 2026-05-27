@@ -9,10 +9,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from ..api_ports.auth_pages import AuthPagesService
 from ..api_sessions import CSRF_COOKIE, SESSION_COOKIE, set_browser_session_cookies
-from ..api_runtime import auth_cookie_secure, auth_settings, browser_sessions, password_accounts, service
-from ..auth_identities import OAuthIdentity
+from ..api_runtime import auth_cookie_secure, auth_settings, browser_sessions
 from ..errors import PolicyDenied, ValidationError
-from ..password_auth import PasswordSignupCommand
+from ..password_auth import PasswordAccount, PasswordSignupCommand
 from ..platform_auth import OAuthAuthorizeCommand
 from .auth_page_ui import error_message as _error, hidden_input as _hidden, render_auth_page as _page
 from .auth_scope_ui import actor_available_scope_text, approved_scope_text, requested_scope_text, scope_controls
@@ -34,35 +33,40 @@ def signup_page(request: Request, next: str | None = None) -> HTMLResponse:
 @router.post("/password/login/form")
 def login_form(
     request: Request,
+    auth_service: AuthPagesService,
     email: Annotated[str, Form()],
     password: Annotated[str, Form()],
     next: Annotated[str, Form()] = "/api/v1/auth/session-view",
 ):
     try:
-        account = password_accounts.authenticate(email=email, password=password)
-    except PolicyDenied as exc:
-        service.record_security_failure("auth.password_denied", {"reason": "bad_credentials"})
+        account = auth_service.authenticate_password_account(email=email, password=password)
+    except PolicyDenied:
         return _auth_form(request, mode="login", next_path=_safe_next(next), error="Email or password is incorrect.", status_code=401)
-    return _issue_password_session(email=account.email, display_name=account.display_name, role=account.role, next_path=next)
+    return _issue_password_session(auth_service, account=account, next_path=next)
 
 
 @router.post("/password/signup/form")
 def signup_form(
     request: Request,
+    auth_service: AuthPagesService,
     email: Annotated[str, Form()],
     password: Annotated[str, Form()],
     display_name: Annotated[str | None, Form()] = None,
     next: Annotated[str, Form()] = "/api/v1/auth/session-view",
 ):
     payload = PasswordSignupCommand(email=email, password=password, display_name=display_name)
-    if service.config.mode != "local" and payload.email not in auth_settings.password_signup_allowed_emails:
-        service.record_security_failure("auth.password_signup_denied", {"reason": "email_not_allowlisted"})
-        return _auth_form(request, mode="signup", next_path=_safe_next(next), error="Password signup is not allowlisted.", status_code=403)
     try:
-        account = password_accounts.create(email=payload.email, password=payload.password, display_name=payload.display_name)
+        account = auth_service.create_password_account(
+            email=payload.email,
+            password=payload.password,
+            display_name=payload.display_name,
+            signup_allowed_emails=auth_settings.password_signup_allowed_emails,
+        )
+    except PolicyDenied:
+        return _auth_form(request, mode="signup", next_path=_safe_next(next), error="Password signup is not allowlisted.", status_code=403)
     except ValidationError:
         return _auth_form(request, mode="signup", next_path=_safe_next(next), error="Email is already registered.", status_code=409)
-    return _issue_password_session(email=account.email, display_name=account.display_name, role=account.role, next_path=next)
+    return _issue_password_session(auth_service, account=account, next_path=next)
 
 
 @router.get("/session-view")
@@ -160,11 +164,8 @@ def cli_callback_approve(
     return _callback_delivery(result["redirect_uri"])
 
 
-def _issue_password_session(*, email: str, display_name: str, role: str, next_path: str):
-    login = service.login_oauth_identity(
-        OAuthIdentity(provider="password", subject=email, email=email, email_verified=True, name=display_name, picture=None),
-        role=role,
-    )
+def _issue_password_session(auth_service: AuthPagesService, *, account: PasswordAccount, next_path: str) -> RedirectResponse:
+    login = auth_service.login_password_account(account)
     session_identity = {**login["identity"], "role": login["membership"]["role"]}
     session_id, csrf_token = browser_sessions.issue(credential_token=login["credential_token"], identity=session_identity)
     response = RedirectResponse(_safe_next(next_path), status_code=303)

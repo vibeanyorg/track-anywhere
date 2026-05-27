@@ -6,11 +6,10 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from ..api_dependencies import AuthToken
 from ..api_sessions import SESSION_COOKIE, clear_browser_session_cookies, set_browser_session_cookies
-from ..api_runtime import auth_cookie_secure, auth_settings, browser_sessions, oauth_registry, password_accounts, service
-from ..auth_identities import OAuthIdentity
+from ..api_runtime import auth_cookie_secure, auth_settings, browser_sessions, oauth_registry, service
 from ..auth_oauth import identity_from_oauth_token, oauth_callback_url, require_allowed_identity, role_for_identity
 from ..errors import PolicyDenied, ValidationError
-from ..password_auth import PasswordLoginCommand, PasswordSignupCommand
+from ..password_auth import PasswordAccount, PasswordLoginCommand, PasswordSignupCommand
 from ..platform_auth import ApiKeySessionCommand
 from ..platform_auth_http import identity_for_actor
 
@@ -78,28 +77,27 @@ def create_api_key_session(payload: ApiKeySessionCommand):
 
 @router.post("/password/signup")
 def signup_with_password(payload: PasswordSignupCommand):
-    if service.config.mode != "local" and payload.email not in auth_settings.password_signup_allowed_emails:
-        service.record_security_failure("auth.password_signup_denied", {"reason": "email_not_allowlisted"})
-        raise HTTPException(status_code=403, detail="password signup is not allowlisted")
     try:
-        account = password_accounts.create(
+        account = service.create_password_account(
             email=payload.email,
             password=payload.password,
             display_name=payload.display_name,
+            signup_allowed_emails=auth_settings.password_signup_allowed_emails,
         )
+    except PolicyDenied as exc:
+        raise HTTPException(status_code=403, detail="password signup is not allowlisted") from exc
     except ValidationError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return _password_session_response(account.email, account.display_name, account.role)
+    return _password_session_response(account)
 
 
 @router.post("/password/login")
 def login_with_password(payload: PasswordLoginCommand):
     try:
-        account = password_accounts.authenticate(email=payload.email, password=payload.password)
+        account = service.authenticate_password_account(email=payload.email, password=payload.password)
     except PolicyDenied as exc:
-        service.record_security_failure("auth.password_denied", {"reason": "bad_credentials"})
         raise HTTPException(status_code=401, detail="email or password is incorrect") from exc
-    return _password_session_response(account.email, account.display_name, account.role)
+    return _password_session_response(account)
 
 
 @router.get("/oauth/providers")
@@ -180,18 +178,8 @@ def _accepts_html(request: Request) -> bool:
     return "text/html" in accept and "application/json" not in accept
 
 
-def _password_session_response(email: str, display_name: str, role: str):
-    login = service.login_oauth_identity(
-        OAuthIdentity(
-            provider="password",
-            subject=email,
-            email=email,
-            email_verified=True,
-            name=display_name,
-            picture=None,
-        ),
-        role=role,
-    )
+def _password_session_response(account: PasswordAccount) -> JSONResponse:
+    login = service.login_password_account(account)
     session_identity = {**login["identity"], "role": login["membership"]["role"]}
     session_id, csrf_token = browser_sessions.issue(
         credential_token=login["credential_token"],
