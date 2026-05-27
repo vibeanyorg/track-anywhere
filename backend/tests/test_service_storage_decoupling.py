@@ -92,12 +92,17 @@ def test_system_router_uses_service_dependency_boundary():
 def test_non_system_api_routers_do_not_import_runtime_service():
     offenders = []
     allowed_files = {BACKEND / "api_routers/system.py"}
-    forbidden = "from ..api_runtime import service"
     for path in (BACKEND / "api_routers").glob("*.py"):
         if path in allowed_files:
             continue
-        if forbidden in path.read_text():
-            offenders.append(str(path.relative_to(REPO_ROOT)))
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            if (node.level == 2 and node.module == "api_runtime") or node.module == "track_anywhere.api_runtime":
+                imported_names = {alias.name for alias in node.names}
+                if "service" in imported_names:
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
 
     assert offenders == []
 
