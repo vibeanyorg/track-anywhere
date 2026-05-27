@@ -18,7 +18,7 @@ def list_credentials(token: AuthToken):
     try:
         return {"credentials": service.list_agent_credentials(token)}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "credential.list")
+        raise_command_error(exc, "credential.list", recorder=service)
 
 
 @router.get("/credentials/machine", dependencies=protected)
@@ -26,7 +26,7 @@ def list_machine_credentials(token: AuthToken):
     try:
         return {"credentials": service.list_agent_credentials(token)}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "credential.machine.list")
+        raise_command_error(exc, "credential.machine.list", recorder=service)
 
 
 @router.post("/credentials/agent", dependencies=protected)
@@ -35,7 +35,7 @@ def issue_agent_credential(payload: IssueCredentialCommand, token: AuthToken, ke
         result, replay = service.issue_agent_credential_command(token, command_payload(payload), idempotency_key=key)
         return {"credential": serialize(result), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "credential.issue")
+        raise_command_error(exc, "credential.issue", recorder=service)
 
 
 @router.post("/credentials/machine", dependencies=protected)
@@ -44,7 +44,7 @@ def issue_machine_credential(payload: IssueMachineCredentialCommand, token: Auth
         result, replay = service.issue_machine_credential_command(token, command_payload(payload), idempotency_key=key)
         return {"credential": serialize(result), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "credential.machine.issue")
+        raise_command_error(exc, "credential.machine.issue", recorder=service)
 
 
 @router.post("/credentials/revoke", dependencies=protected)
@@ -53,7 +53,7 @@ def revoke_credential(payload: RevokeCredentialCommand, token: AuthToken, key: I
         result, replay = service.revoke_credential_command(token, command_payload(payload), idempotency_key=key)
         return {"credential": serialize(result), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "credential.revoke")
+        raise_command_error(exc, "credential.revoke", recorder=service)
 
 
 @router.post("/credentials/{credential_id}/revoke", dependencies=protected)
@@ -62,4 +62,4 @@ def revoke_credential_by_id(credential_id: str, payload: RevokeCredentialByIdCom
         result, replay = service.revoke_credential_by_id_command(token, credential_id, command_payload(payload), idempotency_key=key)
         return {"credential": serialize(result), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "credential.revoke_by_id")
+        raise_command_error(exc, "credential.revoke_by_id", recorder=service)

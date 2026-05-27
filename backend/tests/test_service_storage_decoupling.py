@@ -101,6 +101,21 @@ def test_catalog_adjacent_write_routers_use_service_dependency_boundaries():
         assert "recorder=service" in source
 
 
+def test_api_error_auditing_has_no_runtime_singleton_fallback():
+    errors_source = (BACKEND / "api_errors.py").read_text()
+    assert "api_runtime import service" not in errors_source
+    assert "recorder=service" not in errors_source
+    assert "def raise_command_error(error: Exception, operation: str, *, recorder:" in errors_source
+
+    offenders = []
+    for path in (BACKEND / "api_routers").glob("*.py"):
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if "raise_command_error(" in line and "recorder=" not in line:
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: {line.strip()}")
+
+    assert offenders == []
+
+
 def test_platform_auth_does_not_accept_whole_service_object():
     path = BACKEND / "platform_auth.py"
     tree = ast.parse(path.read_text())

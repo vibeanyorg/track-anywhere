@@ -26,7 +26,7 @@ def record_investment_event(payload: RecordInvestmentEventCommand, token: AuthTo
         event, replay = service.record_investment_event(token, command_payload(payload), idempotency_key=key)
         return {"event": serialize(event), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "investment.event.record")
+        raise_command_error(exc, "investment.event.record", recorder=service)
 
 
 
@@ -37,7 +37,7 @@ def record_investment_valuation(payload: RecordInvestmentValuationCommand, token
         valuation, replay = service.record_investment_valuation(token, command_payload(payload), idempotency_key=key)
         return {"valuation": serialize(valuation), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "investment.valuation.record")
+        raise_command_error(exc, "investment.valuation.record", recorder=service)
 
 
 @router.get("/investments/accounts/{account_id}/valuations", dependencies=protected)
@@ -45,14 +45,14 @@ def list_investment_valuations(account_id: str, token: AuthToken):
     try:
         return {"valuations": serialize(service.list_investment_valuations(token, account_id))}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "investment.valuation.list")
+        raise_command_error(exc, "investment.valuation.list", recorder=service)
 
 @router.get("/investments/accounts/{account_id}/performance", dependencies=protected)
 def investment_performance(account_id: str, token: AuthToken, as_of: str | None = None):
     try:
         return service.investment_performance(token, account_id, as_of=as_of)
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "investment.performance")
+        raise_command_error(exc, "investment.performance", recorder=service)
 
 
 @router.post("/funds", dependencies=protected)
@@ -61,7 +61,7 @@ def create_fund(payload: CreateFundCommand, token: AuthToken, key: IdempotencyKe
         fund, replay = service.create_fund(token, command_payload(payload), idempotency_key=key)
         return {"fund": serialize(fund), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "fund.create")
+        raise_command_error(exc, "fund.create", recorder=service)
 
 
 @router.post("/funds/allocate", dependencies=protected)
@@ -70,7 +70,7 @@ def allocate_fund(payload: FundAllocationCommand, token: AuthToken, key: Idempot
         result, replay = service.allocate_fund(token, command_payload(payload), idempotency_key=key)
         return {"result": serialize(result), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "fund.allocate")
+        raise_command_error(exc, "fund.allocate", recorder=service)
 
 
 @router.post("/funds/spend", dependencies=protected)
@@ -79,7 +79,7 @@ def spend_fund(payload: FundSpendCommand, token: AuthToken, key: IdempotencyKey)
         result, replay = service.spend_fund(token, command_payload(payload), idempotency_key=key)
         return {"result": serialize(result), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "fund.spend")
+        raise_command_error(exc, "fund.spend", recorder=service)
 
 
 @router.post("/attachments", dependencies=protected)
@@ -95,7 +95,7 @@ async def upload_attachment(token: AuthToken, key: IdempotencyKey, file: UploadF
         )
         return {"result": serialize(result), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "attachment.upload")
+        raise_command_error(exc, "attachment.upload", recorder=service)
 
 
 @router.post("/reconciliation/actions", dependencies=protected)
@@ -104,4 +104,4 @@ def record_reconciliation(payload: ReconciliationActionCommand, token: AuthToken
         action, replay = service.record_reconciliation_action(token, command_payload(payload), idempotency_key=key)
         return {"action": serialize(action), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "reconciliation.record")
+        raise_command_error(exc, "reconciliation.record", recorder=service)

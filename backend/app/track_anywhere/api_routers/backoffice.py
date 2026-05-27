@@ -25,7 +25,7 @@ def list_roles(token: AuthToken):
             for role, scopes in sorted(ROLE_SCOPES.items())
         ]
     except TrackAnywhereError as exc:
-        raise_command_error(exc, "backoffice.roles.list")
+        raise_command_error(exc, "backoffice.roles.list", recorder=service)
 
 
 @router.get("/books", dependencies=protected)
@@ -49,7 +49,7 @@ def list_books(
             ordering_fields=("book_id", "name", "kind", "base_currency", "status"),
         )
     except TrackAnywhereError as exc:
-        raise_command_error(exc, "backoffice.book.list")
+        raise_command_error(exc, "backoffice.book.list", recorder=service)
 
 
 @router.get("/book-members", dependencies=protected)
@@ -74,7 +74,7 @@ def list_book_members(
             ordering_fields=("book_id", "user_id", "role", "status"),
         )
     except TrackAnywhereError as exc:
-        raise_command_error(exc, "backoffice.book_member.list")
+        raise_command_error(exc, "backoffice.book_member.list", recorder=service)
 
 
 @router.get("/accounts", dependencies=protected)
@@ -107,7 +107,7 @@ def list_accounts(
             ordering_fields=("account_id", "name", "type", "currency", "book_id"),
         )
     except TrackAnywhereError as exc:
-        raise_command_error(exc, "backoffice.account.list")
+        raise_command_error(exc, "backoffice.account.list", recorder=service)
 
 
 @router.get("/ledger-users", dependencies=protected)
@@ -124,7 +124,7 @@ def list_ledger_users(token: AuthToken, search: str | None = None, ordering: str
             ordering_fields=("user_id", "username", "display_name"),
         )
     except TrackAnywhereError as exc:
-        raise_command_error(exc, "backoffice.user.list")
+        raise_command_error(exc, "backoffice.user.list", recorder=service)
 
 
 @router.get("/auth-identities", dependencies=protected)
@@ -148,7 +148,7 @@ def list_auth_identities(
             ordering_fields=("identity_id", "provider", "subject", "email", "user_id", "status"),
         )
     except TrackAnywhereError as exc:
-        raise_command_error(exc, "backoffice.auth_identity.list")
+        raise_command_error(exc, "backoffice.auth_identity.list", recorder=service)
 
 
 @router.get("/categories", dependencies=protected)
@@ -172,7 +172,7 @@ def list_categories(
             ordering_fields=("category_id", "book_id", "kind", "path_cache", "status"),
         )
     except TrackAnywhereError as exc:
-        raise_command_error(exc, "backoffice.category.list")
+        raise_command_error(exc, "backoffice.category.list", recorder=service)
 
 
 @router.get("/transactions", dependencies=protected)
@@ -197,7 +197,7 @@ def list_transactions(
             ordering_fields=("transaction_id", "book_id", "occurred_at", "purpose"),
         )
     except TrackAnywhereError as exc:
-        raise_command_error(exc, "backoffice.transaction.list")
+        raise_command_error(exc, "backoffice.transaction.list", recorder=service)
 
 
 @router.get("/recurring-items", dependencies=protected)
@@ -222,7 +222,7 @@ def list_recurring_items(
             ordering_fields=("recurring_id", "book_id", "name", "kind", "status", "currency"),
         )
     except TrackAnywhereError as exc:
-        raise_command_error(exc, "backoffice.recurring_item.list")
+        raise_command_error(exc, "backoffice.recurring_item.list", recorder=service)
 
 
 @router.get("/audit-events", dependencies=protected)
@@ -252,7 +252,7 @@ def list_audit_events(
             ordering_fields=("event_id", "operation", "actor_id", "actor_type", "entity_ref", "created_at"),
         )
     except TrackAnywhereError as exc:
-        raise_command_error(exc, "backoffice.audit_event.list")
+        raise_command_error(exc, "backoffice.audit_event.list", recorder=service)
 
 
 def _require_backoffice(token: AuthToken) -> None:

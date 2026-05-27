@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from typing import Any, Protocol
+
 from fastapi import HTTPException
 from pydantic import ValidationError as PydanticValidationError
 
-from .api_runtime import service
 from .errors import IdempotencyConflict, NotFound, PolicyDenied, SecurityPreconditionFailed, StaleVersion
+
+
+class SecurityFailureRecorder(Protocol):
+    def record_security_failure(self, operation: str, details: dict[str, Any]) -> None: ...
 
 
 def error_to_status(error: Exception) -> int:
@@ -19,7 +24,7 @@ def error_to_status(error: Exception) -> int:
     return 422
 
 
-def raise_command_error(error: Exception, operation: str, *, recorder=service) -> None:
+def raise_command_error(error: Exception, operation: str, *, recorder: SecurityFailureRecorder) -> None:
     if isinstance(error, PolicyDenied):
         recorder.record_security_failure("security.policy_denied", {"operation": operation})
     elif isinstance(error, IdempotencyConflict):
