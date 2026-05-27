@@ -7,13 +7,14 @@ from .books import DEFAULT_BOOK_ID
 from .commands import RecordExpenseCommand, RecordIncomeCommand, RecordTransactionCommand, ReverseTransactionCommand
 from .errors import NotFound, ValidationError
 from .ledger import Posting, Transaction
+from .transaction_builder import build_transaction
 
 
 class LedgerUseCases:
     def record_transaction(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = RecordTransactionCommand.model_validate(payload)
-        from_account = self.ledger.get_account(command.from_account_id)
-        to_account = self.ledger.get_account(command.to_account_id)
+        from_account = self.storage.get_account(command.from_account_id)
+        to_account = self.storage.get_account(command.to_account_id)
         if from_account.book_id != to_account.book_id:
             raise ValidationError("transaction accounts must belong to one book")
         if from_account.currency != command.currency or to_account.currency != command.currency:
@@ -21,7 +22,7 @@ class LedgerUseCases:
         self.assets.validate_amount(command.currency, command.amount)
         actor = self.actor_for_book(token, from_account.book_id, "ledger:confirm")
         if command.category_id is not None:
-            category = self.categories.get(command.category_id)
+            category = self.storage.get_category(command.category_id)
             if category.book_id != from_account.book_id:
                 raise ValidationError("transaction category must belong to the same book")
             self._validate_transaction_category(
@@ -32,7 +33,7 @@ class LedgerUseCases:
         request_hash = self._hash_command(command)
 
         def run():
-            transaction = self.ledger.create_transaction(
+            transaction = build_transaction(
                 memo=command.memo,
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
@@ -40,9 +41,12 @@ class LedgerUseCases:
                     Posting(command.from_account_id, -command.amount, command.currency),
                     Posting(command.to_account_id, command.amount, command.currency),
                 ],
+                accounts=[from_account, to_account],
+                scale_lookup=self.assets.scale_for,
             )
             if command.category_id is not None:
-                self._add_category_line_for_transaction(transaction, self.categories.get(command.category_id))
+                self._add_category_line_for_transaction(transaction, self.storage.get_category(command.category_id))
+            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="ledger.transaction.record",
                 actor=actor,
@@ -66,12 +70,12 @@ class LedgerUseCases:
 
     def record_expense(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = RecordExpenseCommand.model_validate(payload)
-        source = self.ledger.get_account(command.from_account_id)
+        source = self.storage.get_account(command.from_account_id)
         actor = self.actor_for_book(token, source.book_id, "ledger:confirm")
         if source.currency != command.currency:
             raise ValidationError("expense currency must match source account currency")
         self.assets.validate_amount(command.currency, command.amount)
-        category = self.categories.get(command.category_id)
+        category = self.storage.get_category(command.category_id)
         if category.book_id != source.book_id:
             raise ValidationError("expense category must belong to the same book")
         if category.kind != "expense":
@@ -80,7 +84,8 @@ class LedgerUseCases:
 
         def run():
             expense_account_id = self._system_category_account_id("expense", command.currency, book_id=source.book_id)
-            transaction = self.ledger.create_transaction(
+            expense_account = self._transaction_account(expense_account_id)
+            transaction = build_transaction(
                 memo=command.memo,
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
@@ -88,8 +93,11 @@ class LedgerUseCases:
                     Posting(command.from_account_id, -command.amount, command.currency),
                     Posting(expense_account_id, command.amount, command.currency),
                 ],
+                accounts=[source, expense_account],
+                scale_lookup=self.assets.scale_for,
             )
             self._add_category_line_for_transaction(transaction, category)
+            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="expense.record",
                 actor=actor,
@@ -113,12 +121,12 @@ class LedgerUseCases:
 
     def record_income(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = RecordIncomeCommand.model_validate(payload)
-        target = self.ledger.get_account(command.to_account_id)
+        target = self.storage.get_account(command.to_account_id)
         actor = self.actor_for_book(token, target.book_id, "ledger:confirm")
         if target.currency != command.currency:
             raise ValidationError("income currency must match target account currency")
         self.assets.validate_amount(command.currency, command.amount)
-        category = self.categories.get(command.category_id)
+        category = self.storage.get_category(command.category_id)
         if category.book_id != target.book_id:
             raise ValidationError("income category must belong to the same book")
         if category.kind != "income":
@@ -127,7 +135,8 @@ class LedgerUseCases:
 
         def run():
             income_account_id = self._system_category_account_id("income", command.currency, book_id=target.book_id)
-            transaction = self.ledger.create_transaction(
+            income_account = self._transaction_account(income_account_id)
+            transaction = build_transaction(
                 memo=command.memo,
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
@@ -135,8 +144,11 @@ class LedgerUseCases:
                     Posting(income_account_id, -command.amount, command.currency),
                     Posting(command.to_account_id, command.amount, command.currency),
                 ],
+                accounts=[income_account, target],
+                scale_lookup=self.assets.scale_for,
             )
             self._add_category_line_for_transaction(transaction, category)
+            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="income.record",
                 actor=actor,
@@ -169,11 +181,11 @@ class LedgerUseCases:
     ) -> list[Transaction]:
         self.actor_for_book(token, book_id, "ledger:read")
         if account_id:
-            account = self.ledger.get_account(account_id)
+            account = self.storage.get_account(account_id)
             if account.book_id != book_id:
                 return []
         if category_id:
-            category = self.categories.get(category_id)
+            category = self.storage.get_category(category_id)
             if category.book_id != book_id:
                 return []
         return self.storage.list_confirmed_transactions(

@@ -6,6 +6,7 @@ from .commands import CaptureDraftCommand, ConfirmDraftCommand, RejectDraftComma
 from .errors import NotFound, StaleVersion, ValidationError
 from .ledger import Posting, Transaction
 from .security import Actor
+from .transaction_builder import build_transaction
 
 
 class DraftUseCases:
@@ -48,17 +49,20 @@ class DraftUseCases:
                 raise StaleVersion("draft version conflict")
             if draft.state != "ready_to_confirm":
                 raise ValidationError("draft is not ready to confirm")
-            transaction = self.ledger.create_transaction(
+            transaction = build_transaction(
                 memo=draft.memo,
                 purpose="draft_confirmed",
                 postings=draft.proposed_postings,
                 book_id=draft.book_id,
+                accounts=[self._transaction_account(posting.account_id) for posting in draft.proposed_postings],
+                scale_lookup=self.assets.scale_for,
             )
             if draft.category_id is not None:
                 self._add_category_line_for_transaction(transaction, self.storage.get_category(draft.category_id))
             draft.state = "confirmed"
             draft.version += 1
             self.drafts.drafts[draft.draft_id] = draft
+            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="draft.confirm",
                 actor=actor,

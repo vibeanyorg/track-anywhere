@@ -8,6 +8,7 @@ from .categories import Category
 from .category_commands import EnsureCategoryPathCommand
 from .commands import CreateCategoryCommand
 from .errors import NotFound, ValidationError
+from .transaction_builder import add_transaction_line
 
 
 class CategoryUseCases:
@@ -214,8 +215,9 @@ class CategoryUseCases:
     def _category_amounts_for_transaction(self, transaction, category: Category) -> dict[str, Decimal]:
         amounts: dict[str, Decimal] = {}
         for posting in transaction.postings:
-            account = self.ledger.accounts.get(posting.account_id)
-            if account is None:
+            try:
+                account = self._transaction_account(posting.account_id)
+            except NotFound:
                 continue
             if category.kind == "expense" and account.type == "expense" and posting.amount > Decimal("0"):
                 amounts[posting.currency] = amounts.get(posting.currency, Decimal("0")) + posting.amount
@@ -230,7 +232,7 @@ class CategoryUseCases:
         amounts = self._category_amounts_for_transaction(transaction, category)
         for currency, amount in amounts.items():
             if amount > Decimal("0"):
-                self.ledger.add_line(
+                add_transaction_line(
                     transaction,
                     line_type=category.kind,
                     amount=amount,
@@ -239,4 +241,5 @@ class CategoryUseCases:
                     category_version_id=self.categories.active_version(category.category_id).category_version_id,
                     category_path_snapshot=self.categories.path_snapshot(category.category_id),
                     memo=transaction.memo,
+                    scale_lookup=self.assets.scale_for,
                 )
