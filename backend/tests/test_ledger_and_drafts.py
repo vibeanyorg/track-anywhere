@@ -122,7 +122,11 @@ def test_stale_version_rejected_on_confirm():
         },
         idempotency_key="d1",
     )
-    draft.version += 1
+    service.reject_draft(
+        service.owner_token,
+        {"draft_id": draft.draft_id, "expected_version": draft.version},
+        idempotency_key="reject-before-stale-confirm",
+    )
     with pytest.raises(StaleVersion):
         service.confirm_draft(
             service.owner_token,

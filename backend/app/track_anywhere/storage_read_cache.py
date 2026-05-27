@@ -9,6 +9,7 @@ class StorageReadCache:
         self._read_accounts = deepcopy(service.ledger.accounts)
         self._read_transactions = deepcopy(service.ledger.transactions)
         self._read_categories = deepcopy(service.categories.categories)
+        self._read_drafts = deepcopy(service.drafts.drafts)
         self._read_recurring_items = deepcopy(service.recurring.items)
         self._read_payment_instruments = deepcopy(service.payment_instruments.instruments)
         self._read_payment_profiles = deepcopy(service.payment_profiles.profiles)
@@ -20,6 +21,7 @@ class StorageReadCache:
         accounts=(),
         transactions=(),
         categories=(),
+        drafts=(),
         recurring_items=(),
         payment_instruments=(),
         payment_profiles=(),
@@ -28,6 +30,7 @@ class StorageReadCache:
         self._replace_cached("accounts", accounts, "account_id")
         self._replace_cached("transactions", transactions, "transaction_id")
         self._replace_cached("categories", categories, "category_id")
+        self._replace_cached("drafts", drafts, "draft_id")
         self._replace_cached("recurring_items", recurring_items, "recurring_id")
         self._replace_cached("payment_instruments", payment_instruments, "instrument_id")
         self._replace_cached("payment_profiles", payment_profiles, "profile_id")

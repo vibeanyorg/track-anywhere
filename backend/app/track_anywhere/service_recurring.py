@@ -70,7 +70,7 @@ class RecurringUseCases:
         command = UpdateRecurringItemCommand.model_validate(payload)
         if not command.model_dump(exclude_none=True, exclude={"schema_version"}):
             raise ValidationError("at least one recurring item field is required")
-        item = self.recurring.get(recurring_id)
+        item = self.storage.get_recurring_item(recurring_id)
         actor = self.actor_for_book(token, item.book_id, "recurring:write")
         request_hash = self._hash_command_payload(command, {"recurring_id": recurring_id})
 
@@ -140,7 +140,7 @@ class RecurringUseCases:
             payload["as_of"] = as_of
         command = CheckRecurringCommand.model_validate(payload)
         reminders = []
-        for item in self.recurring.list(status="active", book_id=book_id):
+        for item in self.storage.list_recurring_items(status="active", book_id=book_id):
             for reminder in due_reminders(item, command.as_of, command.window_days):
                 reminders.append(self._recurring_reminder_payload(item, reminder))
         reminders.sort(key=lambda item: (item["reminder_date"], item["renewal_date"], item["name"]))
@@ -162,7 +162,7 @@ class RecurringUseCases:
 
         def run():
             result = {"as_of": command.as_of.isoformat(), "created": [], "skipped": []}
-            for item in self.recurring.list(status="active", book_id=book_id):
+            for item in self.storage.list_recurring_items(status="active", book_id=book_id):
                 renewal_date = last_renewal_date(item, command.as_of)
                 if renewal_date is None:
                     result["skipped"].append(self._recurring_skip(item, "not_due", None))
@@ -205,12 +205,12 @@ class RecurringUseCases:
             return
         if command.currency is None or command.source_account_id is None or command.category_id is None:
             return
-        source = self.ledger.get_account(command.source_account_id)
+        source = self.storage.get_account(command.source_account_id)
         if source.book_id != book_id:
             raise ValidationError("recurring source account must belong to the recurring book")
         if source.currency != command.currency:
             raise ValidationError("recurring currency must match source account currency")
-        category = self.categories.get(command.category_id)
+        category = self.storage.get_category(command.category_id)
         if category.book_id != book_id:
             raise ValidationError("recurring category must belong to the recurring book")
         if category.kind != "expense":
@@ -221,12 +221,12 @@ class RecurringUseCases:
             return
         if item.currency is None or item.source_account_id is None or item.category_id is None:
             return
-        source = self.ledger.get_account(item.source_account_id)
+        source = self.storage.get_account(item.source_account_id)
         if source.book_id != item.book_id:
             raise ValidationError("recurring source account must belong to the recurring book")
         if source.currency != item.currency:
             raise ValidationError("recurring currency must match source account currency")
-        category = self.categories.get(item.category_id)
+        category = self.storage.get_category(item.category_id)
         if category.book_id != item.book_id:
             raise ValidationError("recurring category must belong to the recurring book")
         if category.kind != "expense":
@@ -265,6 +265,7 @@ class RecurringUseCases:
         item.last_draft_renewal_date = renewal_date
         item.last_draft_id = draft.draft_id
         item.version += 1
+        self.recurring.items[item.recurring_id] = item
         return {
             "recurring_id": item.recurring_id,
             "draft_id": draft.draft_id,

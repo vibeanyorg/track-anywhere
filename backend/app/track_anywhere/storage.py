@@ -19,6 +19,7 @@ from .ledger import Account
 from .storage_annotation_writers import AnnotationStorageWriters
 from .storage_auth import AuthStorageWriters
 from .storage_catalog_reads import CatalogReadStorage, _category_from_row
+from .storage_draft_reads import DraftReadStorage
 from .storage_engine import create_database_engine, database_url_from_env
 from .storage_json import new_owner_token, to_jsonable
 from .storage_ledger_reads import LedgerReadStorage
@@ -55,6 +56,7 @@ class OrmStorage(
     DomainStorageLoaders,
     StorageLoaders,
     CatalogReadStorage,
+    DraftReadStorage,
     LedgerReadStorage,
     AnnotationStorageWriters,
     AuthStorageWriters,
