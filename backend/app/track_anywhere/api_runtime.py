@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 
 from .auth_oauth import auth_settings_from_env, build_oauth_registry
-from .password_auth import PasswordAccountStore
 from .platform_auth import PlatformKeyExchange
 from .security import BrowserSessionStore, DeploymentSecurityConfig
 from .service import FinanceService
@@ -41,7 +40,7 @@ def _allowed_origins() -> tuple[str, ...]:
 
 service = FinanceService(_deployment_config_from_env(), persist_on_initialize=False)
 browser_sessions = BrowserSessionStore()
-password_accounts = PasswordAccountStore(service.storage.session_factory)
+password_accounts = service.create_password_account_store()
 ALLOWED_ORIGINS = _allowed_origins()
 auth_settings = auth_settings_from_env(mode=service.config.mode)
 oauth_registry = build_oauth_registry(auth_settings)

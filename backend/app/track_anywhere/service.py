@@ -32,6 +32,7 @@ from .service_investments import InvestmentUseCases
 from .service_ledger import LedgerUseCases
 from .service_persistence import ServicePersistenceMixin
 from .service_platform_auth import PlatformAuthUseCases
+from .service_password_auth import PasswordAuthUseCases
 from .service_owner_bootstrap import OwnerCredentialBootstrap
 from .service_reclassification import ReclassificationUseCases
 from .service_reports import BookReportUseCases
@@ -51,6 +52,7 @@ class FinanceService(
     ServiceRequestHashing,
     ServicePersistenceMixin,
     PlatformAuthUseCases,
+    PasswordAuthUseCases,
     BackofficeUseCases,
     IdentityUseCases,
     BookUseCases,

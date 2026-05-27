@@ -18,6 +18,7 @@ from .storage_loaders import StorageLoaders
 from .storage_payment_instruments import PaymentInstrumentStorageMixin
 from .storage_payment_profiles import PaymentProfileStorageMixin
 from .storage_partial import PartialStorageWriters
+from .storage_password_accounts import StoragePasswordAccountRepository
 from .storage_read_cache import StorageReadCache
 from .storage_snapshot_loader import StorageSnapshotLoader
 from .storage_uow import StorageUnitOfWork
@@ -54,6 +55,9 @@ class OrmStorage(
 
     def unit_of_work(self) -> StorageUnitOfWork:
         return StorageUnitOfWork(self)
+
+    def password_account_repository(self) -> StoragePasswordAccountRepository:
+        return StoragePasswordAccountRepository(self.session_factory)
 
     def save_startup_maintenance(self, changes: StartupMaintenanceChanges) -> None:
         with self.unit_of_work() as uow:

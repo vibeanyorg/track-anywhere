@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 from track_anywhere.auth_identities import OAuthIdentity
 from track_anywhere.api import app, service
 from track_anywhere.api_runtime import browser_sessions
-from track_anywhere.password_auth import PasswordAccountStore
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
@@ -119,13 +118,13 @@ def test_backoffice_requires_admin_or_owner_scope():
 def test_password_accounts_persist_across_store_restart(tmp_path):
     database_url = f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}"
     first_service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
-    first_store = PasswordAccountStore(first_service.storage.session_factory)
+    first_store = first_service.create_password_account_store()
     email = f"persist-password-{uuid4().hex}@example.com"
 
     created = first_store.create(email=email, password="correct-password-123", display_name="Persisted Password")
 
     second_service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
-    second_store = PasswordAccountStore(second_service.storage.session_factory)
+    second_store = second_service.create_password_account_store()
     authenticated = second_store.authenticate(email=email, password="correct-password-123")
 
     assert created.email == email
