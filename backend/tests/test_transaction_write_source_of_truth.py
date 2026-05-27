@@ -1,10 +1,41 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from pathlib import Path
 
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
+
+
+def test_account_opening_balance_does_not_use_in_memory_transaction_factory(tmp_path):
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
+    token = service.owner_token
+
+    def fail_create_transaction(*_args, **_kwargs):
+        raise AssertionError("account opening balance called legacy in-memory transaction factory")
+
+    service.ledger.create_transaction = fail_create_transaction
+
+    account, replay = service.create_account(
+        token,
+        {"name": "Opening Truth Cash", "type": "asset", "currency": "CNY", "opening_balance": "42"},
+        idempotency_key="opening-truth-cash",
+    )
+
+    assert replay is False
+    assert Decimal(service.account_balance(token, account.account_id)["official_balance"]["amount"]) == Decimal("42")
+    opening = next(
+        transaction
+        for transaction in service.list_transactions(token, limit=10)
+        if transaction.purpose == "opening_balance"
+    )
+    assert [(posting.account_id, str(posting.amount), posting.currency) for posting in opening.postings][0] == (
+        account.account_id,
+        "42",
+        "CNY",
+    )
+    assert [(str(posting.amount), posting.currency) for posting in opening.postings][1] == ("-42", "CNY")
 
 
 def test_core_transaction_writes_use_storage_truth_when_memory_maps_are_stale(tmp_path):
@@ -71,6 +102,7 @@ def test_core_transaction_writes_use_storage_truth_when_memory_maps_are_stale(tm
 def test_core_transaction_writes_do_not_use_in_memory_transaction_factory():
     repo_root = Path.cwd()
     files = [
+        repo_root / "backend/app/track_anywhere/service_accounts.py",
         repo_root / "backend/app/track_anywhere/service_balances.py",
         repo_root / "backend/app/track_anywhere/service_drafts.py",
         repo_root / "backend/app/track_anywhere/service_ledger.py",

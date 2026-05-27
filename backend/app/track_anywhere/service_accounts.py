@@ -7,6 +7,7 @@ from .books import DEFAULT_BOOK_ID
 from .commands import CreateAccountCommand, UpdateAccountMetadataCommand
 from .errors import ValidationError
 from .ledger import Account, Posting
+from .transaction_builder import build_transaction
 
 
 class AccountUseCases:
@@ -39,15 +40,18 @@ class AccountUseCases:
                     institution="track-anywhere",
                     book_id=book_id,
                 )
-                transaction = self.ledger.create_transaction(
+                transaction = build_transaction(
                     memo=f"Opening balance: {command.name}",
                     purpose="opening_balance",
                     postings=[
                         Posting(account.account_id, command.opening_balance, command.currency),
                         Posting(equity.account_id, -command.opening_balance, command.currency),
                     ],
+                    accounts=[account, equity],
                     book_id=book_id,
+                    scale_lookup=self.assets.scale_for,
                 )
+                self.ledger.transactions[transaction.transaction_id] = transaction
                 created_transactions.append(transaction)
             self.audit.record(
                 operation="account.create",
