@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
-from ..api_service_ports import CatalogService
+from ..api_ports.catalog import CatalogService
 from ..api_serialization import serialize
 from ..category_commands import EnsureCategoryPathCommand
 from ..commands import (

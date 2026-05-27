@@ -8,7 +8,7 @@ from pydantic import Field
 
 from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
-from ..api_service_ports import PaymentProfileService
+from ..api_ports.payment_profiles import PaymentProfileService
 from ..api_serialization import serialize
 from ..commands import ASSET_CODE_PATTERN, StrictCommand
 from ..domain_commands import CreatePaymentProfileCommand

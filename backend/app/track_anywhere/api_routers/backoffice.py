@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from ..api_dependencies import AuthToken
 from ..api_errors import raise_command_error
-from ..api_service_ports import BackofficeService
+from ..api_ports.backoffice import BackofficeService
 from ..api_serialization import serialize
 from ..errors import TrackAnywhereError
 from ..service_auth import ROLE_SCOPES

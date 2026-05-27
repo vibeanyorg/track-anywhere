@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
-from ..api_service_ports import BookService
+from ..api_ports.books import BookService
 from ..api_serialization import serialize
 from ..commands import CreateAccountCommand, CreateCategoryCommand, RecordTransactionCommand
 from ..domain_commands import (

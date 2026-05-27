@@ -4,7 +4,7 @@ from fastapi import APIRouter, File, UploadFile
 
 from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
-from ..api_service_ports import FinanceService
+from ..api_ports.finance import FinanceService
 from ..api_serialization import serialize
 from ..commands import (
     CreateFundCommand,

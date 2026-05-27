@@ -12,14 +12,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKEND = REPO_ROOT / "backend/app/track_anywhere"
 
 
-def _assert_router_uses_service_boundary(filename: str, alias: str, protocol: str, ports: str | None = None) -> None:
+def _assert_router_uses_service_boundary(filename: str, alias: str, protocol: str, port_module: str) -> None:
     source = (BACKEND / f"api_routers/{filename}").read_text()
-    ports = ports or (BACKEND / "api_service_ports.py").read_text()
+    ports = (BACKEND / f"api_ports/{port_module}.py").read_text()
 
     assert "from ..api_runtime import service" not in source
-    assert f"from ..api_service_ports import {alias}" in source
+    assert "from ..api_service_ports import" not in source
+    assert f"from ..api_ports.{port_module} import {alias}" in source
     assert f"class {protocol}(AuditRecorder, Protocol)" in ports
-    assert f"{alias} = Annotated[{protocol}, Depends(get_service)]" in ports
+    assert f"{alias} = Annotated[{protocol}, ServiceDependency]" in ports
     assert "recorder=service" in source
 
 
@@ -84,47 +85,48 @@ def test_non_system_api_routers_do_not_import_runtime_service():
     assert offenders == []
 
 
+def test_api_route_service_ports_are_router_scoped():
+    assert not (BACKEND / "api_service_ports.py").exists()
+
+
 def test_high_churn_ledger_router_uses_service_dependency_boundary():
-    _assert_router_uses_service_boundary("ledger.py", "LedgerService", "LedgerRouteService")
+    _assert_router_uses_service_boundary("ledger.py", "LedgerService", "LedgerRouteService", "ledger")
 
 
 def test_high_churn_catalog_router_uses_service_dependency_boundary():
-    _assert_router_uses_service_boundary("catalog.py", "CatalogService", "CatalogRouteService")
+    _assert_router_uses_service_boundary("catalog.py", "CatalogService", "CatalogRouteService", "catalog")
 
 
 def test_catalog_adjacent_write_routers_use_service_dependency_boundaries():
-    ports = (BACKEND / "api_service_ports.py").read_text()
     expectations = [
-        ("counterparties.py", "CounterpartyService", "CounterpartyRouteService"),
-        ("payment_instruments.py", "PaymentInstrumentService", "PaymentInstrumentRouteService"),
-        ("payment_profiles.py", "PaymentProfileService", "PaymentProfileRouteService"),
+        ("counterparties.py", "CounterpartyService", "CounterpartyRouteService", "counterparties"),
+        ("payment_instruments.py", "PaymentInstrumentService", "PaymentInstrumentRouteService", "payment_instruments"),
+        ("payment_profiles.py", "PaymentProfileService", "PaymentProfileRouteService", "payment_profiles"),
     ]
 
-    for filename, alias, protocol in expectations:
-        _assert_router_uses_service_boundary(filename, alias, protocol, ports)
+    for filename, alias, protocol, port_module in expectations:
+        _assert_router_uses_service_boundary(filename, alias, protocol, port_module)
 
 
 def test_operational_write_routers_use_service_dependency_boundaries():
-    ports = (BACKEND / "api_service_ports.py").read_text()
     expectations = [
-        ("credentials.py", "CredentialService", "CredentialRouteService"),
-        ("recurring.py", "RecurringService", "RecurringRouteService"),
+        ("credentials.py", "CredentialService", "CredentialRouteService", "credentials"),
+        ("recurring.py", "RecurringService", "RecurringRouteService", "recurring"),
     ]
 
-    for filename, alias, protocol in expectations:
-        _assert_router_uses_service_boundary(filename, alias, protocol, ports)
+    for filename, alias, protocol, port_module in expectations:
+        _assert_router_uses_service_boundary(filename, alias, protocol, port_module)
 
 
 def test_remaining_business_routers_use_service_dependency_boundaries():
-    ports = (BACKEND / "api_service_ports.py").read_text()
     expectations = [
-        ("finance.py", "FinanceService", "FinanceRouteService"),
-        ("books.py", "BookService", "BookRouteService"),
-        ("backoffice.py", "BackofficeService", "BackofficeRouteService"),
+        ("finance.py", "FinanceService", "FinanceRouteService", "finance"),
+        ("books.py", "BookService", "BookRouteService", "books"),
+        ("backoffice.py", "BackofficeService", "BackofficeRouteService", "backoffice"),
     ]
 
-    for filename, alias, protocol in expectations:
-        _assert_router_uses_service_boundary(filename, alias, protocol, ports)
+    for filename, alias, protocol, port_module in expectations:
+        _assert_router_uses_service_boundary(filename, alias, protocol, port_module)
 
 
 def test_backoffice_router_does_not_reach_into_service_registries():

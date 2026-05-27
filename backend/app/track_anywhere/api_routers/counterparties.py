@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
-from ..api_service_ports import CounterpartyService
+from ..api_ports.counterparties import CounterpartyService
 from ..api_serialization import serialize
 from ..domain_commands import CreateCounterpartyCommand
 from .common import COMMAND_ERRORS, command_payload, protected

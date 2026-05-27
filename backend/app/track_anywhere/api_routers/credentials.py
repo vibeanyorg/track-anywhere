@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
-from ..api_service_ports import CredentialService
+from ..api_ports.credentials import CredentialService
 from ..api_serialization import serialize
 from ..credential_commands import (
     IssueCredentialCommand,

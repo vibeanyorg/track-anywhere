@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
-from ..api_service_ports import RecurringService
+from ..api_ports.recurring import RecurringService
 from ..api_serialization import serialize
 from ..commands import CreateRecurringItemCommand, GenerateRecurringDraftsCommand, UpdateRecurringItemCommand
 from .common import COMMAND_ERRORS, command_payload, protected

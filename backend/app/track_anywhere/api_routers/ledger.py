@@ -4,7 +4,7 @@ from fastapi import APIRouter
 
 from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
-from ..api_service_ports import LedgerService
+from ..api_ports.ledger import LedgerService
 from ..api_serialization import serialize
 from ..domain_commands import RecordFxExchangeCommand
 from ..commands import (
