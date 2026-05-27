@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from sqlalchemy import select
+
 from ..counterparty_storage_models import CounterpartyRecord
 from ..domain_storage_models import (
     BookMemberRecord,
@@ -10,7 +12,10 @@ from ..domain_storage_models import (
     ClassificationEventRecord,
     LedgerBookRecord,
 )
+from ..books import DEFAULT_BOOK_ID
+from ..errors import NotFound
 from ..payment_instrument_storage_models import PaymentInstrumentRecord
+from ..payment_instruments import PaymentInstrument
 from ..payment_profile_storage_models import PaymentProfileRecord
 from ..storage_json import to_jsonable
 from ..storage_models import AssetRecord, CategoryRecord
@@ -183,6 +188,52 @@ class PaymentInstrumentRepository:
     def __init__(self, _storage, session) -> None:
         self.session = session
 
+    def list_instruments(
+        self,
+        *,
+        book_id: str | None = DEFAULT_BOOK_ID,
+        account_id: str | None = None,
+        status: str | None = "active",
+    ) -> list[PaymentInstrument]:
+        statement = select(PaymentInstrumentRecord)
+        if book_id is not None:
+            statement = statement.where(PaymentInstrumentRecord.book_id == book_id)
+        if account_id is not None:
+            statement = statement.where(PaymentInstrumentRecord.account_id == account_id)
+        if status is not None:
+            statement = statement.where(PaymentInstrumentRecord.status == status)
+        instruments = [payment_instrument_from_record(row) for row in self.session.scalars(statement)]
+        return sorted(instruments, key=lambda instrument: (instrument.slug, instrument.instrument_id))
+
+    def get_instrument(
+        self,
+        instrument_id: str,
+        *,
+        status: str | None = "active",
+    ) -> PaymentInstrument:
+        row = self.session.get(PaymentInstrumentRecord, instrument_id)
+        if row is None or (status is not None and row.status != status):
+            raise NotFound(f"payment instrument not found: {instrument_id}")
+        return payment_instrument_from_record(row)
+
+    def get_instrument_by_slug(
+        self,
+        *,
+        book_id: str,
+        slug: str,
+        status: str | None = "active",
+    ) -> PaymentInstrument:
+        statement = select(PaymentInstrumentRecord).where(
+            PaymentInstrumentRecord.book_id == book_id,
+            PaymentInstrumentRecord.slug == slug,
+        )
+        if status is not None:
+            statement = statement.where(PaymentInstrumentRecord.status == status)
+        row = self.session.scalars(statement).first()
+        if row is None:
+            raise NotFound(f"payment instrument slug not found in book: {book_id}/{slug}")
+        return payment_instrument_from_record(row)
+
     def save(self, instruments: Iterable[Any]) -> None:
         for instrument in instruments:
             self.session.merge(
@@ -198,6 +249,20 @@ class PaymentInstrumentRepository:
                     version=instrument.version,
                 )
             )
+
+
+def payment_instrument_from_record(row: PaymentInstrumentRecord) -> PaymentInstrument:
+    return PaymentInstrument(
+        instrument_id=row.instrument_id,
+        book_id=row.book_id,
+        slug=row.slug,
+        display_name=row.display_name,
+        kind=row.kind,
+        account_id=row.account_id,
+        last4=row.last4,
+        status=row.status,
+        version=row.version,
+    )
 
 
 class PaymentProfileRepository:

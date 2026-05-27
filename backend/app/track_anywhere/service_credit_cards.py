@@ -86,7 +86,10 @@ class CreditCardUseCases:
         return {
             "account": account,
             "profile": profile,
-            "instruments": self.storage.list_payment_instruments(book_id=account.book_id, account_id=account.account_id),
+            "instruments": self._list_payment_instruments_from_storage(
+                book_id=account.book_id,
+                account_id=account.account_id,
+            ),
             "currency": account.currency,
             "current_balance": current_balance,
             "credit_limit": credit_limit,

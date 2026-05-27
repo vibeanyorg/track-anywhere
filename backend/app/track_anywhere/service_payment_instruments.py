@@ -65,23 +65,59 @@ class PaymentInstrumentUseCases:
         self.actor_for_book(token, book_id, "credit-card:read")
         if status is not None and status not in {"active", "hidden", "archived"}:
             raise ValidationError("status must be active, hidden, or archived")
-        return self.storage.list_payment_instruments(book_id=book_id, account_id=account_id, status=status)
+        return self._list_payment_instruments_from_storage(
+            book_id=book_id,
+            account_id=account_id,
+            status=status,
+        )
 
     def get_payment_instrument(self, token: str, instrument_id: str, *, include_inactive: bool = False):
         status = None if include_inactive else "active"
-        instrument = self.storage.get_payment_instrument(instrument_id, status=status)
+        instrument = self._get_payment_instrument_from_storage(instrument_id, status=status)
         self.actor_for_book(token, instrument.book_id, "credit-card:read")
         return instrument
 
     def resolve_payment_instrument(self, token: str, instrument_ref: str, *, book_id: str = DEFAULT_BOOK_ID):
         self.actor_for_book(token, book_id, "credit-card:read")
         try:
-            instrument = self.storage.get_payment_instrument(instrument_ref)
+            instrument = self._get_payment_instrument_from_storage(instrument_ref)
         except NotFound:
-            return self.storage.get_payment_instrument_by_slug(book_id=book_id, slug=instrument_ref)
+            return self._get_payment_instrument_by_slug_from_storage(book_id=book_id, slug=instrument_ref)
         if instrument.book_id != book_id:
             raise NotFound(f"payment instrument not found in book: {book_id}/{instrument_ref}")
         return instrument
+
+    def _list_payment_instruments_from_storage(
+        self,
+        *,
+        book_id: str | None = DEFAULT_BOOK_ID,
+        account_id: str | None = None,
+        status: str | None = "active",
+    ):
+        with self.storage.unit_of_work() as uow:
+            return uow.payment_instruments.list_instruments(
+                book_id=book_id,
+                account_id=account_id,
+                status=status,
+            )
+
+    def _get_payment_instrument_from_storage(self, instrument_id: str, *, status: str | None = "active"):
+        with self.storage.unit_of_work() as uow:
+            return uow.payment_instruments.get_instrument(instrument_id, status=status)
+
+    def _get_payment_instrument_by_slug_from_storage(
+        self,
+        *,
+        book_id: str,
+        slug: str,
+        status: str | None = "active",
+    ):
+        with self.storage.unit_of_work() as uow:
+            return uow.payment_instruments.get_instrument_by_slug(
+                book_id=book_id,
+                slug=slug,
+                status=status,
+            )
 
     @staticmethod
     def _validate_payment_instrument_account(kind: str, account) -> None:
