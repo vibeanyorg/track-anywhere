@@ -69,7 +69,9 @@ def test_platform_auth_credentials_use_service_change_set_writer():
     assert "def save_credential(" not in storage_auth
     assert "def save_credential_and_audit_event" not in storage_auth
     assert "credential_writer=self.storage" not in service_platform_auth
-    assert "self._service._commit_credential_change()" in service_platform_auth
+    assert "def __init__(self, service)" not in service_platform_auth
+    assert "self._service" not in service_platform_auth
+    assert "self._commit_credential_change()" in service_platform_auth
 
 
 def test_platform_auth_grants_use_service_change_set_writer():
@@ -93,5 +95,5 @@ def test_platform_auth_grants_use_service_change_set_writer():
     assert "uow.platform_grants.load_device_grant_by_user_hash" in service_platform_auth
     assert "save_authorization_grant_change" not in service_platform_auth
     assert "save_device_grant_change" not in service_platform_auth
-    assert "self._service._commit_authorization_grant_change(grant)" in service_platform_auth
-    assert "self._service._commit_device_grant_change(grant)" in service_platform_auth
+    assert "self._commit_authorization_grant_change(grant)" in service_platform_auth
+    assert "self._commit_device_grant_change(grant)" in service_platform_auth

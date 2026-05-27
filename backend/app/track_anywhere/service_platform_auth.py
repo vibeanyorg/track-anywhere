@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from .errors import PolicyDenied
@@ -15,45 +16,57 @@ from .security import hash_secret
 
 
 class _PlatformCredentialWriter:
-    def __init__(self, service) -> None:
-        self._service = service
+    def __init__(self, commit_credential_change: Callable[[], None]) -> None:
+        self._commit_credential_change = commit_credential_change
 
     def save_credential(self, _credential) -> None:
-        self._service._commit_credential_change()
+        self._commit_credential_change()
 
     def save_credential_and_audit_event(self, _credential, _audit_event) -> None:
-        self._service._commit_credential_change()
+        self._commit_credential_change()
 
 
 class _PlatformGrantStore:
-    def __init__(self, service) -> None:
-        self._service = service
+    def __init__(
+        self,
+        *,
+        unit_of_work: Callable[[], Any],
+        commit_authorization_grant_change: Callable[[Any], None],
+        commit_device_grant_change: Callable[[Any], None],
+    ) -> None:
+        self._unit_of_work = unit_of_work
+        self._commit_authorization_grant_change = commit_authorization_grant_change
+        self._commit_device_grant_change = commit_device_grant_change
 
     def save_authorization_grant(self, grant) -> None:
-        self._service._commit_authorization_grant_change(grant)
+        self._commit_authorization_grant_change(grant)
 
     def load_authorization_grant(self, code_hash: str):
-        with self._service.storage.unit_of_work() as uow:
+        with self._unit_of_work() as uow:
             return uow.platform_grants.load_authorization_grant(code_hash)
 
     def save_device_grant(self, grant) -> None:
-        self._service._commit_device_grant_change(grant)
+        self._commit_device_grant_change(grant)
 
     def load_device_grant_by_device_hash(self, device_code_hash: str):
-        with self._service.storage.unit_of_work() as uow:
+        with self._unit_of_work() as uow:
             return uow.platform_grants.load_device_grant_by_device_hash(device_code_hash)
 
     def load_device_grant_by_user_hash(self, user_code_hash: str):
-        with self._service.storage.unit_of_work() as uow:
+        with self._unit_of_work() as uow:
             return uow.platform_grants.load_device_grant_by_user_hash(user_code_hash)
 
 
 class PlatformAuthUseCases:
     def _platform_credential_writer(self) -> _PlatformCredentialWriter:
-        return _PlatformCredentialWriter(self)
+        return _PlatformCredentialWriter(self._commit_credential_change)
 
     def _platform_grant_store(self) -> _PlatformGrantStore:
-        return _PlatformGrantStore(self)
+        return _PlatformGrantStore(
+            unit_of_work=self.storage.unit_of_work,
+            commit_authorization_grant_change=self._commit_authorization_grant_change,
+            commit_device_grant_change=self._commit_device_grant_change,
+        )
 
     def authorize_platform_oauth(self, exchange: Any, command: Any, actor: Any):
         return exchange.authorize(command, actor, grant_store=self._platform_grant_store())
