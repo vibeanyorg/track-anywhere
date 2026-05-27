@@ -151,15 +151,7 @@ def test_fx_exchange_uses_storage_truth_when_memory_maps_are_stale(tmp_path):
 
 def test_core_transaction_writes_do_not_use_in_memory_transaction_factory():
     repo_root = Path.cwd()
-    files = [
-        repo_root / "backend/app/track_anywhere/service_accounts.py",
-        repo_root / "backend/app/track_anywhere/service_balances.py",
-        repo_root / "backend/app/track_anywhere/service_drafts.py",
-        repo_root / "backend/app/track_anywhere/service_finance.py",
-        repo_root / "backend/app/track_anywhere/service_fx.py",
-        repo_root / "backend/app/track_anywhere/service_ledger.py",
-        repo_root / "backend/app/track_anywhere/service_payment_profiles.py",
-    ]
+    files = sorted((repo_root / "backend/app/track_anywhere").glob("service_*.py"))
     offenders: list[str] = []
     patterns = [
         re.compile(r"\bself\.ledger\.create_transaction\("),

@@ -10,12 +10,13 @@ from .domain_commands import RecordInvestmentValuationCommand
 from .errors import NotFound, ValidationError
 from .investments import InvestmentEvent, InvestmentValuation, investment_performance_report
 from .ledger import Posting
+from .transaction_builder import add_transaction_line, build_transaction
 
 
 class InvestmentUseCases:
     def record_investment_event(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[InvestmentEvent, bool]:
         command = RecordInvestmentEventCommand.model_validate(payload)
-        account = self.ledger.get_account(command.account_id)
+        account = self.storage.get_account(command.account_id)
         actor = self.actor_for_book(token, account.book_id, "investment:write")
         if account.type != "asset":
             raise ValidationError("investment events can only be recorded against asset accounts")
@@ -25,13 +26,13 @@ class InvestmentUseCases:
         if command.transaction_id is not None and command.cash_account_id is not None:
             raise ValidationError("transaction_id and cash_account_id cannot both be provided")
         if command.transaction_id is not None:
-            linked = self.ledger.transactions.get(command.transaction_id)
+            linked = self.storage.get_confirmed_transaction(command.transaction_id)
             if linked is None:
                 raise NotFound(f"transaction not found: {command.transaction_id}")
             if linked.book_id != account.book_id:
                 raise ValidationError("investment event transaction must belong to the account book")
         if command.cash_account_id is not None:
-            cash_account = self.ledger.get_account(command.cash_account_id)
+            cash_account = self.storage.get_account(command.cash_account_id)
             if cash_account.book_id != account.book_id:
                 raise ValidationError("investment cash account must belong to the investment account book")
             if cash_account.currency != command.currency:
@@ -71,41 +72,51 @@ class InvestmentUseCases:
 
     def _post_investment_event_transaction(self, command: RecordInvestmentEventCommand, book_id: str) -> str:
         assert command.cash_account_id is not None
+        cash_account = self.storage.get_account(command.cash_account_id)
+        investment_account = self.storage.get_account(command.account_id)
         if command.event_type in {"buy", "add"}:
             postings = [
                 Posting(command.cash_account_id, -command.amount, command.currency),
                 Posting(command.account_id, command.amount, command.currency),
             ]
+            accounts = [cash_account, investment_account]
             line_type = "investment_buy"
         elif command.event_type == "sell":
             postings = [
                 Posting(command.account_id, -command.amount, command.currency),
                 Posting(command.cash_account_id, command.amount, command.currency),
             ]
+            accounts = [investment_account, cash_account]
             line_type = "investment_sell"
         elif command.event_type == "income":
             income_account_id = self._system_category_account_id("income", command.currency, book_id=book_id)
+            income_account = self._transaction_account(income_account_id)
             postings = [
                 Posting(income_account_id, -command.amount, command.currency),
                 Posting(command.cash_account_id, command.amount, command.currency),
             ]
+            accounts = [income_account, cash_account]
             line_type = "dividend"
         else:
             raise ValidationError("unsupported investment event type")
-        transaction = self.ledger.create_transaction(
+        transaction = build_transaction(
             memo=command.memo,
             occurred_at=command.occurred_at,
             purpose=f"investment_{command.event_type}",
             postings=postings,
+            accounts=accounts,
             book_id=book_id,
+            scale_lookup=self.assets.scale_for,
         )
-        self.ledger.add_line(
+        add_transaction_line(
             transaction,
             line_type=line_type,
             amount=command.amount,
             currency=command.currency,
             memo=command.memo,
+            scale_lookup=self.assets.scale_for,
         )
+        self.ledger.transactions[transaction.transaction_id] = transaction
         return transaction.transaction_id
 
     def list_investment_events(self, token: str, account_id: str | None = None) -> list[InvestmentEvent]:
