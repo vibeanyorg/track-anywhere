@@ -4,10 +4,11 @@ from authlib.integrations.base_client import OAuthError
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from ..api_browser_sessions import browser_sessions
 from ..api_dependencies import AuthToken
 from ..api_ports.auth import AuthService
 from ..api_sessions import SESSION_COOKIE, clear_browser_session_cookies, set_browser_session_cookies
-from ..api_runtime import auth_cookie_secure, auth_settings, browser_sessions, oauth_registry
+from ..api_runtime import auth_cookie_secure, auth_settings, oauth_registry
 from ..auth_oauth import identity_from_oauth_token, oauth_callback_url, require_allowed_identity, role_for_identity
 from ..errors import PolicyDenied, ValidationError
 from ..password_auth import PasswordAccount, PasswordLoginCommand, PasswordSignupCommand

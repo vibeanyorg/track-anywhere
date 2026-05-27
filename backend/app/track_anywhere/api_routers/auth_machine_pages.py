@@ -8,8 +8,8 @@ from uuid import uuid4
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from ..api_browser_sessions import browser_sessions
 from ..api_ports.auth_machine import AuthMachineService
-from ..api_runtime import browser_sessions
 from ..api_sessions import CSRF_COOKIE, SESSION_COOKIE
 from ..errors import PolicyDenied, ValidationError
 from ..platform_auth_models import DEFAULT_PLATFORM_SCOPE, parse_requested_scopes

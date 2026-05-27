@@ -7,8 +7,8 @@ from urllib.parse import quote
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from ..api_browser_sessions import browser_sessions
 from ..api_ports.auth_device import AuthDeviceService
-from ..api_runtime import browser_sessions
 from ..api_sessions import CSRF_COOKIE, SESSION_COOKIE
 from ..errors import PolicyDenied, ValidationError
 from .auth_page_ui import error_message, hidden_input, render_auth_page

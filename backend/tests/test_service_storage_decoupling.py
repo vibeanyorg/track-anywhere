@@ -70,6 +70,8 @@ def test_system_router_does_not_own_storage_or_migration_details():
     source = (BACKEND / "api_routers/system.py").read_text()
 
     assert "from ..api_runtime import service" not in source
+    assert "from ..api_runtime import auth_cookie_secure, browser_sessions" not in source
+    assert "from ..api_browser_sessions import browser_sessions" in source
     assert "service.storage" not in source
     assert "service.config" not in source
     assert "service.owner_token" not in source

@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from track_anywhere.auth_identities import OAuthIdentity
 from track_anywhere.api import app, service
-from track_anywhere.api_runtime import browser_sessions
+from track_anywhere.api_browser_sessions import browser_sessions
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
