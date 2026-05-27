@@ -7,8 +7,9 @@ from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from ..api_ports.auth_pages import AuthPagesService
 from ..api_sessions import CSRF_COOKIE, SESSION_COOKIE, set_browser_session_cookies
-from ..api_runtime import auth_cookie_secure, auth_settings, browser_sessions, password_accounts, platform_key_exchange, service
+from ..api_runtime import auth_cookie_secure, auth_settings, browser_sessions, password_accounts, service
 from ..auth_identities import OAuthIdentity
 from ..errors import PolicyDenied, ValidationError
 from ..password_auth import PasswordSignupCommand
@@ -83,7 +84,7 @@ def session_view(request: Request) -> HTMLResponse:
 
 
 @router.get("/callback")
-def cli_callback_page(request: Request) -> HTMLResponse:
+def cli_callback_page(request: Request, auth_service: AuthPagesService) -> HTMLResponse:
     if request.query_params.get("code") or request.query_params.get("error"):
         return _callback_result(str(request.url))
 
@@ -98,13 +99,14 @@ def cli_callback_page(request: Request) -> HTMLResponse:
     if identity is None or credential is None or csrf_token is None:
         next_path = _request_path(request)
         return RedirectResponse(f"/api/v1/auth/login?next={quote(next_path)}", status_code=303)
-    actor = service.actor_from_token(credential)
+    actor = auth_service.actor_from_token(credential)
     return _approval_form(request, identity=identity, csrf_token=csrf_token, error=None, available_scope_text=actor_available_scope_text(actor.scopes))
 
 
 @router.post("/callback")
 def cli_callback_approve(
     request: Request,
+    auth_service: AuthPagesService,
     client_id: Annotated[str, Form()],
     redirect_uri: Annotated[str, Form()],
     scope: Annotated[str, Form()],
@@ -134,15 +136,14 @@ def cli_callback_approve(
     }
     available_scope_text = None
     try:
-        actor = service.actor_from_token(credential)
+        actor = auth_service.actor_from_token(credential)
         available_scope_text = actor_available_scope_text(actor.scopes)
         approved_scope_value = approved_scope_text(
             requested_scope_text=scope,
             approved_scopes=approved_scope,
             selection_present=scope_selection_present is not None,
         )
-        result = service.authorize_platform_oauth(
-            platform_key_exchange,
+        result = auth_service.authorize_platform_oauth_for_actor(
             OAuthAuthorizeCommand(
                 client_id=client_id,
                 redirect_uri=redirect_uri,

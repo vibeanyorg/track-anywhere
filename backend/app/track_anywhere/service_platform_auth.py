@@ -74,6 +74,9 @@ class PlatformAuthUseCases:
             self.record_security_failure("oauth.authorize_denied", {"client_id": payload.client_id, "reason": str(exc)})
             raise
 
+    def authorize_platform_oauth_for_actor(self, payload: Any, actor: Any):
+        return self.authorize_platform_oauth(self.platform_key_exchange, payload, actor)
+
     def exchange_platform_oauth_token_payload(self, payload: dict[str, Any]) -> dict[str, object]:
         try:
             if payload.get("grant_type") == DEVICE_GRANT_TYPE:
