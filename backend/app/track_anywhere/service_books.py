@@ -69,7 +69,7 @@ class BookUseCases:
         self.actor_for_book(token, book_id, "ledger:confirm")
         command = RecordTransactionCommand.model_validate(payload)
         for account_id in (command.from_account_id, command.to_account_id):
-            if self.ledger.get_account(account_id).book_id != book_id:
+            if self.storage.get_account(account_id).book_id != book_id:
                 raise ValidationError("book transaction accounts must belong to the route book")
         return self.record_transaction(token, payload, idempotency_key=idempotency_key)
 
