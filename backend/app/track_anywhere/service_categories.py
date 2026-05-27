@@ -231,7 +231,7 @@ class CategoryUseCases:
     def _report_lines_for_transaction(self, transaction):
         return transaction.lines or []
 
-    def _add_category_line_for_transaction(self, transaction, category: Category, *, accounts=()):
+    def _add_category_line_for_transaction(self, transaction, category: Category, *, accounts=(), counterparty_id=None):
         amounts = self._category_amounts_for_transaction(transaction, category, accounts=accounts)
         version = self.categories.active_version(category.category_id)
         category_path_snapshot = {
@@ -252,6 +252,7 @@ class CategoryUseCases:
                     category_id=category.category_id,
                     category_version_id=version.category_version_id,
                     category_path_snapshot=category_path_snapshot,
+                    counterparty_id=counterparty_id,
                     memo=transaction.memo,
                     scale_lookup=self.assets.scale_for,
                 )

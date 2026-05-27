@@ -22,6 +22,7 @@ class RecordPaymentProfileExpenseBody(StrictCommand):
     purpose: str = Field(min_length=1, max_length=256)
     memo: str = Field(default="", max_length=256)
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    counterparty: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 router = APIRouter()

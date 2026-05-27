@@ -90,7 +90,7 @@ def list_accounts(
 ):
     try:
         _require_backoffice(token)
-        accounts = service.storage.list_accounts(
+        accounts = service.backoffice_accounts(
             book_id=book_id,
             type=type,
             currency=currency,
@@ -186,18 +186,7 @@ def list_transactions(
 ):
     try:
         _require_backoffice(token)
-        book_ids = [book_id] if book_id is not None else [book.book_id for book in service.books.list(status=None)]
-        transactions = [
-            transaction
-            for current_book_id in book_ids
-            for transaction in service.storage.list_all_confirmed_transactions(book_id=current_book_id)
-        ]
-        if category_id is not None:
-            transactions = [
-                transaction
-                for transaction in transactions
-                if any(line.category_id == category_id for line in transaction.lines)
-            ]
+        transactions = service.backoffice_transactions(book_id=book_id, category_id=category_id)
         items = serialize(transactions)
         return _filter_rows(
             items,
@@ -248,7 +237,7 @@ def list_audit_events(
 ):
     try:
         _require_backoffice(token)
-        items = serialize(service.audit.events)
+        items = serialize(service.backoffice_audit_events())
         return _filter_rows(
             items,
             exact={
@@ -267,7 +256,7 @@ def list_audit_events(
 
 
 def _require_backoffice(token: AuthToken) -> None:
-    service.actor_from_token(token, "user:write")
+    service.require_backoffice(token)
 
 
 def _filter_rows(

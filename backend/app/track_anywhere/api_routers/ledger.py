@@ -39,10 +39,17 @@ def list_transactions(
     token: AuthToken,
     account_id: str | None = None,
     category_id: str | None = None,
+    counterparty: str | None = None,
     limit: int = 20,
 ):
     try:
-        transactions = service.list_transactions(token, account_id=account_id, category_id=category_id, limit=limit)
+        transactions = service.list_transactions(
+            token,
+            account_id=account_id,
+            category_id=category_id,
+            counterparty=counterparty,
+            limit=limit,
+        )
         return {"transactions": serialize(transactions)}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "ledger.transaction.list")

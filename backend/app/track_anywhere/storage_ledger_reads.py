@@ -72,6 +72,7 @@ class LedgerReadStorage:
         book_id: str,
         account_id: str | None = None,
         category_id: str | None = None,
+        counterparty_id: str | None = None,
         limit: int = 20,
     ) -> list[Transaction]:
         limit = max(0, min(limit, 200))
@@ -92,6 +93,12 @@ class LedgerReadStorage:
                     for transaction in transactions
                     if any(line.category_id == category_id for line in transaction.lines)
                 ]
+            if counterparty_id is not None:
+                transactions = [
+                    transaction
+                    for transaction in transactions
+                    if any(line.counterparty_id == counterparty_id for line in transaction.lines)
+                ]
             transactions.sort(key=lambda item: (item.occurred_at, item.transaction_id), reverse=True)
             return deepcopy(transactions[:limit])
         with self.session_factory() as session:
@@ -103,11 +110,15 @@ class LedgerReadStorage:
                     PostingRecord,
                     PostingRecord.transaction_id == TransactionRecord.transaction_id,
                 ).where(PostingRecord.account_id == account_id)
-            if category_id is not None:
+            if category_id is not None or counterparty_id is not None:
                 base_statement = base_statement.join(
                     TransactionLineRecord,
                     TransactionLineRecord.transaction_id == TransactionRecord.transaction_id,
-                ).where(TransactionLineRecord.category_id == category_id)
+                )
+            if category_id is not None:
+                base_statement = base_statement.where(TransactionLineRecord.category_id == category_id)
+            if counterparty_id is not None:
+                base_statement = base_statement.where(TransactionLineRecord.counterparty_id == counterparty_id)
             selected = (
                 base_statement.distinct()
                 .order_by(TransactionRecord.occurred_at.desc(), TransactionRecord.transaction_id.desc())
@@ -258,7 +269,7 @@ class LedgerReadStorage:
             category_id=row.category_id,
             category_version_id=row.category_version_id,
             category_path_snapshot=row.category_path_snapshot,
-            merchant_id=row.merchant_id,
+            counterparty_id=row.counterparty_id,
             project_id=row.project_id,
             necessity=row.necessity,
             reimbursement_status=row.reimbursement_status,

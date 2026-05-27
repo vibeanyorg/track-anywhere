@@ -29,6 +29,33 @@ PAYMENT_INSTRUMENT_COLUMNS = {
     "status",
     "version",
 }
+COUNTERPARTY_COLUMNS = {
+    "counterparty_id",
+    "book_id",
+    "slug",
+    "name",
+    "kind",
+    "status",
+    "version",
+}
+TRANSACTION_LINE_COLUMNS = {
+    "line_id",
+    "transaction_id",
+    "position",
+    "line_type",
+    "amount",
+    "currency",
+    "book_id",
+    "category_id",
+    "category_version_id",
+    "category_path_snapshot",
+    "counterparty_id",
+    "project_id",
+    "necessity",
+    "reimbursement_status",
+    "memo",
+    "version",
+}
 
 
 def index_columns(connection: sqlite3.Connection, table_name: str) -> dict[str, tuple[bool, tuple[str, ...]]]:

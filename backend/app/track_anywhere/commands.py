@@ -100,6 +100,7 @@ class RecordTransactionCommand(StrictCommand):
     purpose: str = Field(min_length=1, max_length=256)
     memo: str = Field(default="", max_length=256)
     category_id: str | None = None
+    counterparty: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class CreateCategoryCommand(StrictCommand):
@@ -183,6 +184,7 @@ class RecordExpenseCommand(StrictCommand):
     category_id: str
     purpose: str = Field(min_length=1, max_length=256)
     memo: str = Field(default="", max_length=256)
+    counterparty: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class RecordIncomeCommand(StrictCommand):
@@ -193,6 +195,7 @@ class RecordIncomeCommand(StrictCommand):
     category_id: str
     purpose: str = Field(min_length=1, max_length=256)
     memo: str = Field(default="", max_length=256)
+    counterparty: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class UpdateCreditCardProfileCommand(StrictCommand):

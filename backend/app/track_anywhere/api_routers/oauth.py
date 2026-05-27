@@ -16,6 +16,10 @@ from ..platform_auth import (
     OAuthTokenCommand,
     OAuthTokenError,
 )
+from ..platform_auth_metadata import (
+    authorization_server_metadata as build_authorization_server_metadata,
+    protected_resource_metadata as build_protected_resource_metadata,
+)
 from ..platform_auth_http import form_or_json_payload
 from .common import protected
 
@@ -37,12 +41,12 @@ REVOKE_REQUEST_BODY = {
 
 @router.get("/authorization-server")
 def authorization_server_metadata(request: Request):
-    return platform_key_exchange.authorization_server_metadata(_issuer_for(request))
+    return build_authorization_server_metadata(_issuer_for(request))
 
 
 @router.get("/protected-resource")
 def protected_resource_metadata(request: Request):
-    return platform_key_exchange.protected_resource_metadata(_issuer_for(request))
+    return build_protected_resource_metadata(_issuer_for(request))
 
 
 @router.get("/clients", dependencies=protected)
@@ -69,7 +73,7 @@ def register_client(payload: OAuthRegisterCommand):
 def authorize(payload: OAuthAuthorizeCommand, token: AuthToken):
     try:
         actor = service.actor_from_token(token)
-        return platform_key_exchange.authorize(payload, actor, service.storage)
+        return service.authorize_platform_oauth(platform_key_exchange, payload, actor)
     except PolicyDenied as exc:
         service.record_security_failure("oauth.authorize_denied", {"client_id": payload.client_id, "reason": str(exc)})
         raise HTTPException(status_code=403, detail=str(exc)) from exc
@@ -82,9 +86,9 @@ async def token(request: Request):
     try:
         payload = form_or_json_payload(request.headers.get("content-type", ""), await request.body())
         if payload.get("grant_type") == DEVICE_GRANT_TYPE:
-            result = platform_key_exchange.exchange_device_code(OAuthDeviceTokenCommand.model_validate(payload), service)
+            result = service.exchange_platform_device_code(platform_key_exchange, OAuthDeviceTokenCommand.model_validate(payload))
         else:
-            result = platform_key_exchange.exchange_code(OAuthTokenCommand.model_validate(payload), service)
+            result = service.exchange_platform_code(platform_key_exchange, OAuthTokenCommand.model_validate(payload))
     except OAuthTokenError as exc:
         service.record_security_failure("oauth.token_denied", {"reason": exc.error})
         response = JSONResponse({"error": exc.error, "error_description": exc.description, **exc.extra}, status_code=400)
@@ -104,7 +108,7 @@ async def token(request: Request):
 @router.post("/device/authorize")
 def device_authorize(payload: OAuthDeviceAuthorizeCommand, request: Request):
     try:
-        response = JSONResponse(platform_key_exchange.create_device_authorization(payload, _issuer_for(request), service.storage))
+        response = JSONResponse(service.create_platform_device_authorization(platform_key_exchange, payload, _issuer_for(request)))
     except (PolicyDenied, ValidationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     response.headers["Cache-Control"] = "no-store"
@@ -115,7 +119,7 @@ def device_authorize(payload: OAuthDeviceAuthorizeCommand, request: Request):
 async def revoke(request: Request):
     try:
         payload = form_or_json_payload(request.headers.get("content-type", ""), await request.body())
-        result = platform_key_exchange.revoke(OAuthRevokeCommand.model_validate(payload), service)
+        result = service.revoke_platform_token(platform_key_exchange, OAuthRevokeCommand.model_validate(payload))
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     response = JSONResponse(result)

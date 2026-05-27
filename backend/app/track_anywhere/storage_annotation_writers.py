@@ -3,29 +3,30 @@ from __future__ import annotations
 from .domain_storage_models import TransactionLineRecord
 from .errors import NotFound
 from .ledger import Transaction, TransactionLine
+from .storage_changes import CategoryHistoryChanges, WriteMetadata
 from .storage_json import to_jsonable
 
 
 class AnnotationStorageWriters:
-    def save_reclassification_change(self, service, transaction: Transaction, line_id: str) -> None:
+    def save_reclassification_change(
+        self,
+        transaction: Transaction,
+        line_id: str,
+        *,
+        category_history: CategoryHistoryChanges,
+        metadata: WriteMetadata,
+    ) -> None:
         line = _line_by_id(transaction, line_id)
-        dirty_aliases, dirty_versions, dirty_events = service.categories.dirty_history()
-        pending_events = service.audit.pending_events()
-        dirty_receipts = service.idempotency.dirty_receipts()
         with self.session_factory.begin() as session:
             self._upsert_transaction_line(session, line)
             self._save_category_history(
                 session,
-                service.categories,
-                aliases=dirty_aliases,
-                versions=dirty_versions,
-                events=dirty_events,
+                aliases=category_history.aliases,
+                versions=category_history.versions,
+                events=category_history.events,
             )
-            self._save_audit_events(session, pending_events)
-            self._save_idempotency_receipts(session, dirty_receipts)
-        service.categories.mark_clean()
-        service.audit.mark_persisted()
-        service.idempotency.mark_clean()
+            self._save_audit_events(session, metadata.audit_events)
+            self._save_idempotency_receipts(session, metadata.idempotency_receipts)
 
     def _upsert_transaction_line(self, session, line: TransactionLine) -> None:
         self._upsert_record(
@@ -42,7 +43,7 @@ class AnnotationStorageWriters:
                 "category_id": line.category_id,
                 "category_version_id": line.category_version_id,
                 "category_path_snapshot": to_jsonable(line.category_path_snapshot),
-                "merchant_id": line.merchant_id,
+                "counterparty_id": line.counterparty_id,
                 "project_id": line.project_id,
                 "necessity": line.necessity,
                 "reimbursement_status": line.reimbursement_status,

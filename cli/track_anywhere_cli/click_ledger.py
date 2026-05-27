@@ -77,10 +77,21 @@ def _transactions(root: click.Group) -> None:
     @click.option("--account-id")
     @click.option("--category-id")
     @click.option("--limit", type=int, default=20)
+    @click.option("--counterparty")
     @output_options
     @pass_state
-    def list_tx(state, json_mode, no_color, account_id, category_id, limit):
-        args = common_args(state, json_mode, no_color, command="tx", tx_command="list", account_id=account_id, category_id=category_id, limit=limit)
+    def list_tx(state, json_mode, no_color, account_id, category_id, limit, counterparty):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="tx",
+            tx_command="list",
+            account_id=account_id,
+            category_id=category_id,
+            counterparty=counterparty,
+            limit=limit,
+        )
         return run_api(args, state=state, command_path="tx.list")
 
     @tx.command("show")
@@ -181,6 +192,7 @@ def _record_command(group: click.Group, name: str = "record", command: str = "tx
     @click.option("--occurred-at")
     @click.option("--currency", default="CNY")
     @click.option("--category-id")
+    @click.option("--counterparty")
     @click.option("--idempotency-key")
     @output_options
     @pass_state
@@ -208,6 +220,7 @@ def _expense_group(root: click.Group) -> None:
     @click.option("--memo", default="")
     @click.option("--occurred-at")
     @click.option("--currency", default="CNY")
+    @click.option("--counterparty")
     @click.option("--idempotency-key")
     @output_options
     @pass_state
@@ -231,6 +244,7 @@ def _category_money_group(root: click.Group, group_name: str, account_dest: str,
     @click.option("--memo", default="")
     @click.option("--occurred-at")
     @click.option("--currency", default="CNY")
+    @click.option("--counterparty")
     @click.option("--idempotency-key")
     @output_options
     @pass_state

@@ -10,8 +10,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from ..api_sessions import CSRF_COOKIE, SESSION_COOKIE
 from ..api_runtime import browser_sessions, platform_key_exchange, service
 from ..errors import PolicyDenied, ValidationError
-from ..platform_auth_models import normalize_user_code
-from ..security import hash_secret
 from .auth_pages import _error, _hidden, _page
 from .auth_scope_ui import actor_available_scope_text, scope_controls
 
@@ -51,7 +49,13 @@ def device_approve(
         actor = service.actor_from_token(credential)
         available_scope_text = actor_available_scope_text(actor.scopes)
         selected_scopes = approved_scope if scope_selection_present is not None else None
-        grant = platform_key_exchange.approve_device_user_code(user_code, actor, action, service.storage, approved_scopes=selected_scopes)
+        grant = service.approve_platform_device_user_code(
+            platform_key_exchange,
+            user_code,
+            actor,
+            action,
+            approved_scopes=selected_scopes,
+        )
     except (PolicyDenied, ValidationError, ValueError) as exc:
         return _device_form(user_code=user_code, csrf_token=csrf_token, error=str(exc), status_code=400, available_scope_text=available_scope_text)
     verb = "Denied" if grant.status == "denied" else "Approved"
@@ -88,7 +92,7 @@ def _device_form(*, user_code: str, csrf_token: str, error: str | None, status_c
 def _device_scope_options(user_code: str, available_scope_text: str | None) -> str:
     if not user_code.strip():
         return ""
-    grant = service.storage.load_device_grant_by_user_hash(hash_secret(normalize_user_code(user_code)))
+    grant = service.pending_device_grant_for_user_code(user_code)
     if grant is None or grant.status != "pending":
         return ""
     return _hidden("scope_selection_present", "1") + scope_controls(" ".join(grant.scopes), available_scope_text=available_scope_text)

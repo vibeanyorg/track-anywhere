@@ -27,6 +27,32 @@ def handle_catalog_command(args: Namespace, config: CliConfig, requester: Reques
         )
     if args.command == "user" and args.user_command == "list":
         return requester(config, "GET", "/api/v1/users")
+    if args.command == "counterparty" and args.counterparty_command == "ensure":
+        payload = compact_payload({"name": args.name, "kind": args.kind, "slug": args.slug})
+        return requester(
+            config,
+            "POST",
+            "/api/v1/counterparties/ensure",
+            payload,
+            key=command_idempotency_key(args, "counterparty-ensure"),
+        )
+    if args.command == "counterparty" and args.counterparty_command == "create":
+        payload = compact_payload({"name": args.name, "kind": args.kind, "slug": args.slug})
+        return requester(
+            config,
+            "POST",
+            "/api/v1/counterparties",
+            payload,
+            key=command_idempotency_key(args, "counterparty-create"),
+        )
+    if args.command == "counterparty" and args.counterparty_command == "list":
+        path = with_query(
+            "/api/v1/counterparties",
+            {"kind": args.kind, "status": args.status, "name": args.name},
+        )
+        return requester(config, "GET", path)
+    if args.command == "counterparty" and args.counterparty_command == "show":
+        return requester(config, "GET", f"/api/v1/counterparties/{urllib.parse.quote(args.counterparty_ref)}")
     if args.command == "category" and args.category_command == "create":
         payload = compact_payload({"kind": args.kind, "name": args.name, "parent_id": args.parent_id})
         return requester(

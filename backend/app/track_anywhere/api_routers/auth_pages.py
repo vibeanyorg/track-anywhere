@@ -140,7 +140,8 @@ def cli_callback_approve(
             approved_scopes=approved_scope,
             selection_present=scope_selection_present is not None,
         )
-        result = platform_key_exchange.authorize(
+        result = service.authorize_platform_oauth(
+            platform_key_exchange,
             OAuthAuthorizeCommand(
                 client_id=client_id,
                 redirect_uri=redirect_uri,
@@ -151,7 +152,6 @@ def cli_callback_approve(
                 action=action,
             ),
             actor,
-            service.storage,
         )
     except (PolicyDenied, ValidationError, ValueError) as exc:
         return _approval_form(request, identity=identity, csrf_token=csrf_token, error=str(exc), status_code=400, values=form_values, available_scope_text=available_scope_text)

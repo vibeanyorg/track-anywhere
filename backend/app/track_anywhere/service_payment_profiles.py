@@ -47,6 +47,7 @@ class PaymentProfileUseCases:
         created_accounts = []
 
         def run():
+            counterparty = self._resolve_counterparty_for_write(command.counterparty, book_id=profile.book_id)
             confirmed_backing_balance = self.storage.account_balance(profile.backing_account_id).get(
                 profile.backing_currency,
                 Decimal("0"),
@@ -93,6 +94,7 @@ class PaymentProfileUseCases:
                 transaction,
                 category,
                 accounts=(instrument, expense_account, backing, fx_backing_account, fx_instrument_account),
+                counterparty_id=counterparty.counterparty_id if counterparty else None,
             )
             add_transaction_line(
                 transaction,

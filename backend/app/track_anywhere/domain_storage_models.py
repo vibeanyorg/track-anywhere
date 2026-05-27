@@ -36,7 +36,10 @@ class BookMemberRecord(Base):
 
 class TransactionLineRecord(Base):
     __tablename__ = "transaction_lines"
-    __table_args__ = (Index("ix_transaction_lines_book_category", "book_id", "category_id"),)
+    __table_args__ = (
+        Index("ix_transaction_lines_book_category", "book_id", "category_id"),
+        Index("ix_transaction_lines_book_counterparty", "book_id", "counterparty_id"),
+    )
 
     line_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     transaction_id: Mapped[str] = mapped_column(ForeignKey("transactions.transaction_id"))
@@ -48,7 +51,7 @@ class TransactionLineRecord(Base):
     category_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     category_version_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     category_path_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    merchant_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    counterparty_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     project_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     necessity: Mapped[str] = mapped_column(String(40))
     reimbursement_status: Mapped[str] = mapped_column(String(40))

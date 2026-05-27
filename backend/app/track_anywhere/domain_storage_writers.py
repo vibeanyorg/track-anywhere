@@ -15,8 +15,8 @@ from .storage_json import to_jsonable
 
 
 class DomainStorageWriters:
-    def _save_books(self, session: Session, book_directory) -> None:
-        for book in book_directory.books.values():
+    def _save_books(self, session: Session, books, members) -> None:
+        for book in books:
             session.merge(
                 LedgerBookRecord(
                     book_id=book.book_id,
@@ -31,7 +31,7 @@ class DomainStorageWriters:
                     version=book.version,
                 )
             )
-        for member in book_directory.members.values():
+        for member in members:
             session.merge(
                 BookMemberRecord(
                     book_id=member.book_id,
@@ -46,15 +46,11 @@ class DomainStorageWriters:
     def _save_category_history(
         self,
         session: Session,
-        category_book,
         *,
-        aliases=None,
-        versions=None,
-        events=None,
+        aliases,
+        versions,
+        events,
     ) -> None:
-        aliases = category_book.aliases.values() if aliases is None else aliases
-        versions = category_book.versions.values() if versions is None else versions
-        events = category_book.events.values() if events is None else events
         for alias in aliases:
             self._upsert_record(
                 session,
@@ -114,8 +110,8 @@ class DomainStorageWriters:
                 ["classification_event_id"],
             )
 
-    def _save_budgets(self, session: Session, budget_book) -> None:
-        for budget in budget_book.budgets.values():
+    def _save_budgets(self, session: Session, budgets, targets) -> None:
+        for budget in budgets:
             session.merge(
                 BudgetRecord(
                     budget_id=budget.budget_id,
@@ -132,7 +128,7 @@ class DomainStorageWriters:
                     version=budget.version,
                 )
             )
-        for target in budget_book.targets.values():
+        for target in targets:
             session.merge(
                 BudgetTargetRecord(
                     budget_target_id=target.budget_target_id,

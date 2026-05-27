@@ -50,7 +50,7 @@ class StorageLoaders:
                     category_id=line.category_id,
                     category_version_id=line.category_version_id,
                     category_path_snapshot=line.category_path_snapshot,
-                    merchant_id=line.merchant_id,
+                    counterparty_id=line.counterparty_id,
                     project_id=line.project_id,
                     necessity=line.necessity,
                     reimbursement_status=line.reimbursement_status,

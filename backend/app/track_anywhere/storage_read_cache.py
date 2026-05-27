@@ -3,7 +3,9 @@ from __future__ import annotations
 from copy import deepcopy
 from decimal import Decimal
 
+from .counterparty_storage_models import CounterpartyRecord
 from .credit_cards import CreditCardProfile
+from .storage_counterparties import _counterparty_from_row
 from .storage_catalog_reads import _account_from_row, _category_from_row
 from .storage_models import AccountRecord, CategoryRecord, CreditCardProfileRecord
 
@@ -19,6 +21,10 @@ class StorageReadCache:
             self._read_categories = {
                 row.category_id: _category_from_row(row)
                 for row in session.query(CategoryRecord).all()
+            }
+            self._read_counterparties = {
+                row.counterparty_id: _counterparty_from_row(row)
+                for row in session.query(CounterpartyRecord).all()
             }
             self._read_drafts = self._load_drafts(session)
             self._read_recurring_items = self._load_recurring_items(session)
@@ -43,6 +49,7 @@ class StorageReadCache:
         accounts=(),
         transactions=(),
         categories=(),
+        counterparties=(),
         drafts=(),
         recurring_items=(),
         payment_instruments=(),
@@ -52,6 +59,7 @@ class StorageReadCache:
         self._replace_cached("accounts", accounts, "account_id")
         self._replace_cached("transactions", transactions, "transaction_id")
         self._replace_cached("categories", categories, "category_id")
+        self._replace_cached("counterparties", counterparties, "counterparty_id")
         self._replace_cached("drafts", drafts, "draft_id")
         self._replace_cached("recurring_items", recurring_items, "recurring_id")
         self._replace_cached("payment_instruments", payment_instruments, "instrument_id")

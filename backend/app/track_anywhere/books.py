@@ -39,16 +39,19 @@ class BookDirectory:
     def __init__(self) -> None:
         self.books: dict[str, LedgerBook] = {}
         self.members: dict[tuple[str, str], BookMember] = {}
+        self._dirty_book_ids: set[str] = set()
+        self._dirty_member_keys: set[tuple[str, str]] = set()
 
     def ensure_default(self) -> LedgerBook:
         book = self.books.get(DEFAULT_BOOK_ID)
         if book is None:
             book = LedgerBook(book_id=DEFAULT_BOOK_ID, name="Personal")
             self.books[book.book_id] = book
-        self.members.setdefault(
-            (book.book_id, DEFAULT_OWNER_ID),
-            BookMember(book_id=book.book_id, user_id=DEFAULT_OWNER_ID, role="owner"),
-        )
+            self._dirty_book_ids.add(book.book_id)
+        member_key = (book.book_id, DEFAULT_OWNER_ID)
+        if member_key not in self.members:
+            self.members[member_key] = BookMember(book_id=book.book_id, user_id=DEFAULT_OWNER_ID, role="owner")
+            self._dirty_member_keys.add(member_key)
         return book
 
     def create(
@@ -74,11 +77,14 @@ class BookDirectory:
             created_by=created_by,
         )
         self.books[book.book_id] = book
-        self.members[(book.book_id, created_by)] = BookMember(
+        member_key = (book.book_id, created_by)
+        self.members[member_key] = BookMember(
             book_id=book.book_id,
             user_id=created_by,
             role="owner",
         )
+        self._dirty_book_ids.add(book.book_id)
+        self._dirty_member_keys.add(member_key)
         return book
 
     def get(self, book_id: str | None = None) -> LedgerBook:
@@ -113,6 +119,16 @@ class BookDirectory:
         if status is not None:
             books = [book for book in books if book.status == status]
         return sorted(books, key=lambda book: (book.name, book.book_id))
+
+    def dirty_books(self) -> list[LedgerBook]:
+        return [self.books[book_id] for book_id in self._dirty_book_ids if book_id in self.books]
+
+    def dirty_members(self) -> list[BookMember]:
+        return [self.members[key] for key in self._dirty_member_keys if key in self.members]
+
+    def mark_clean(self) -> None:
+        self._dirty_book_ids.clear()
+        self._dirty_member_keys.clear()
 
 
 def _normalize_text(value: str | None, field_name: str) -> str:

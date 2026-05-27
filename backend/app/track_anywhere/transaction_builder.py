@@ -117,6 +117,7 @@ def add_transaction_line(
     category_id: str | None = None,
     category_version_id: str | None = None,
     category_path_snapshot: dict[str, str | None] | None = None,
+    counterparty_id: str | None = None,
     memo: str = "",
     scale_lookup: Callable[[str], int] | None = None,
 ) -> TransactionLine:
@@ -137,6 +138,7 @@ def add_transaction_line(
         category_id=category_id,
         category_version_id=category_version_id,
         category_path_snapshot=category_path_snapshot,
+        counterparty_id=counterparty_id,
         memo=memo,
     )
     transaction.lines.append(line)

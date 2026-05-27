@@ -6,7 +6,12 @@ import pytest
 from alembic import command
 from alembic.config import Config
 
-from schema_assertions import PAYMENT_INSTRUMENT_COLUMNS, PAYMENT_PROFILE_COLUMNS, index_columns
+from schema_assertions import (
+    COUNTERPARTY_COLUMNS,
+    PAYMENT_INSTRUMENT_COLUMNS,
+    PAYMENT_PROFILE_COLUMNS,
+    index_columns,
+)
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
@@ -38,10 +43,12 @@ def test_alembic_clears_legacy_duplicate_transaction_memos(tmp_path):
         version = connection.execute("select version_num from alembic_version").fetchone()[0]
         payment_profile_columns = {row[1] for row in connection.execute("pragma table_info(payment_profiles)").fetchall()}
         payment_instrument_columns = {row[1] for row in connection.execute("pragma table_info(payment_instruments)").fetchall()}
+        counterparty_columns = {row[1] for row in connection.execute("pragma table_info(counterparties)").fetchall()}
 
-    assert version == "0013_payment_instruments"
+    assert version == "0015_transaction_line_counterparties"
     assert PAYMENT_PROFILE_COLUMNS <= payment_profile_columns
     assert PAYMENT_INSTRUMENT_COLUMNS <= payment_instrument_columns
+    assert COUNTERPARTY_COLUMNS <= counterparty_columns
     assert transaction_memos["txn_duplicate"] == ""
     assert transaction_memos["txn_private"] == "card ending 1234"
     assert line_memos["line_duplicate"] == ""
@@ -72,14 +79,21 @@ def test_alembic_drops_legacy_django_tables_without_dropping_track_anywhere_tabl
         tables = {row[0] for row in connection.execute("select name from sqlite_master where type = 'table'")}
         version = connection.execute("select version_num from alembic_version").fetchone()[0]
         payment_profile_indexes = index_columns(connection, "payment_profiles")
+        counterparty_indexes = index_columns(connection, "counterparties")
 
-    assert version == "0013_payment_instruments"
+    assert version == "0015_transaction_line_counterparties"
     assert "accounts" in tables
     assert "auth_identities" in tables
     assert "payment_profiles" in tables
     assert "payment_instruments" in tables
+    assert "counterparties" in tables
     assert payment_profile_indexes["ix_payment_profiles_book_status"] == (False, ("book_id", "status"))
+    assert counterparty_indexes["ix_counterparties_book_kind_status"] == (
+        False,
+        ("book_id", "kind", "status"),
+    )
     assert (True, ("book_id", "slug")) in payment_profile_indexes.values()
+    assert (True, ("book_id", "slug")) in counterparty_indexes.values()
     assert not {
         "account_emailaddress",
         "auth_user",
@@ -126,7 +140,7 @@ def test_alembic_backfills_lines_and_drops_legacy_category_columns(tmp_path):
             """
         ).fetchone()
 
-    assert version == "0013_payment_instruments"
+    assert version == "0015_transaction_line_counterparties"
     assert "category_id" not in transaction_columns
     assert "primary" not in category_columns
     assert "secondary" not in category_columns
@@ -248,7 +262,13 @@ def _insert_posting(sqlite_connection, transaction_id: str, position: int, accou
     )
 
 
-def _insert_transaction_line(sqlite_connection, line_id: str, transaction_id: str, *, memo: str) -> None:
+def _insert_transaction_line(
+    sqlite_connection,
+    line_id: str,
+    transaction_id: str,
+    *,
+    memo: str,
+) -> None:
     sqlite_connection.execute(
         """
         insert into transaction_lines (

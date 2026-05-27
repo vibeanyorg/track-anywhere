@@ -95,6 +95,13 @@ class CreatePaymentInstrumentCommand(StrictCommand):
     last4: str | None = Field(default=None, min_length=1, max_length=16, pattern=r"^[A-Za-z0-9]+$")
 
 
+class CreateCounterpartyCommand(StrictCommand):
+    name: str = Field(min_length=1, max_length=120)
+    kind: Literal["merchant", "person", "institution", "employer", "platform", "other"] = "merchant"
+    slug: str | None = Field(default=None, min_length=1, max_length=120)
+    book_id: str | None = None
+
+
 class RecordPaymentProfileExpenseCommand(StrictCommand):
     payment: str = Field(min_length=1, max_length=80)
     amount: Decimal = Field(gt=0)
@@ -103,6 +110,7 @@ class RecordPaymentProfileExpenseCommand(StrictCommand):
     purpose: str = Field(min_length=1, max_length=256)
     memo: str = Field(default="", max_length=256)
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    counterparty: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 class RecordFxExchangeCommand(StrictCommand):

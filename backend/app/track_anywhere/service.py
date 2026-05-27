@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import timedelta
 from hashlib import sha256
 from typing import Any
 
@@ -9,9 +8,10 @@ from .assets import AssetCatalog
 from .audit import AuditLog
 from .attachments import AttachmentIntake
 from .auth_identities import AuthIdentityDirectory
-from .books import DEFAULT_BOOK_ID, BookDirectory
+from .books import BookDirectory
 from .budgets import BudgetBook
 from .categories import CategoryBook
+from .counterparties import CounterpartyDirectory
 from .credit_cards import CreditCardBook
 from .drafts import DraftBook
 from .idempotency import IdempotencyStore
@@ -20,7 +20,7 @@ from .ledger import Ledger
 from .recurring import RecurringBook
 from .security import Actor, CredentialReference, CredentialStore, DeploymentSecurityConfig, validate_startup_security
 from .service_assets import AssetUseCases
-from .service_auth import OWNER_SCOPES
+from .service_backoffice import BackofficeUseCases
 from .service_balances import BalanceUseCases
 from .service_books import BookUseCases
 from .service_catalog import CatalogUseCases
@@ -28,12 +28,17 @@ from .service_credentials import CredentialUseCases
 from .service_drafts import DraftUseCases
 from .service_finance import FinancialUseCases
 from .service_fx import FxUseCases
+from .service_foundations import DomainFoundationBootstrap
 from .service_identity import IdentityUseCases
 from .service_investments import InvestmentUseCases
 from .service_ledger import LedgerUseCases
+from .service_persistence import ServicePersistenceMixin
+from .service_platform_auth import PlatformAuthUseCases
+from .service_owner_bootstrap import OwnerCredentialBootstrap
 from .service_reclassification import ReclassificationUseCases
 from .service_reports import BookReportUseCases
 from .service_recurring import RecurringUseCases
+from .service_state_hydration import ServiceStateHydration
 from .storage import OrmStorage, new_owner_token
 from .storage_json import to_jsonable
 from .payment_instruments import PaymentInstrumentDirectory
@@ -42,6 +47,12 @@ from .users import UserDirectory
 
 
 class FinanceService(
+    ServiceStateHydration,
+    OwnerCredentialBootstrap,
+    DomainFoundationBootstrap,
+    ServicePersistenceMixin,
+    PlatformAuthUseCases,
+    BackofficeUseCases,
     IdentityUseCases,
     BookUseCases,
     BookReportUseCases,
@@ -75,6 +86,7 @@ class FinanceService(
         self.ledger = Ledger(asset_scale_lookup=self.assets.scale_for)
         self.payment_instruments = PaymentInstrumentDirectory()
         self.payment_profiles = PaymentProfileDirectory()
+        self.counterparties = CounterpartyDirectory()
         self.drafts = DraftBook()
         self.recurring = RecurringBook()
         self.budgets = BudgetBook()
@@ -88,7 +100,7 @@ class FinanceService(
         self.adjustment_account_ids: dict[str, str] = {}
         self.owner_token = new_owner_token()
         self._startup_persist_required = False
-        self.storage.load_into(self)
+        self._apply_storage_snapshot(self.storage.load_snapshot())
         self._ensure_domain_foundations()
         self._ensure_owner_credential()
         if persist_on_initialize or self._startup_persist_required:
@@ -102,149 +114,6 @@ class FinanceService(
         actor = self.actor_from_token(token, required_scope=required_scope)
         self.books.require_access(book_id, actor, required_scope)
         return actor
-
-    def _ensure_owner_credential(self) -> None:
-        try:
-            actor = self.credentials.verify(self.owner_token)
-            if OWNER_SCOPES.issubset(actor.scopes):
-                return
-        except Exception:
-            pass
-        self.credentials.issue(
-            actor_id="owner",
-            actor_type="human",
-            scopes=set(OWNER_SCOPES),
-            ttl=timedelta(days=30),
-            token=self.owner_token,
-            auth_kind="owner",
-            name="Owner credential",
-        )
-
-    def _persist_startup_maintenance(self) -> None:
-        self.storage.save_startup_maintenance(self)
-        self.assets.mark_clean()
-        self.credentials.mark_clean()
-        self.categories.mark_clean()
-        self.audit.mark_persisted()
-        self.idempotency.mark_clean()
-
-    def _persist_idempotency(self) -> None:
-        self.storage.save_idempotency(self)
-
-    def _persist_catalog_change(self) -> None:
-        self.storage.save_catalog_change(self)
-
-    def _persist_ledger_change(self, *transactions, accounts=(), include_category_history: bool = False) -> None:
-        self.storage.save_ledger_change(
-            self,
-            transactions,
-            accounts=accounts,
-            include_category_history=include_category_history,
-        )
-
-    def _persist_reclassification_change(self, transaction, line_id: str) -> None:
-        self.storage.save_reclassification_change(self, transaction, line_id)
-        self.storage.update_read_cache(transactions=(transaction,))
-
-    def _persist_user_change(self, *users) -> None:
-        self.storage.save_user_change(self, users)
-
-    def _persist_book_change(self) -> None:
-        self.storage.save_book_change(self)
-
-    def _persist_draft_change(self, *drafts, transactions=()) -> None:
-        self.storage.save_draft_change(self, drafts, transactions=transactions)
-
-    def _persist_recurring_change(self, *items, drafts=(), accounts=()) -> None:
-        self.storage.save_recurring_change(self, items, drafts=drafts, accounts=accounts)
-
-    def _persist_finance_change(self, *, funds=(), budgets: bool = False, transactions=(), accounts=(), actions=()) -> None:
-        self.storage.save_finance_change(
-            self,
-            funds=funds,
-            budgets=budgets,
-            transactions=transactions,
-            accounts=accounts,
-            actions=actions,
-        )
-
-    def _persist_investment_change(self, *, events=(), valuations=(), transactions=(), accounts=()) -> None:
-        self.storage.save_investment_change(self, events=events, valuations=valuations, transactions=transactions, accounts=accounts)
-
-    def _persist_credit_card_profile_change(self, *profiles) -> None:
-        self.storage.save_credit_card_profile_change(self, profiles)
-
-    def _persist_payment_profile_change(self) -> None:
-        self.storage.save_payment_profile_change(self)
-
-    def _persist_credential_change(self) -> None:
-        self.storage.save_credential_change(self)
-
-    def _persist_attachment_change(self, *, attachments=(), drafts=()) -> None:
-        self.storage.save_attachment_change(self, attachments=attachments, drafts=drafts)
-
-    def _persist_replay_or(self, replay: bool, persist) -> None:
-        if replay:
-            self._persist_idempotency()
-        else:
-            persist()
-
-    def _ensure_domain_foundations(self) -> None:
-        self.books.ensure_default()
-        self.assets.ensure_defaults()
-        for book in self.books.books.values():
-            self.assets.ensure(book.base_currency)
-        accounts = self.storage.list_accounts(book_id=None)
-        accounts_by_id = {account.account_id: account for account in accounts}
-        validator = Ledger(asset_scale_lookup=self.assets.scale_for)
-        validator.accounts = accounts_by_id
-        for account in accounts:
-            self.assets.ensure(account.currency)
-        for category in list(self.categories.categories.values()):
-            category.book_id = category.book_id or DEFAULT_BOOK_ID
-            self.categories._sync_display_fields(category)
-            if not any(version.category_id == category.category_id for version in self.categories.versions.values()):
-                self.categories._record_version(category, "migration")
-        for book in self.books.books.values():
-            for transaction in self.storage.list_all_confirmed_transactions(book_id=book.book_id):
-                self._ensure_transaction_foundation(transaction, accounts_by_id, validator)
-        for draft in self.drafts.drafts.values():
-            draft.book_id = draft.book_id or self._book_id_for_postings(draft.proposed_postings, accounts_by_id)
-        for item in self.recurring.items.values():
-            if not item.book_id and item.source_account_id is not None:
-                item.book_id = self.storage.get_account(item.source_account_id).book_id
-            if item.currency is not None:
-                self.assets.ensure(item.currency)
-        for event in self.investments.events.values():
-            account = accounts_by_id.get(event.account_id)
-            if account is not None:
-                event.book_id = event.book_id or account.book_id
-            self.assets.ensure(event.currency)
-        for valuation in self.investments.valuations.values():
-            account = accounts_by_id.get(valuation.account_id)
-            if account is not None:
-                valuation.book_id = valuation.book_id or account.book_id
-            self.assets.ensure(valuation.currency)
-        for budget in self.budgets.budgets.values():
-            self.assets.ensure(budget.currency)
-
-    def _ensure_transaction_foundation(self, transaction, accounts_by_id: dict[str, Any], validator: Ledger) -> None:
-        transaction.book_id = transaction.book_id or self._book_id_for_postings(transaction.postings, accounts_by_id)
-        if transaction.lines is None:
-            transaction.lines = []
-        for posting in transaction.postings:
-            self.assets.ensure(posting.currency)
-        for line in transaction.lines:
-            self.assets.ensure(line.currency)
-        validator.validate_transaction_integrity(transaction, enforce_asset_scale=False)
-
-    @staticmethod
-    def _book_id_for_postings(postings, accounts_by_id: dict[str, Any]) -> str:
-        for posting in postings:
-            account = accounts_by_id.get(posting.account_id)
-            if account is not None:
-                return account.book_id
-        return DEFAULT_BOOK_ID
 
     @staticmethod
     def _hash_request_payload(

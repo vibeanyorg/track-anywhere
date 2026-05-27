@@ -4,7 +4,7 @@ import sqlite3
 
 from sqlalchemy import event
 
-from schema_assertions import PAYMENT_INSTRUMENT_COLUMNS, PAYMENT_PROFILE_COLUMNS, index_columns
+from schema_assertions import COUNTERPARTY_COLUMNS, PAYMENT_INSTRUMENT_COLUMNS, PAYMENT_PROFILE_COLUMNS, index_columns
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
@@ -180,13 +180,15 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
         payment_profile_indexes = index_columns(connection, "payment_profiles")
         payment_instrument_columns = {row[1]: row[2] for row in connection.execute("pragma table_info(payment_instruments)").fetchall()}
         payment_instrument_indexes = index_columns(connection, "payment_instruments")
+        counterparty_columns = {row[1]: row[2] for row in connection.execute("pragma table_info(counterparties)").fetchall()}
+        counterparty_indexes = index_columns(connection, "counterparties")
 
     assert "alembic_version" in tables
     assert "accounts" in tables
     assert "transactions" in tables
     assert "postings" in tables
     assert "recurring_items" in tables
-    assert version == "0013_payment_instruments"
+    assert version == "0015_transaction_line_counterparties"
     assert account_columns["currency"].upper() == "VARCHAR(16)"
     assert account_columns["book_id"].upper() == "VARCHAR(80)"
     assert {"category_id", "metadata"} <= draft_columns
@@ -202,6 +204,7 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
         "password_accounts",
         "payment_profiles",
         "payment_instruments",
+        "counterparties",
     } <= tables
     assert any(index[2] for index in posting_indexes)
     assert PAYMENT_PROFILE_COLUMNS <= set(payment_profile_columns)
@@ -214,6 +217,10 @@ def test_sqlite_schema_is_created_by_alembic_migrations(tmp_path):
     assert payment_instrument_indexes["ix_payment_instruments_book_status"] == (False, ("book_id", "status"))
     assert payment_instrument_indexes["ix_payment_instruments_account"] == (False, ("account_id",))
     assert (True, ("book_id", "slug")) in payment_instrument_indexes.values()
+    assert COUNTERPARTY_COLUMNS <= set(counterparty_columns)
+    assert counterparty_columns["slug"].upper() == "VARCHAR(120)"
+    assert counterparty_indexes["ix_counterparties_book_kind_status"] == (False, ("book_id", "kind", "status"))
+    assert (True, ("book_id", "slug")) in counterparty_indexes.values()
 
 
 def test_alembic_adopts_legacy_sqlite_schema_without_destroying_data(tmp_path):
@@ -253,16 +260,29 @@ def test_alembic_adopts_legacy_sqlite_schema_without_destroying_data(tmp_path):
         payment_profile_indexes = index_columns(connection, "payment_profiles")
         payment_instrument_columns = {row[1] for row in connection.execute("pragma table_info(payment_instruments)").fetchall()}
         payment_instrument_indexes = index_columns(connection, "payment_instruments")
+        counterparty_columns = {row[1] for row in connection.execute("pragma table_info(counterparties)").fetchall()}
+        counterparty_indexes = index_columns(connection, "counterparties")
 
-    assert version == "0013_payment_instruments"
+    assert version == "0015_transaction_line_counterparties"
     assert {"institution_type", "subtype", "institution", "book_id"} <= account_columns
     assert "book_id" in transaction_columns
     assert "category_id" not in transaction_columns
-    assert {"recurring_items", "ledger_books", "transaction_lines", "auth_identities", "password_accounts", "payment_profiles", "payment_instruments"} <= tables
+    assert {
+        "recurring_items",
+        "ledger_books",
+        "transaction_lines",
+        "auth_identities",
+        "password_accounts",
+        "payment_profiles",
+        "payment_instruments",
+        "counterparties",
+    } <= tables
     assert PAYMENT_PROFILE_COLUMNS <= payment_profile_columns
     assert PAYMENT_INSTRUMENT_COLUMNS <= payment_instrument_columns
+    assert COUNTERPARTY_COLUMNS <= counterparty_columns
     assert (True, ("book_id", "slug")) in payment_profile_indexes.values()
     assert (True, ("book_id", "slug")) in payment_instrument_indexes.values()
+    assert (True, ("book_id", "slug")) in counterparty_indexes.values()
 
 
 def test_alembic_migrations_are_idempotent_across_restart(tmp_path):
@@ -275,4 +295,4 @@ def test_alembic_migrations_are_idempotent_across_restart(tmp_path):
     with sqlite3.connect(database_path) as connection:
         versions = connection.execute("select version_num from alembic_version").fetchall()
 
-    assert versions == [("0013_payment_instruments",)]
+    assert versions == [("0015_transaction_line_counterparties",)]

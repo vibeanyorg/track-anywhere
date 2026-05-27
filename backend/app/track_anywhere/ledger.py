@@ -43,7 +43,7 @@ class TransactionLine:
     category_id: str | None = None
     category_version_id: str | None = None
     category_path_snapshot: dict[str, str | None] | None = None
-    merchant_id: str | None = None
+    counterparty_id: str | None = None
     project_id: str | None = None
     necessity: str = "unknown"
     reimbursement_status: str = "none"
@@ -198,6 +198,7 @@ class Ledger:
         category_id: str | None = None,
         category_version_id: str | None = None,
         category_path_snapshot: dict[str, str | None] | None = None,
+        counterparty_id: str | None = None,
         memo: str = "",
     ) -> TransactionLine:
         allowed_line_types = {
@@ -233,6 +234,7 @@ class Ledger:
             category_id=category_id,
             category_version_id=category_version_id,
             category_path_snapshot=category_path_snapshot,
+            counterparty_id=counterparty_id,
             memo=memo,
         )
         transaction.lines.append(line)

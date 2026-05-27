@@ -146,6 +146,16 @@
       "get",
       "patch"
     ],
+    "/api/v1/counterparties": [
+      "get",
+      "post"
+    ],
+    "/api/v1/counterparties/ensure": [
+      "post"
+    ],
+    "/api/v1/counterparties/{counterparty_ref}": [
+      "get"
+    ],
     "/api/v1/credentials": [
       "get"
     ],

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
-from .books import DEFAULT_BOOK_ID
 from .commands import RecordExpenseCommand, RecordIncomeCommand, RecordTransactionCommand, ReverseTransactionCommand
 from .errors import NotFound, ValidationError
-from .ledger import Posting, Transaction
+from .ledger import Posting
+from .service_ledger_queries import LedgerQueryUseCases
 from .transaction_builder import build_transaction
 
 
-class LedgerUseCases:
+class LedgerUseCases(LedgerQueryUseCases):
     def record_transaction(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = RecordTransactionCommand.model_validate(payload)
         from_account = self.storage.get_account(command.from_account_id)
@@ -21,6 +20,7 @@ class LedgerUseCases:
             raise ValidationError("transaction currency must match both account currencies")
         self.assets.validate_amount(command.currency, command.amount)
         actor = self.actor_for_book(token, from_account.book_id, "ledger:confirm")
+        category = None
         if command.category_id is not None:
             category = self.storage.get_category(command.category_id)
             if category.book_id != from_account.book_id:
@@ -30,9 +30,12 @@ class LedgerUseCases:
                 from_account_id=command.from_account_id,
                 to_account_id=command.to_account_id,
             )
+        if command.counterparty is not None and category is None:
+            raise ValidationError("transaction counterparty requires a category")
         request_hash = self._hash_command(command)
 
         def run():
+            counterparty = self._resolve_counterparty_for_write(command.counterparty, book_id=from_account.book_id)
             transaction = build_transaction(
                 memo=command.memo,
                 occurred_at=command.occurred_at,
@@ -44,11 +47,12 @@ class LedgerUseCases:
                 accounts=[from_account, to_account],
                 scale_lookup=self.assets.scale_for,
             )
-            if command.category_id is not None:
+            if category is not None:
                 self._add_category_line_for_transaction(
                     transaction,
-                    self.storage.get_category(command.category_id),
+                    category,
                     accounts=(from_account, to_account),
+                    counterparty_id=counterparty.counterparty_id if counterparty else None,
                 )
             self.audit.record(
                 operation="ledger.transaction.record",
@@ -87,6 +91,7 @@ class LedgerUseCases:
         created_accounts = []
 
         def run():
+            counterparty = self._resolve_counterparty_for_write(command.counterparty, book_id=source.book_id)
             expense_account = self._system_category_account(
                 "expense",
                 command.currency,
@@ -105,7 +110,12 @@ class LedgerUseCases:
                 accounts=[source, expense_account],
                 scale_lookup=self.assets.scale_for,
             )
-            self._add_category_line_for_transaction(transaction, category, accounts=(source, expense_account))
+            self._add_category_line_for_transaction(
+                transaction,
+                category,
+                accounts=(source, expense_account),
+                counterparty_id=counterparty.counterparty_id if counterparty else None,
+            )
             self.audit.record(
                 operation="expense.record",
                 actor=actor,
@@ -143,6 +153,7 @@ class LedgerUseCases:
         created_accounts = []
 
         def run():
+            counterparty = self._resolve_counterparty_for_write(command.counterparty, book_id=target.book_id)
             income_account = self._system_category_account(
                 "income",
                 command.currency,
@@ -161,7 +172,12 @@ class LedgerUseCases:
                 accounts=[income_account, target],
                 scale_lookup=self.assets.scale_for,
             )
-            self._add_category_line_for_transaction(transaction, category, accounts=(income_account, target))
+            self._add_category_line_for_transaction(
+                transaction,
+                category,
+                accounts=(income_account, target),
+                counterparty_id=counterparty.counterparty_id if counterparty else None,
+            )
             self.audit.record(
                 operation="income.record",
                 actor=actor,
@@ -182,69 +198,6 @@ class LedgerUseCases:
         else:
             self._persist_ledger_change(transaction, accounts=created_accounts)
         return transaction, replay
-
-    def list_transactions(
-        self,
-        token: str,
-        *,
-        account_id: str | None = None,
-        category_id: str | None = None,
-        limit: int = 20,
-        book_id: str = DEFAULT_BOOK_ID,
-    ) -> list[Transaction]:
-        self.actor_for_book(token, book_id, "ledger:read")
-        if account_id:
-            account = self.storage.get_account(account_id)
-            if account.book_id != book_id:
-                return []
-        if category_id:
-            category = self.storage.get_category(category_id)
-            if category.book_id != book_id:
-                return []
-        return self.storage.list_confirmed_transactions(
-            book_id=book_id,
-            account_id=account_id,
-            category_id=category_id,
-            limit=limit,
-        )
-
-    def get_transaction(self, token: str, transaction_id: str) -> Transaction:
-        transaction = self.storage.get_confirmed_transaction(transaction_id)
-        if transaction is None:
-            raise NotFound(f"transaction not found: {transaction_id}")
-        self.actor_for_book(token, transaction.book_id, "ledger:read")
-        return transaction
-
-    def transaction_snapshot(self, token: str, transaction_id: str) -> dict[str, Any]:
-        transaction = self.get_transaction(token, transaction_id)
-        account_ids = {posting.account_id for posting in transaction.postings}
-        category_ids = {line.category_id for line in transaction.lines if line.category_id is not None}
-        category_version_ids = {
-            line.category_version_id
-            for line in transaction.lines
-            if line.category_version_id is not None
-        }
-        categories = [
-            self.categories.get(category_id)
-            for category_id in sorted(category_ids)
-            if category_id in self.categories.categories
-        ]
-        category_versions = [
-            version
-            for version in self.categories.versions.values()
-            if version.category_id in category_ids or version.category_version_id in category_version_ids
-        ]
-        category_versions.sort(key=lambda version: (version.category_id, version.valid_from, version.category_version_id))
-        accounts = [self.storage.get_account(account_id) for account_id in sorted(account_ids)]
-        return {
-            "schema_version": "tx-snapshot.v1",
-            "captured_at": datetime.now(timezone.utc),
-            "book_id": transaction.book_id,
-            "transaction": transaction,
-            "accounts": accounts,
-            "categories": categories,
-            "category_versions": category_versions,
-        }
 
     def reverse_transaction(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = ReverseTransactionCommand.model_validate(payload)

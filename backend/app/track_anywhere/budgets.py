@@ -59,6 +59,8 @@ class BudgetBook:
         self.funds: dict[str, BudgetFund] = {}
         self.budgets: dict[str, Budget] = {}
         self.targets: dict[str, BudgetTarget] = {}
+        self._dirty_budget_ids: set[str] = set()
+        self._dirty_target_ids: set[str] = set()
 
     def create(self, *, name: str, account_id: str, currency: str, book_id: str = DEFAULT_BOOK_ID) -> BudgetFund:
         fund = BudgetFund(fund_id=f"fund_{uuid4().hex}", account_id=account_id, name=name, currency=currency, book_id=book_id)
@@ -120,6 +122,7 @@ class BudgetBook:
             rollover_policy=rollover_policy,
         )
         self.budgets[budget.budget_id] = budget
+        self._dirty_budget_ids.add(budget.budget_id)
         return budget
 
     def get_budget(self, budget_id: str) -> Budget:
@@ -159,6 +162,7 @@ class BudgetBook:
             metadata=metadata or {},
         )
         self.targets[target.budget_target_id] = target
+        self._dirty_target_ids.add(target.budget_target_id)
         return target
 
     def list_targets(self, budget_id: str) -> list[BudgetTarget]:
@@ -167,3 +171,13 @@ class BudgetBook:
             [target for target in self.targets.values() if target.budget_id == budget_id],
             key=lambda target: (target.target_type, target.target_id or "", target.budget_target_id),
         )
+
+    def dirty_budgets(self) -> list[Budget]:
+        return [self.budgets[budget_id] for budget_id in self._dirty_budget_ids if budget_id in self.budgets]
+
+    def dirty_targets(self) -> list[BudgetTarget]:
+        return [self.targets[target_id] for target_id in self._dirty_target_ids if target_id in self.targets]
+
+    def mark_clean(self) -> None:
+        self._dirty_budget_ids.clear()
+        self._dirty_target_ids.clear()

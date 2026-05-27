@@ -1,22 +1,15 @@
 from __future__ import annotations
 
-from decimal import Decimal
-from typing import Any
-
-from sqlalchemy.orm import sessionmaker
-
-from .assets import AssetDefinition
 from .audit import AuditEvent
-from .attachments import Attachment
-from .auth_identities import LinkedAuthIdentity
-from .credit_cards import CreditCardProfile
 from .db_migrations import run_migrations
 from .domain_storage_loaders import DomainStorageLoaders
 from .domain_storage_writers import DomainStorageWriters
 from . import storage_auth_models as _storage_auth_models
 from .storage_annotation_writers import AnnotationStorageWriters
 from .storage_auth import AuthStorageWriters
-from .storage_catalog_reads import CatalogReadStorage, _category_from_row
+from .storage_catalog_reads import CatalogReadStorage
+from .storage_changes import BookChanges, CategoryHistoryChanges, WriteMetadata
+from .storage_counterparties import CounterpartyStorageMixin
 from .storage_draft_reads import DraftReadStorage
 from .storage_engine import create_database_engine, database_url_from_env
 from .storage_json import new_owner_token, to_jsonable
@@ -26,21 +19,11 @@ from .storage_payment_instruments import PaymentInstrumentStorageMixin
 from .storage_payment_profiles import PaymentProfileStorageMixin
 from .storage_partial import PartialStorageWriters
 from .storage_read_cache import StorageReadCache
+from .storage_snapshot_loader import StorageSnapshotLoader
 from .storage_uow import StorageUnitOfWork
-from .storage_models import (
-    AdjustmentAccountRecord,
-    AppStateRecord,
-    AssetRecord,
-    AttachmentRecord,
-    AuthIdentityRecord,
-    Base,
-    CategoryRecord,
-    CreditCardProfileRecord,
-    ReconciliationActionRecord,
-    UserRecord,
-)
+from .storage_models import Base
 from .storage_writers import StorageWriters
-from .users import AppUser
+from sqlalchemy.orm import sessionmaker
 
 _storage_auth_models.CredentialRecord
 
@@ -48,9 +31,11 @@ _storage_auth_models.CredentialRecord
 class OrmStorage(
     StorageReadCache,
     PartialStorageWriters,
+    CounterpartyStorageMixin,
     PaymentInstrumentStorageMixin,
     PaymentProfileStorageMixin,
     DomainStorageLoaders,
+    StorageSnapshotLoader,
     StorageLoaders,
     CatalogReadStorage,
     DraftReadStorage,
@@ -73,119 +58,28 @@ class OrmStorage(
         with self.session_factory.begin() as session:
             self._save_audit_events(session, [event])
 
-    def load_into(self, service: Any) -> None:
-        with self.session_factory() as session:
-            service.books.books, service.books.members = self._load_books(session)
-            service.assets.assets.update({
-                row.asset_code: AssetDefinition(
-                    asset_code=row.asset_code,
-                    kind=row.kind,
-                    scale=row.scale,
-                    name=row.name,
-                    display_scale=getattr(row, "display_scale", row.scale),
-                    status=row.status,
-                    version=row.version,
-                )
-                for row in session.query(AssetRecord).all()
-            })
-            service.assets.ensure_defaults()
-            service.users.users = {
-                row.user_id: AppUser(
-                    user_id=row.user_id,
-                    username=row.username,
-                    display_name=row.display_name,
-                    version=row.version,
-                )
-                for row in session.query(UserRecord).all()
-            }
-            service.auth_identities.identities = {
-                row.identity_id: LinkedAuthIdentity(
-                    identity_id=row.identity_id,
-                    provider=row.provider,
-                    subject=row.subject,
-                    user_id=row.user_id,
-                    email=row.email,
-                    email_verified=row.email_verified,
-                    display_name=row.display_name,
-                    picture_url=row.picture_url,
-                    status=row.status,
-                    version=row.version,
-                )
-                for row in session.query(AuthIdentityRecord).all()
-            }
-            service.drafts.drafts = self._load_drafts(session)
-            service.recurring.items = self._load_recurring_items(session)
-            service.budgets.funds = self._load_funds(session)
-            service.budgets.budgets, service.budgets.targets = self._load_budgets(session)
-            payment_profiles = self._load_payment_profiles(session)
-            self._hydrate_payment_profiles(service, payment_profiles)
-            payment_instruments = self._load_payment_instruments(session)
-            self._hydrate_payment_instruments(service, payment_instruments)
-            service.investments.events = self._load_investment_events(session)
-            service.investments.valuations = self._load_investment_valuations(session)
-            service.categories.categories = {
-                row.category_id: _category_from_row(row) for row in session.query(CategoryRecord).all()
-            }
-            (
-                service.categories.aliases,
-                service.categories.versions,
-                service.categories.events,
-            ) = self._load_category_history(session)
-            service.categories.mark_clean()
-            service.credit_cards.profiles = {
-                row.account_id: CreditCardProfile(
-                    account_id=row.account_id,
-                    credit_limit=Decimal(row.credit_limit) if row.credit_limit is not None else None,
-                    available_credit=Decimal(row.available_credit) if row.available_credit is not None else None,
-                    statement_day=row.statement_day,
-                    due_day=row.due_day,
-                    annual_fee=Decimal(row.annual_fee) if row.annual_fee is not None else None,
-                    version=row.version,
-                )
-                for row in session.query(CreditCardProfileRecord).all()
-            }
-            service.attachments.attachments = {
-                row.attachment_id: Attachment(
-                    attachment_id=row.attachment_id,
-                    storage_key=row.storage_key,
-                    content_hash=row.content_hash,
-                    mime_type=row.mime_type,
-                    original_filename=row.original_filename,
-                    scanner_status=row.scanner_status,
-                )
-                for row in session.query(AttachmentRecord).all()
-            }
-            service.credentials._credentials = self._load_credentials(session)
-            service.credentials.mark_clean()
-            service.audit.events = self._load_audit_events(session)
-            service.audit.mark_persisted()
-            service.idempotency._receipts = self._load_idempotency_receipts(session)
-            service.idempotency.mark_clean()
-            service.reconciliation_actions = [row.payload for row in session.query(ReconciliationActionRecord).all()]
-            service.adjustment_account_ids = {
-                row.currency: row.account_id for row in session.query(AdjustmentAccountRecord).all()
-            }
-            owner_state = session.get(AppStateRecord, "owner_token")
-            if owner_state is not None:
-                service.owner_token = str(owner_state.value["token"])
-                service._startup_persist_required = True
-
-    def save_startup_maintenance(self, service: Any) -> None:
-        dirty_aliases, dirty_versions, dirty_events = service.categories.dirty_history()
+    def save_startup_maintenance(
+        self,
+        *,
+        book_changes: BookChanges,
+        assets=(),
+        categories=(),
+        category_history: CategoryHistoryChanges,
+        metadata: WriteMetadata,
+    ) -> None:
         with self.unit_of_work() as uow:
-            uow.catalog.delete_app_state("owner_token")
-            uow.catalog.save_books(service.books)
-            uow.catalog.save_assets(service.assets.dirty_assets())
-            uow.catalog.save_categories(service.categories.dirty_categories())
-            uow.catalog.save_category_history(
-                service.categories,
-                aliases=dirty_aliases,
-                versions=dirty_versions,
-                events=dirty_events,
+            uow.state.delete_app_state("owner_token")
+            uow.books.save(book_changes.books, book_changes.members)
+            uow.assets.save(assets)
+            uow.categories.save(categories)
+            uow.categories.save_history(
+                aliases=category_history.aliases,
+                versions=category_history.versions,
+                events=category_history.events,
             )
-            uow.idempotency.save_credentials(service.credentials.dirty_credentials())
-            uow.audit.save_events(service.audit.pending_events())
-            uow.idempotency.save_receipts(service.idempotency.dirty_receipts())
+            uow.credentials.save(metadata.credentials)
+            uow.audit.save_events(metadata.audit_events)
+            uow.idempotency.save_receipts(metadata.idempotency_receipts)
 
 __all__ = [
     "Base",

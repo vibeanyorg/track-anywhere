@@ -95,5 +95,5 @@ class BookReportUseCases:
         if target.target_type == "project":
             return line.project_id == target.target_id
         if target.target_type == "merchant":
-            return line.merchant_id == target.target_id
+            return line.counterparty_id == target.target_id
         return False

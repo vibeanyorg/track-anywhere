@@ -185,12 +185,12 @@ def test_budget_execution_supports_project_and_merchant_targets(tmp_path):
         {"target_type": "project", "target_id": "project_tokyo"},
         idempotency_key="dimension-project-target",
     )
-    merchant_target, _ = service.add_budget_target(
+    counterparty_target, _ = service.add_budget_target(
         token,
         book.book_id,
         budget.budget_id,
         {"target_type": "merchant", "target_id": "merchant_didi"},
-        idempotency_key="dimension-merchant-target",
+        idempotency_key="dimension-counterparty-target",
     )
     transaction, _ = service.record_expense(
         token,
@@ -198,14 +198,14 @@ def test_budget_execution_supports_project_and_merchant_targets(tmp_path):
         idempotency_key="dimension-taxi-expense",
     )
     transaction.lines[0].project_id = "project_tokyo"
-    transaction.lines[0].merchant_id = "merchant_didi"
+    transaction.lines[0].counterparty_id = "merchant_didi"
     service._persist_ledger_change(transaction)
 
     execution = service.budget_execution_report(token, book.book_id, budget.budget_id)
 
     assert {target["budget_target_id"]: target["amount"] for target in execution["targets"]} == {
         project_target.budget_target_id: "80",
-        merchant_target.budget_target_id: "80",
+        counterparty_target.budget_target_id: "80",
     }
     assert execution["spent"] == "160"
 

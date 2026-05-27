@@ -28,6 +28,8 @@ def _transaction_payload(args: Namespace) -> dict[str, Any]:
         payload["occurred_at"] = args.occurred_at
     if args.category_id:
         payload["category_id"] = args.category_id
+    if getattr(args, "counterparty", None):
+        payload["counterparty"] = args.counterparty
     return payload
 
 
@@ -80,6 +82,8 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
             payload["memo"] = args.memo
         if args.occurred_at:
             payload["occurred_at"] = args.occurred_at
+        if getattr(args, "counterparty", None):
+            payload["counterparty"] = args.counterparty
         if uses_payment:
             return requester(
                 config,
@@ -102,11 +106,18 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
             payload["memo"] = args.memo
         if args.occurred_at:
             payload["occurred_at"] = args.occurred_at
+        if getattr(args, "counterparty", None):
+            payload["counterparty"] = args.counterparty
         return requester(config, "POST", "/api/v1/incomes", payload, key=command_idempotency_key(args, "income-record"))
     if args.command == "tx" and args.tx_command == "list":
         path = with_query(
             "/api/v1/ledger/transactions",
-            {"account_id": args.account_id, "category_id": args.category_id, "limit": args.limit},
+            {
+                "account_id": args.account_id,
+                "category_id": args.category_id,
+                "counterparty": getattr(args, "counterparty", None),
+                "limit": args.limit,
+            },
         )
         return requester(config, "GET", path)
     if args.command == "tx" and args.tx_command == "show":
