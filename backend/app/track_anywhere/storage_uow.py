@@ -24,6 +24,7 @@ from .storage_repositories import (
     StateRepository,
     UserRepository,
 )
+from .storage_password_accounts import StoragePasswordAccountRepository
 
 
 class StorageUnitOfWork:
@@ -57,6 +58,7 @@ class StorageUnitOfWork:
         self.credentials = CredentialRepository(self.storage, self.session)
         self.idempotency = IdempotencyRepository(self.storage, self.session)
         self.platform_grants = PlatformGrantRepository(self.session)
+        self.password_accounts = StoragePasswordAccountRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool | None:

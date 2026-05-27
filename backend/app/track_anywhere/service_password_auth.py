@@ -8,12 +8,10 @@ from .password_auth import PasswordAccount, PasswordAccountStore, normalize_emai
 
 
 class PasswordAuthUseCases:
-    def _password_account_store(self) -> PasswordAccountStore:
-        return PasswordAccountStore(self.storage.password_account_repository())
-
     def authenticate_password_account(self, *, email: str, password: str) -> PasswordAccount:
         try:
-            return self._password_account_store().authenticate(email=email, password=password)
+            with self.storage.unit_of_work() as uow:
+                return PasswordAccountStore(uow.password_accounts).authenticate(email=email, password=password)
         except PolicyDenied:
             self.record_security_failure("auth.password_denied", {"reason": "bad_credentials"})
             raise
@@ -30,11 +28,12 @@ class PasswordAuthUseCases:
         if self.config.mode != "local" and normalized_email not in signup_allowed_emails:
             self.record_security_failure("auth.password_signup_denied", {"reason": "email_not_allowlisted"})
             raise PolicyDenied("password signup is not allowlisted")
-        return self._password_account_store().create(
-            email=normalized_email,
-            password=password,
-            display_name=display_name,
-        )
+        with self.storage.unit_of_work() as uow:
+            return PasswordAccountStore(uow.password_accounts).create(
+                email=normalized_email,
+                password=password,
+                display_name=display_name,
+            )
 
     def login_password_account(self, account: PasswordAccount) -> dict[str, Any]:
         return self.login_oauth_identity(
