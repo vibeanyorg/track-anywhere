@@ -8,7 +8,7 @@ from pydantic import Field
 
 from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
-from ..api_runtime import service
+from ..api_service_ports import PaymentProfileService
 from ..api_serialization import serialize
 from ..commands import ASSET_CODE_PATTERN, StrictCommand
 from ..domain_commands import CreatePaymentProfileCommand
@@ -29,29 +29,34 @@ router = APIRouter()
 
 
 @router.post("/payment-profiles", dependencies=protected)
-def create_payment_profile(payload: CreatePaymentProfileCommand, token: AuthToken, key: IdempotencyKey):
+def create_payment_profile(
+    payload: CreatePaymentProfileCommand,
+    token: AuthToken,
+    key: IdempotencyKey,
+    service: PaymentProfileService,
+):
     try:
         profile, replay = service.create_payment_profile(token, command_payload(payload), idempotency_key=key)
         return {"payment_profile": serialize(profile), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "payment_profile.create")
+        raise_command_error(exc, "payment_profile.create", recorder=service)
 
 
 @router.get("/payment-profiles", dependencies=protected)
-def list_payment_profiles(token: AuthToken, status: str | None = "active"):
+def list_payment_profiles(token: AuthToken, service: PaymentProfileService, status: str | None = "active"):
     try:
         profiles = service.list_payment_profiles(token, status=status)
         return {"payment_profiles": serialize(profiles)}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "payment_profile.list")
+        raise_command_error(exc, "payment_profile.list", recorder=service)
 
 
 @router.get("/payment-profiles/{payment}/status", dependencies=protected)
-def get_payment_profile_status(payment: str, token: AuthToken):
+def get_payment_profile_status(payment: str, token: AuthToken, service: PaymentProfileService):
     try:
         return serialize(service.payment_profile_status(token, payment))
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "payment_profile.status")
+        raise_command_error(exc, "payment_profile.status", recorder=service)
 
 
 @router.post("/payment-profiles/{payment}/expenses", dependencies=protected)
@@ -60,6 +65,7 @@ def record_payment_profile_expense(
     payload: RecordPaymentProfileExpenseBody,
     token: AuthToken,
     key: IdempotencyKey,
+    service: PaymentProfileService,
 ):
     try:
         transaction, replay = service.record_payment_profile_expense(
@@ -69,4 +75,4 @@ def record_payment_profile_expense(
         )
         return {"transaction": serialize(transaction), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
-        raise_command_error(exc, "payment_profile.expense.record")
+        raise_command_error(exc, "payment_profile.expense.record", recorder=service)

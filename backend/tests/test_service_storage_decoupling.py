@@ -84,6 +84,23 @@ def test_high_churn_catalog_router_uses_service_dependency_boundary():
     assert "recorder=service" in source
 
 
+def test_catalog_adjacent_write_routers_use_service_dependency_boundaries():
+    ports = (BACKEND / "api_service_ports.py").read_text()
+    expectations = [
+        ("counterparties.py", "CounterpartyService", "CounterpartyRouteService"),
+        ("payment_instruments.py", "PaymentInstrumentService", "PaymentInstrumentRouteService"),
+        ("payment_profiles.py", "PaymentProfileService", "PaymentProfileRouteService"),
+    ]
+
+    for filename, alias, protocol in expectations:
+        source = (BACKEND / f"api_routers/{filename}").read_text()
+        assert "from ..api_runtime import service" not in source
+        assert f"from ..api_service_ports import {alias}" in source
+        assert f"class {protocol}(AuditRecorder, Protocol)" in ports
+        assert f"{alias} = Annotated[{protocol}, Depends(get_service)]" in ports
+        assert "recorder=service" in source
+
+
 def test_platform_auth_does_not_accept_whole_service_object():
     path = BACKEND / "platform_auth.py"
     tree = ast.parse(path.read_text())
