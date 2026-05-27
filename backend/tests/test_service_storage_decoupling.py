@@ -245,10 +245,15 @@ def test_storage_change_writers_accept_single_explicit_change_set():
     assert offenders == []
 
 
-def test_storage_repositories_are_grouped_by_bounded_context():
-    assert not (BACKEND / "storage_repositories.py").exists()
-    for module in {"catalog.py", "finance.py", "ledger.py", "security.py", "workflow.py"}:
-        assert (BACKEND / f"storage_repositories/{module}").exists()
+def test_persistence_helpers_are_grouped_by_bounded_context():
+    grouped_modules = {
+        "storage_repositories": {"catalog.py", "finance.py", "ledger.py", "security.py", "workflow.py"},
+        "service_persistence": {"catalog.py", "collectors.py", "directory.py", "finance.py", "ledger.py", "metadata.py", "startup.py", "workflow.py"},
+    }
+    for folder, modules in grouped_modules.items():
+        assert not (BACKEND / f"{folder}.py").exists()
+        for module in modules:
+            assert (BACKEND / f"{folder}/{module}").exists()
 
 
 def test_service_write_helpers_use_commit_vocabulary():
@@ -279,7 +284,7 @@ def test_known_god_class_names_do_not_return():
 
 def test_compatibility_facades_stay_empty():
     checked = {
-        BACKEND / "service_persistence.py": {"ServicePersistenceMixin"},
+        BACKEND / "service_persistence/__init__.py": {"ServicePersistenceMixin"},
         BACKEND / "storage_partial.py": {"PartialStorageWriters"},
     }
     offenders = []
