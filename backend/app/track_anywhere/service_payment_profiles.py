@@ -8,6 +8,7 @@ from .domain_commands import CreatePaymentProfileCommand, RecordPaymentProfileEx
 from .errors import NotFound, ValidationError
 from .ledger import Posting, Transaction
 from .payment_profiles import PaymentProfile
+from .transaction_builder import add_transaction_line, build_transaction
 
 
 class PaymentProfileUseCases:
@@ -20,8 +21,8 @@ class PaymentProfileUseCases:
     ) -> tuple[Transaction, bool]:
         command = RecordPaymentProfileExpenseCommand.model_validate(payload)
         profile = self._resolve_payment_profile_reference(command.payment)
-        instrument = self.ledger.get_account(profile.instrument_account_id)
-        backing = self.ledger.get_account(profile.backing_account_id)
+        instrument = self.storage.get_account(profile.instrument_account_id)
+        backing = self.storage.get_account(profile.backing_account_id)
 
         if profile.kind != "token_backed_card" or profile.settlement_mode != "immediate":
             raise ValidationError("payment profile is not an immediate token-backed card")
@@ -35,7 +36,7 @@ class PaymentProfileUseCases:
         backing_amount = command.amount * profile.settlement_rate
         self.assets.validate_amount(profile.backing_currency, backing_amount, field_name="backing amount")
 
-        category = self.categories.get(command.category_id)
+        category = self.storage.get_category(command.category_id)
         if category.book_id != profile.book_id:
             raise ValidationError("expense category must belong to the payment profile book")
         if category.kind != "expense":
@@ -52,10 +53,20 @@ class PaymentProfileUseCases:
             if confirmed_backing_balance < backing_amount:
                 raise ValidationError("insufficient backing balance")
 
-            expense_account_id = self._system_category_account_id("expense", profile.instrument_currency, book_id=profile.book_id)
+            expense_account_id = self._system_category_account_id(
+                "expense",
+                profile.instrument_currency,
+                book_id=profile.book_id,
+            )
             fx_backing_account_id = self._system_fx_clearing_account_id(profile.backing_currency, book_id=profile.book_id)
-            fx_instrument_account_id = self._system_fx_clearing_account_id(profile.instrument_currency, book_id=profile.book_id)
-            transaction = self.ledger.create_transaction(
+            fx_instrument_account_id = self._system_fx_clearing_account_id(
+                profile.instrument_currency,
+                book_id=profile.book_id,
+            )
+            expense_account = self._transaction_account(expense_account_id)
+            fx_backing_account = self._transaction_account(fx_backing_account_id)
+            fx_instrument_account = self._transaction_account(fx_instrument_account_id)
+            transaction = build_transaction(
                 memo=command.memo,
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
@@ -68,15 +79,19 @@ class PaymentProfileUseCases:
                     Posting(fx_instrument_account_id, -command.amount, profile.instrument_currency),
                 ],
                 book_id=profile.book_id,
+                accounts=[instrument, expense_account, backing, fx_backing_account, fx_instrument_account],
+                scale_lookup=self.assets.scale_for,
             )
             self._add_category_line_for_transaction(transaction, category)
-            self.ledger.add_line(
+            add_transaction_line(
                 transaction,
                 line_type="fx_exchange",
                 amount=backing_amount,
                 currency=profile.backing_currency,
                 memo=f"{profile.display_name} {profile.backing_currency}-backed card settlement",
+                scale_lookup=self.assets.scale_for,
             )
+            self.ledger.transactions[transaction.transaction_id] = transaction
             self.audit.record(
                 operation="payment_profile.expense.record",
                 actor=actor,
@@ -106,8 +121,8 @@ class PaymentProfileUseCases:
 
     def create_payment_profile(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = CreatePaymentProfileCommand.model_validate(payload)
-        instrument = self.ledger.get_account(command.instrument_account_id)
-        backing = self.ledger.get_account(command.backing_account_id)
+        instrument = self.storage.get_account(command.instrument_account_id)
+        backing = self.storage.get_account(command.backing_account_id)
 
         if instrument.book_id != backing.book_id:
             raise ValidationError("payment profile accounts must belong to one book")
