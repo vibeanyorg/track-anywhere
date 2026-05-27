@@ -195,53 +195,54 @@ class FinanceService(
         self.assets.ensure_defaults()
         for book in self.books.books.values():
             self.assets.ensure(book.base_currency)
-        for account in self.ledger.accounts.values():
-            account.book_id = account.book_id or DEFAULT_BOOK_ID
+        accounts = self.storage.list_accounts(book_id=None)
+        accounts_by_id = {account.account_id: account for account in accounts}
+        validator = Ledger(asset_scale_lookup=self.assets.scale_for)
+        validator.accounts = accounts_by_id
+        for account in accounts:
             self.assets.ensure(account.currency)
         for category in list(self.categories.categories.values()):
             category.book_id = category.book_id or DEFAULT_BOOK_ID
             self.categories._sync_display_fields(category)
             if not any(version.category_id == category.category_id for version in self.categories.versions.values()):
                 self.categories._record_version(category, "migration")
-        for transaction in self.ledger.transactions.values():
-            transaction.book_id = transaction.book_id or self._book_id_for_transaction(transaction)
-            if transaction.lines is None:
-                transaction.lines = []
-            for posting in transaction.postings:
-                self.assets.ensure(posting.currency)
-            for line in transaction.lines:
-                self.assets.ensure(line.currency)
-            self.ledger.validate_transaction_integrity(transaction, enforce_asset_scale=False)
-            if transaction.reverses_transaction_id:
-                original = self.ledger.transactions.get(transaction.reverses_transaction_id)
-                if original is not None and original.reversed_by is None:
-                    original.reversed_by = transaction.transaction_id
+        for book in self.books.books.values():
+            for transaction in self.storage.list_all_confirmed_transactions(book_id=book.book_id):
+                self._ensure_transaction_foundation(transaction, accounts_by_id, validator)
         for draft in self.drafts.drafts.values():
-            draft.book_id = draft.book_id or self._book_id_for_postings(draft.proposed_postings)
+            draft.book_id = draft.book_id or self._book_id_for_postings(draft.proposed_postings, accounts_by_id)
         for item in self.recurring.items.values():
             if not item.book_id and item.source_account_id is not None:
                 item.book_id = self.storage.get_account(item.source_account_id).book_id
             if item.currency is not None:
                 self.assets.ensure(item.currency)
         for event in self.investments.events.values():
-            account = self.ledger.accounts.get(event.account_id)
+            account = accounts_by_id.get(event.account_id)
             if account is not None:
                 event.book_id = event.book_id or account.book_id
             self.assets.ensure(event.currency)
         for valuation in self.investments.valuations.values():
-            account = self.ledger.accounts.get(valuation.account_id)
+            account = accounts_by_id.get(valuation.account_id)
             if account is not None:
                 valuation.book_id = valuation.book_id or account.book_id
             self.assets.ensure(valuation.currency)
         for budget in self.budgets.budgets.values():
             self.assets.ensure(budget.currency)
 
-    def _book_id_for_transaction(self, transaction) -> str:
-        return self._book_id_for_postings(transaction.postings)
+    def _ensure_transaction_foundation(self, transaction, accounts_by_id: dict[str, Any], validator: Ledger) -> None:
+        transaction.book_id = transaction.book_id or self._book_id_for_postings(transaction.postings, accounts_by_id)
+        if transaction.lines is None:
+            transaction.lines = []
+        for posting in transaction.postings:
+            self.assets.ensure(posting.currency)
+        for line in transaction.lines:
+            self.assets.ensure(line.currency)
+        validator.validate_transaction_integrity(transaction, enforce_asset_scale=False)
 
-    def _book_id_for_postings(self, postings) -> str:
+    @staticmethod
+    def _book_id_for_postings(postings, accounts_by_id: dict[str, Any]) -> str:
         for posting in postings:
-            account = self.ledger.accounts.get(posting.account_id)
+            account = accounts_by_id.get(posting.account_id)
             if account is not None:
                 return account.book_id
         return DEFAULT_BOOK_ID

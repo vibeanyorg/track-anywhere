@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import inspect
 import re
 from pathlib import Path
+
+from track_anywhere.service import FinanceService
 
 
 def test_service_write_paths_do_not_stage_accounts_in_ledger_mirror():
@@ -24,3 +27,10 @@ def test_partial_writers_do_not_read_ledger_dirty_accounts():
     source = (Path.cwd() / "backend/app/track_anywhere/storage_partial.py").read_text()
 
     assert "ledger.dirty_accounts(" not in source
+
+
+def test_startup_foundations_do_not_read_runtime_ledger_mirror():
+    source = inspect.getsource(FinanceService._ensure_domain_foundations)
+
+    assert "self.ledger.accounts" not in source
+    assert "self.ledger.transactions" not in source
