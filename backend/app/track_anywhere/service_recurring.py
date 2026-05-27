@@ -54,9 +54,9 @@ class RecurringUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_recurring_change(item)
+            self._commit_recurring_change(item)
         return item, replay
 
     def update_recurring_item(
@@ -101,9 +101,9 @@ class RecurringUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_recurring_change(item)
+            self._commit_recurring_change(item)
         return item, replay
 
     def list_recurring_items(
@@ -192,13 +192,13 @@ class RecurringUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
             draft_ids = [item["draft_id"] for item in result["created"]]
             drafts = [self.drafts.drafts[draft_id] for draft_id in draft_ids]
             recurring_ids = [item["recurring_id"] for item in result["created"]]
             recurring_items = [self.recurring.items[recurring_id] for recurring_id in recurring_ids]
-            self._persist_recurring_change(*recurring_items, drafts=drafts, accounts=created_accounts)
+            self._commit_recurring_change(*recurring_items, drafts=drafts, accounts=created_accounts)
         return result, replay
 
     def _validate_recurring_references(self, command: CreateRecurringItemCommand, book_id: str) -> None:

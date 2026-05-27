@@ -181,7 +181,7 @@ def test_confirmed_postings_are_immutable_after_initial_persist(tmp_path):
     )
 
     with pytest.raises(ValidationError, match="confirmed transaction postings are immutable"):
-        service._persist_ledger_change(transaction)
+        service._commit_ledger_change(transaction)
 
     with sqlite3.connect(database_path) as connection:
         posting_count = connection.execute(

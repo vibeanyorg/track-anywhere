@@ -30,9 +30,9 @@ class UserUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_user_change(user)
+            self._commit_user_change(user)
         return user, replay
 
     def list_users(self, token: str) -> list[AppUser]:

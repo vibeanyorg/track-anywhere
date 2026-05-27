@@ -19,13 +19,16 @@ def error_to_status(error: Exception) -> int:
     return 422
 
 
-def raise_command_error(error: Exception, operation: str) -> None:
+def raise_command_error(error: Exception, operation: str, *, recorder=service) -> None:
     if isinstance(error, PolicyDenied):
-        service.record_security_failure("security.policy_denied", {"operation": operation})
+        recorder.record_security_failure("security.policy_denied", {"operation": operation})
     elif isinstance(error, IdempotencyConflict):
-        service.record_security_failure("command.idempotency_conflict", {"operation": operation})
+        recorder.record_security_failure("command.idempotency_conflict", {"operation": operation})
     elif isinstance(error, StaleVersion):
-        service.record_security_failure("command.stale_version", {"operation": operation})
+        recorder.record_security_failure("command.stale_version", {"operation": operation})
     elif isinstance(error, PydanticValidationError):
-        service.record_security_failure("command.validation_failed", {"operation": operation, "error_count": error.error_count()})
+        recorder.record_security_failure(
+            "command.validation_failed",
+            {"operation": operation, "error_count": error.error_count()},
+        )
     raise HTTPException(status_code=error_to_status(error), detail=str(error))

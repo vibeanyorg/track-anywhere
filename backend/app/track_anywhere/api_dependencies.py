@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import Depends, Header, HTTPException, Request
 
 from .api_sessions import SESSION_COOKIE
-from .api_runtime import ALLOWED_ORIGINS, browser_sessions, service
+from .api_runtime import ALLOWED_ORIGINS, browser_sessions, service as runtime_service
 from .errors import SecurityPreconditionFailed
 from .security import CredentialReference, validate_web_security
 
@@ -57,6 +57,10 @@ def idempotency_key(x_idempotency_key: IdempotencyHeader = None) -> str:
     return x_idempotency_key
 
 
+def get_service():
+    return runtime_service
+
+
 def session_guard(
     request: Request,
     x_csrf_token: CsrfHeader = None,
@@ -67,14 +71,17 @@ def session_guard(
     auth_mode = "session" if session_id else "bearer"
     is_mutating = request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
     if session_id and is_mutating and not browser_sessions.verify_csrf(session_id, x_csrf_token):
-        service.record_security_failure("security.csrf_denied", {"path": request.url.path, "origin": origin})
+        runtime_service.record_security_failure("security.csrf_denied", {"path": request.url.path, "origin": origin})
         raise HTTPException(status_code=400, detail="missing or invalid CSRF token")
     allowed_origin = allowed_origin_for_request(origin, referer)
     if is_mutating and auth_mode == "bearer":
         origin_ok = origin in ALLOWED_ORIGINS if origin else True
         referer_ok = any(referer and referer.startswith(item) for item in ALLOWED_ORIGINS)
         if not origin_ok or (referer and not referer_ok):
-            service.record_security_failure("security.origin_denied", {"path": request.url.path, "origin": origin, "referer": referer})
+            runtime_service.record_security_failure(
+                "security.origin_denied",
+                {"path": request.url.path, "origin": origin, "referer": referer},
+            )
             raise HTTPException(status_code=400, detail="missing or invalid Origin/Referer")
     try:
         validate_web_security(
@@ -87,7 +94,10 @@ def session_guard(
             allowed_origin=allowed_origin,
         )
     except SecurityPreconditionFailed as exc:
-        service.record_security_failure("security.origin_denied", {"path": request.url.path, "origin": origin, "referer": referer})
+        runtime_service.record_security_failure(
+            "security.origin_denied",
+            {"path": request.url.path, "origin": origin, "referer": referer},
+        )
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

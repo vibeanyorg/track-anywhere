@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import re
 from pathlib import Path
+
+from track_anywhere.storage import OrmStorage
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -55,6 +58,16 @@ def test_api_routers_do_not_access_storage_directly():
                 offenders.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: {line.strip()}")
 
     assert offenders == []
+
+
+def test_high_churn_ledger_router_uses_service_dependency_boundary():
+    path = BACKEND / "api_routers/ledger.py"
+    source = path.read_text()
+
+    assert "from ..api_runtime import service" not in source
+    assert "class LedgerRouteService(Protocol)" in source
+    assert "LedgerService = Annotated[LedgerRouteService, Depends(get_service)]" in source
+    assert "recorder=service" in source
 
 
 def test_platform_auth_does_not_accept_whole_service_object():
@@ -112,6 +125,45 @@ def test_storage_write_boundaries_use_explicit_change_sets():
     for path in checked_files:
         for line_number, line in enumerate(path.read_text().splitlines(), start=1):
             if any(pattern.search(line) for pattern in forbidden):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: {line.strip()}")
+
+    assert offenders == []
+
+
+def test_storage_change_writers_accept_single_explicit_change_set():
+    writer_names = [
+        "save_startup_maintenance",
+        "save_idempotency",
+        "save_credential_change",
+        "save_catalog_change",
+        "save_ledger_change",
+        "save_reclassification_change",
+        "save_user_change",
+        "save_book_change",
+        "save_draft_change",
+        "save_recurring_change",
+        "save_finance_change",
+        "save_investment_change",
+        "save_credit_card_profile_change",
+        "save_payment_profile_change",
+        "save_attachment_change",
+    ]
+    offenders = []
+    for name in writer_names:
+        signature = inspect.signature(getattr(OrmStorage, name))
+        parameters = [parameter for parameter in signature.parameters.values() if parameter.name != "self"]
+        if len(parameters) != 1 or parameters[0].name != "changes":
+            offenders.append(f"{name}{signature}")
+
+    assert offenders == []
+
+
+def test_service_write_helpers_use_commit_vocabulary():
+    offenders = []
+    forbidden = re.compile(r"\b(def|self)\._persist_")
+    for path in BACKEND.glob("service*.py"):
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if forbidden.search(line):
                 offenders.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: {line.strip()}")
 
     assert offenders == []

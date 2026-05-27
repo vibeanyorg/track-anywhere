@@ -126,9 +126,9 @@ class PaymentProfileUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_ledger_change(transaction, accounts=created_accounts)
+            self._commit_ledger_change(transaction, accounts=created_accounts)
         return transaction, replay
 
     def create_payment_profile(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -179,9 +179,9 @@ class PaymentProfileUseCases:
         )
         profile, replay = result
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_payment_profile_change()
+            self._commit_payment_profile_change()
         return profile, replay
 
     def list_payment_profiles(

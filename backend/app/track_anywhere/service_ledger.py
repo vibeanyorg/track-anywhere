@@ -70,9 +70,9 @@ class LedgerUseCases(LedgerQueryUseCases):
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_ledger_change(transaction)
+            self._commit_ledger_change(transaction)
         return transaction, replay
 
     def record_expense(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -132,9 +132,9 @@ class LedgerUseCases(LedgerQueryUseCases):
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_ledger_change(transaction, accounts=created_accounts)
+            self._commit_ledger_change(transaction, accounts=created_accounts)
         return transaction, replay
 
     def record_income(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -194,9 +194,9 @@ class LedgerUseCases(LedgerQueryUseCases):
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_ledger_change(transaction, accounts=created_accounts)
+            self._commit_ledger_change(transaction, accounts=created_accounts)
         return transaction, replay
 
     def reverse_transaction(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -241,7 +241,7 @@ class LedgerUseCases(LedgerQueryUseCases):
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_ledger_change(transaction, reversal)
+            self._commit_ledger_change(transaction, reversal)
         return reversal, replay

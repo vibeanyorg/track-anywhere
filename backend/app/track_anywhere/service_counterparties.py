@@ -37,9 +37,9 @@ class CounterpartyUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_catalog_change()
+            self._commit_catalog_change()
         return counterparty, replay
 
     def list_counterparties(

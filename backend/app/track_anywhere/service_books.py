@@ -45,7 +45,7 @@ class BookUseCases:
             return book
 
         book, replay = self.idempotency.run(key=idempotency_key, actor=actor, operation="book.create", request_hash=request_hash, fn=run)
-        self._persist_replay_or(replay, self._persist_book_change)
+        self._commit_replay_or(replay, self._commit_book_change)
         return book, replay
 
     def list_book_accounts(self, token: str, book_id: str) -> list[Any]:
@@ -118,7 +118,7 @@ class BookUseCases:
             return category
 
         category, replay = self.idempotency.run(key=idempotency_key, actor=actor, operation="category.update", request_hash=request_hash, fn=run)
-        self._persist_replay_or(replay, self._persist_catalog_change)
+        self._commit_replay_or(replay, self._commit_catalog_change)
         return category, replay
 
     def add_book_category_alias(self, token: str, book_id: str, category_id: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -136,7 +136,7 @@ class BookUseCases:
             return alias
 
         alias, replay = self.idempotency.run(key=idempotency_key, actor=actor, operation="category.alias.add", request_hash=request_hash, fn=run)
-        self._persist_replay_or(replay, self._persist_catalog_change)
+        self._commit_replay_or(replay, self._commit_catalog_change)
         return alias, replay
 
     def merge_book_category(self, token: str, book_id: str, category_id: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -157,7 +157,7 @@ class BookUseCases:
             return source
 
         category, replay = self.idempotency.run(key=idempotency_key, actor=actor, operation="category.merge", request_hash=request_hash, fn=run)
-        self._persist_replay_or(replay, self._persist_catalog_change)
+        self._commit_replay_or(replay, self._commit_catalog_change)
         return category, replay
 
     def list_book_classification_events(self, token: str, book_id: str) -> list[Any]:
@@ -180,7 +180,7 @@ class BookUseCases:
             return budget
 
         budget, replay = self.idempotency.run(key=idempotency_key, actor=actor, operation="budget.create", request_hash=request_hash, fn=run)
-        self._persist_replay_or(replay, lambda: self._persist_finance_change(budgets=True))
+        self._commit_replay_or(replay, lambda: self._commit_finance_change(budgets=True))
         return budget, replay
 
     def add_budget_target(self, token: str, book_id: str, budget_id: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -198,7 +198,7 @@ class BookUseCases:
             return target
 
         target, replay = self.idempotency.run(key=idempotency_key, actor=actor, operation="budget.target.add", request_hash=request_hash, fn=run)
-        self._persist_replay_or(replay, lambda: self._persist_finance_change(budgets=True))
+        self._commit_replay_or(replay, lambda: self._commit_finance_change(budgets=True))
         return target, replay
 
     def list_budgets(self, token: str, book_id: str = DEFAULT_BOOK_ID) -> list[Any]:

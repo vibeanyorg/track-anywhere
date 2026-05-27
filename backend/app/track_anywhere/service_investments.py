@@ -70,10 +70,10 @@ class InvestmentUseCases:
 
         event, replay = self.idempotency.run(key=idempotency_key, actor=actor, operation="investment.event.record", request_hash=request_hash, fn=run)
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
             transactions = (created_transaction,) if created_transaction is not None else ()
-            self._persist_investment_change(events=(event,), transactions=transactions, accounts=created_accounts)
+            self._commit_investment_change(events=(event,), transactions=transactions, accounts=created_accounts)
         return event, replay
 
     def _post_investment_event_transaction(self, command: RecordInvestmentEventCommand, book_id: str, *, created_accounts):
@@ -163,9 +163,9 @@ class InvestmentUseCases:
 
         valuation, replay = self.idempotency.run(key=idempotency_key, actor=actor, operation="investment.valuation.record", request_hash=request_hash, fn=run)
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_investment_change(valuations=(valuation,))
+            self._commit_investment_change(valuations=(valuation,))
         return valuation, replay
 
     def list_investment_valuations(self, token: str, account_id: str) -> list[InvestmentValuation]:

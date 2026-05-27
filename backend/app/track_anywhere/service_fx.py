@@ -116,7 +116,7 @@ class FxUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_ledger_change(transaction, accounts=created_accounts)
+            self._commit_ledger_change(transaction, accounts=created_accounts)
         return transaction, replay

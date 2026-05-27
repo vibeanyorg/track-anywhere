@@ -8,7 +8,7 @@ from . import storage_auth_models as _storage_auth_models
 from .storage_annotation_writers import AnnotationStorageWriters
 from .storage_auth import AuthStorageWriters
 from .storage_catalog_reads import CatalogReadStorage
-from .storage_changes import BookChanges, CategoryHistoryChanges, WriteMetadata
+from .storage_changes import StartupMaintenanceChanges
 from .storage_counterparties import CounterpartyStorageMixin
 from .storage_draft_reads import DraftReadStorage
 from .storage_engine import create_database_engine, database_url_from_env
@@ -58,28 +58,20 @@ class OrmStorage(
         with self.session_factory.begin() as session:
             self._save_audit_events(session, [event])
 
-    def save_startup_maintenance(
-        self,
-        *,
-        book_changes: BookChanges,
-        assets=(),
-        categories=(),
-        category_history: CategoryHistoryChanges,
-        metadata: WriteMetadata,
-    ) -> None:
+    def save_startup_maintenance(self, changes: StartupMaintenanceChanges) -> None:
         with self.unit_of_work() as uow:
             uow.state.delete_app_state("owner_token")
-            uow.books.save(book_changes.books, book_changes.members)
-            uow.assets.save(assets)
-            uow.categories.save(categories)
+            uow.books.save(changes.book_changes.books, changes.book_changes.members)
+            uow.assets.save(changes.assets)
+            uow.categories.save(changes.categories)
             uow.categories.save_history(
-                aliases=category_history.aliases,
-                versions=category_history.versions,
-                events=category_history.events,
+                aliases=changes.category_history.aliases,
+                versions=changes.category_history.versions,
+                events=changes.category_history.events,
             )
-            uow.credentials.save(metadata.credentials)
-            uow.audit.save_events(metadata.audit_events)
-            uow.idempotency.save_receipts(metadata.idempotency_receipts)
+            uow.credentials.save(changes.metadata.credentials)
+            uow.audit.save_events(changes.metadata.audit_events)
+            uow.idempotency.save_receipts(changes.metadata.idempotency_receipts)
 
 __all__ = [
     "Base",

@@ -72,9 +72,9 @@ class AccountUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_ledger_change(*created_transactions, accounts=created_accounts)
+            self._commit_ledger_change(*created_transactions, accounts=created_accounts)
         return account, replay
 
     def list_accounts(
@@ -210,9 +210,9 @@ class AccountUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_ledger_change(accounts=(account,))
+            self._commit_ledger_change(accounts=(account,))
         return account, replay
 
     @staticmethod

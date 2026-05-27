@@ -59,9 +59,9 @@ class BalanceUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_ledger_change(transaction, accounts=created_accounts)
+            self._commit_ledger_change(transaction, accounts=created_accounts)
         return transaction, replay
 
     def account_balance(self, token: str, account_id: str, *, include_drafts: bool = False) -> dict[str, Any]:

@@ -2,19 +2,34 @@ from __future__ import annotations
 
 from typing import Any
 
-from .storage_changes import BookChanges, BudgetChanges, CategoryHistoryChanges, WriteMetadata
+from .storage_changes import (
+    AttachmentChanges,
+    BookDirectoryChanges,
+    CatalogChanges,
+    CredentialChanges,
+    CreditCardProfileChanges,
+    DraftChanges,
+    FinanceChanges,
+    IdempotencyChanges,
+    InvestmentChanges,
+    LedgerChanges,
+    PaymentProfileChanges,
+    RecurringChanges,
+    UserChanges,
+    WriteMetadata,
+)
 from .storage_models import AccountRecord, AdjustmentAccountRecord, AssetRecord, CategoryRecord
 
 
 class StorageMetadataWriters:
-    def save_idempotency(self, metadata: WriteMetadata) -> None:
+    def save_idempotency(self, changes: IdempotencyChanges) -> None:
         with self.unit_of_work() as uow:
-            uow.credentials.save(metadata.credentials)
-            uow.idempotency.save_receipts(metadata.idempotency_receipts)
+            uow.credentials.save(changes.metadata.credentials)
+            uow.idempotency.save_receipts(changes.metadata.idempotency_receipts)
 
-    def save_credential_change(self, *, metadata: WriteMetadata) -> None:
+    def save_credential_change(self, changes: CredentialChanges) -> None:
         with self.unit_of_work() as uow:
-            self._save_write_metadata(uow, metadata)
+            self._save_write_metadata(uow, changes.metadata)
 
     @staticmethod
     def _save_write_metadata(uow, metadata: WriteMetadata) -> None:
@@ -24,160 +39,124 @@ class StorageMetadataWriters:
 
 
 class CatalogChangeStorageWriters:
-    def save_catalog_change(
-        self,
-        *,
-        metadata: WriteMetadata,
-        assets=(),
-        categories=(),
-        category_history: CategoryHistoryChanges | None = None,
-        counterparties=(),
-        payment_instruments=(),
-    ) -> None:
+    def save_catalog_change(self, changes: CatalogChanges) -> None:
         with self.unit_of_work() as uow:
-            uow.assets.save(assets)
-            uow.categories.save(categories)
-            if category_history is not None:
-                uow.categories.save_history(
-                    aliases=category_history.aliases,
-                    versions=category_history.versions,
-                    events=category_history.events,
-                )
-            uow.counterparties.save(counterparties)
-            uow.payment_instruments.save(payment_instruments)
-            self._save_write_metadata(uow, metadata)
+            uow.assets.save(changes.assets)
+            uow.categories.save(changes.categories)
+            uow.categories.save_history(
+                aliases=changes.category_history.aliases,
+                versions=changes.category_history.versions,
+                events=changes.category_history.events,
+            )
+            uow.counterparties.save(changes.counterparties)
+            uow.payment_instruments.save(changes.payment_instruments)
+            self._save_write_metadata(uow, changes.metadata)
         self.update_read_cache(
-            categories=categories,
-            counterparties=counterparties,
-            payment_instruments=payment_instruments,
+            categories=changes.categories,
+            counterparties=changes.counterparties,
+            payment_instruments=changes.payment_instruments,
         )
 
 
 class LedgerChangeStorageWriters:
-    def save_ledger_change(
-        self,
-        transactions,
-        *,
-        metadata: WriteMetadata,
-        accounts=(),
-        assets=(),
-        adjustment_account_ids: dict[str, str] | None = None,
-        category_history: CategoryHistoryChanges | None = None,
-        counterparties=(),
-    ) -> None:
-        accounts = list(accounts)
+    def save_ledger_change(self, changes: LedgerChanges) -> None:
+        accounts = list(changes.accounts)
         with self.unit_of_work() as uow:
-            uow.assets.save(assets)
+            uow.assets.save(changes.assets)
             uow.ledger.save_accounts(accounts)
-            uow.ledger.save_transactions(transactions)
-            if category_history is not None:
+            uow.ledger.save_transactions(changes.transactions)
+            if changes.category_history is not None:
                 uow.categories.save_history(
-                    aliases=category_history.aliases,
-                    versions=category_history.versions,
-                    events=category_history.events,
+                    aliases=changes.category_history.aliases,
+                    versions=changes.category_history.versions,
+                    events=changes.category_history.events,
                 )
-            uow.counterparties.save(counterparties)
-            self._save_write_metadata(uow, metadata)
-            uow.ledger.save_adjustment_accounts(adjustment_account_ids or {})
-        self.update_read_cache(accounts=accounts, transactions=transactions, counterparties=counterparties)
+            uow.counterparties.save(changes.counterparties)
+            self._save_write_metadata(uow, changes.metadata)
+            uow.ledger.save_adjustment_accounts(changes.adjustment_account_ids)
+        self.update_read_cache(
+            accounts=accounts,
+            transactions=changes.transactions,
+            counterparties=changes.counterparties,
+        )
 
 
 class DirectoryChangeStorageWriters:
-    def save_user_change(self, users, *, metadata: WriteMetadata) -> None:
+    def save_user_change(self, changes: UserChanges) -> None:
         with self.unit_of_work() as uow:
-            uow.users.save(users)
-            self._save_write_metadata(uow, metadata)
+            uow.users.save(changes.users)
+            self._save_write_metadata(uow, changes.metadata)
 
-    def save_book_change(self, book_changes: BookChanges, *, metadata: WriteMetadata) -> None:
+    def save_book_change(self, changes: BookDirectoryChanges) -> None:
         with self.unit_of_work() as uow:
-            uow.books.save(book_changes.books, book_changes.members)
-            self._save_write_metadata(uow, metadata)
+            uow.books.save(changes.book_changes.books, changes.book_changes.members)
+            self._save_write_metadata(uow, changes.metadata)
 
 
 class WorkflowChangeStorageWriters:
-    def save_draft_change(self, drafts, *, transactions=(), metadata: WriteMetadata) -> None:
+    def save_draft_change(self, changes: DraftChanges) -> None:
         with self.unit_of_work() as uow:
-            uow.drafts.save(drafts)
-            uow.ledger.save_transactions(transactions)
-            self._save_write_metadata(uow, metadata)
-        self.update_read_cache(transactions=transactions, drafts=drafts)
+            uow.drafts.save(changes.drafts)
+            uow.ledger.save_transactions(changes.transactions)
+            self._save_write_metadata(uow, changes.metadata)
+        self.update_read_cache(transactions=changes.transactions, drafts=changes.drafts)
 
-    def save_recurring_change(self, items, *, drafts=(), accounts=(), metadata: WriteMetadata) -> None:
-        accounts = list(accounts)
+    def save_recurring_change(self, changes: RecurringChanges) -> None:
+        accounts = list(changes.accounts)
         with self.unit_of_work() as uow:
-            uow.recurring.save_items(items)
-            uow.drafts.save(drafts)
+            uow.recurring.save_items(changes.items)
+            uow.drafts.save(changes.drafts)
             uow.ledger.save_accounts(accounts)
-            self._save_write_metadata(uow, metadata)
-        self.update_read_cache(accounts=accounts, drafts=drafts, recurring_items=items)
+            self._save_write_metadata(uow, changes.metadata)
+        self.update_read_cache(accounts=accounts, drafts=changes.drafts, recurring_items=changes.items)
 
 
 class FinanceChangeStorageWriters:
-    def save_finance_change(
-        self,
-        *,
-        metadata: WriteMetadata,
-        funds=(),
-        budget_changes: BudgetChanges | None = None,
-        transactions=(),
-        accounts=(),
-        assets=(),
-        actions=(),
-    ) -> None:
-        accounts = list(accounts)
+    def save_finance_change(self, changes: FinanceChanges) -> None:
+        accounts = list(changes.accounts)
         with self.unit_of_work() as uow:
-            uow.funds.save(funds)
-            if budget_changes is not None:
-                uow.budgets.save(budget_changes.budgets, budget_changes.targets)
+            uow.funds.save(changes.funds)
+            if changes.budget_changes is not None:
+                uow.budgets.save(changes.budget_changes.budgets, changes.budget_changes.targets)
             uow.ledger.save_accounts(accounts)
-            uow.ledger.save_transactions(transactions)
-            uow.assets.save(assets)
-            self._save_write_metadata(uow, metadata)
-            uow.reconciliation.save(actions)
-        self.update_read_cache(accounts=accounts, transactions=transactions)
+            uow.ledger.save_transactions(changes.transactions)
+            uow.assets.save(changes.assets)
+            self._save_write_metadata(uow, changes.metadata)
+            uow.reconciliation.save(changes.actions)
+        self.update_read_cache(accounts=accounts, transactions=changes.transactions)
 
-    def save_investment_change(
-        self,
-        *,
-        metadata: WriteMetadata,
-        events=(),
-        valuations=(),
-        transactions=(),
-        accounts=(),
-        assets=(),
-        adjustment_account_ids: dict[str, str] | None = None,
-    ) -> None:
-        accounts = list(accounts)
+    def save_investment_change(self, changes: InvestmentChanges) -> None:
+        accounts = list(changes.accounts)
         with self.unit_of_work() as uow:
-            uow.investments.save_events(events)
-            uow.investments.save_valuations(valuations)
+            uow.investments.save_events(changes.events)
+            uow.investments.save_valuations(changes.valuations)
             uow.ledger.save_accounts(accounts)
-            uow.ledger.save_transactions(transactions)
-            uow.assets.save(assets)
-            self._save_write_metadata(uow, metadata)
-            uow.ledger.save_adjustment_accounts(adjustment_account_ids or {})
-        self.update_read_cache(accounts=accounts, transactions=transactions)
+            uow.ledger.save_transactions(changes.transactions)
+            uow.assets.save(changes.assets)
+            self._save_write_metadata(uow, changes.metadata)
+            uow.ledger.save_adjustment_accounts(changes.adjustment_account_ids)
+        self.update_read_cache(accounts=accounts, transactions=changes.transactions)
 
 
 class ProfileChangeStorageWriters:
-    def save_credit_card_profile_change(self, profiles, *, metadata: WriteMetadata) -> None:
+    def save_credit_card_profile_change(self, changes: CreditCardProfileChanges) -> None:
         with self.unit_of_work() as uow:
-            uow.credit_cards.save_profiles(profiles)
-            self._save_write_metadata(uow, metadata)
-        self.update_read_cache(credit_card_profiles=profiles)
+            uow.credit_cards.save_profiles(changes.profiles)
+            self._save_write_metadata(uow, changes.metadata)
+        self.update_read_cache(credit_card_profiles=changes.profiles)
 
-    def save_payment_profile_change(self, profiles, *, metadata: WriteMetadata) -> None:
+    def save_payment_profile_change(self, changes: PaymentProfileChanges) -> None:
         with self.unit_of_work() as uow:
-            uow.payment_profiles.save(profiles)
-            self._save_write_metadata(uow, metadata)
-        self.update_read_cache(payment_profiles=profiles)
+            uow.payment_profiles.save(changes.profiles)
+            self._save_write_metadata(uow, changes.metadata)
+        self.update_read_cache(payment_profiles=changes.profiles)
 
-    def save_attachment_change(self, *, metadata: WriteMetadata, attachments=(), drafts=()) -> None:
+    def save_attachment_change(self, changes: AttachmentChanges) -> None:
         with self.unit_of_work() as uow:
-            uow.attachments.save(attachments)
-            uow.drafts.save(drafts)
-            self._save_write_metadata(uow, metadata)
-        self.update_read_cache(drafts=drafts)
+            uow.attachments.save(changes.attachments)
+            uow.drafts.save(changes.drafts)
+            self._save_write_metadata(uow, changes.metadata)
+        self.update_read_cache(drafts=changes.drafts)
 
 
 class CoreEntityStorageWriters:

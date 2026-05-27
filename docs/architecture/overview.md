@@ -60,3 +60,7 @@ Database schema changes are applied through Alembic migrations in `alembic/versi
 For schema changes, update the SQLAlchemy models, generate a revision with `uv run alembic revision --autogenerate -m "<change>"`, inspect the generated migration, then verify with `uv run alembic upgrade head` and `uv run alembic check`.
 
 Writes use command-scoped repository transactions. Each mutating use case validates against the storage-backed truth, builds the specific aggregate changes it owns, and commits those changes through `UnitOfWork` repositories together with idempotency receipts and audit events. Startup may run targeted maintenance for legacy owner-token cleanup and default-domain rows, but production API writes must not call full-service snapshot persistence.
+
+Storage write boundaries accept one explicit change-set object per operation, not a service object or scattered keyword arguments. This keeps the persistence contract narrow: adding a field to catalog, ledger, workflow, or profile writes should change the relevant change-set type and writer only, rather than widening unrelated use cases.
+
+High-churn API routers should receive the application service through FastAPI dependency injection instead of importing the runtime singleton directly. That keeps request handlers testable and makes it possible to split the service façade behind narrower use-case providers without rewriting route modules.

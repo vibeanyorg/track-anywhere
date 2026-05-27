@@ -33,9 +33,9 @@ class DraftUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_draft_change(draft)
+            self._commit_draft_change(draft)
         return draft, replay
 
     def confirm_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[Transaction, bool]:
@@ -78,9 +78,9 @@ class DraftUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_draft_change(draft, transactions=(transaction,))
+            self._commit_draft_change(draft, transactions=(transaction,))
         return transaction, replay
 
     def reject_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -113,9 +113,9 @@ class DraftUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_draft_change(rejected)
+            self._commit_draft_change(rejected)
         return rejected, replay
 
     def supersede_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -150,9 +150,9 @@ class DraftUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_draft_change(current, replacement)
+            self._commit_draft_change(current, replacement)
         return replacement, replay
 
     def _draft_from_capture_command(self, command: CaptureDraftCommand, *, actor: Actor):

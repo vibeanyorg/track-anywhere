@@ -96,7 +96,7 @@ class CredentialUseCases:
             fn=run,
             stored_result_factory=_credential_issue_replay_receipt,
         )
-        self._persist_idempotency()
+        self._commit_idempotency()
         return result
 
     def issue_machine_credential_command(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -131,7 +131,7 @@ class CredentialUseCases:
             fn=run,
             stored_result_factory=_credential_issue_replay_receipt,
         )
-        self._persist_idempotency()
+        self._commit_idempotency()
         return result
 
     def revoke_credential_command(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -159,9 +159,9 @@ class CredentialUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_credential_change()
+            self._commit_credential_change()
         return result, replay
 
     def revoke_credential_by_id_command(self, token: str, credential_id: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -192,9 +192,9 @@ class CredentialUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_credential_change()
+            self._commit_credential_change()
         return result, replay
 
     def record_security_failure(self, operation: str, details: dict[str, Any] | None = None) -> None:

@@ -43,7 +43,7 @@ class FinancialUseCases(PaymentProfileUseCases):
             request_hash=request_hash,
             fn=run,
         )
-        self._persist_replay_or(replay, lambda: self._persist_finance_change(funds=(fund,), accounts=created_accounts))
+        self._commit_replay_or(replay, lambda: self._commit_finance_change(funds=(fund,), accounts=created_accounts))
         return fund, replay
 
     def allocate_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -90,7 +90,7 @@ class FinancialUseCases(PaymentProfileUseCases):
             request_hash=request_hash,
             fn=run,
         )
-        self._persist_replay_or(replay, lambda: self._persist_finance_change(funds=(result["fund"],), transactions=(result["transaction"],)))
+        self._commit_replay_or(replay, lambda: self._commit_finance_change(funds=(result["fund"],), transactions=(result["transaction"],)))
         return result, replay
 
     def spend_fund(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -137,7 +137,7 @@ class FinancialUseCases(PaymentProfileUseCases):
             request_hash=request_hash,
             fn=run,
         )
-        self._persist_replay_or(replay, lambda: self._persist_finance_change(funds=(result["fund"],), transactions=(result["transaction"],)))
+        self._commit_replay_or(replay, lambda: self._commit_finance_change(funds=(result["fund"],), transactions=(result["transaction"],)))
         return result, replay
 
     def upload_attachment(
@@ -183,7 +183,7 @@ class FinancialUseCases(PaymentProfileUseCases):
             request_hash=request_hash,
             fn=run,
         )
-        self._persist_replay_or(replay, lambda: self._persist_attachment_change(attachments=(result["attachment"],), drafts=(result["draft"],)))
+        self._commit_replay_or(replay, lambda: self._commit_attachment_change(attachments=(result["attachment"],), drafts=(result["draft"],)))
         return result, replay
 
     def record_reconciliation_action(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -213,5 +213,5 @@ class FinancialUseCases(PaymentProfileUseCases):
             request_hash=request_hash,
             fn=run,
         )
-        self._persist_replay_or(replay, lambda: self._persist_finance_change(actions=(action,)))
+        self._commit_replay_or(replay, lambda: self._commit_finance_change(actions=(action,)))
         return action, replay

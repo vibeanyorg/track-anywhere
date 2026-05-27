@@ -1,17 +1,38 @@
 from __future__ import annotations
 
-from .storage_changes import BookChanges, BudgetChanges, CategoryHistoryChanges, WriteMetadata
+from .storage_changes import (
+    AttachmentChanges,
+    BookChanges,
+    BookDirectoryChanges,
+    BudgetChanges,
+    CatalogChanges,
+    CategoryHistoryChanges,
+    CredentialChanges,
+    CreditCardProfileChanges,
+    DraftChanges,
+    FinanceChanges,
+    IdempotencyChanges,
+    InvestmentChanges,
+    LedgerChanges,
+    PaymentProfileChanges,
+    ReclassificationChanges,
+    RecurringChanges,
+    StartupMaintenanceChanges,
+    UserChanges,
+    WriteMetadata,
+)
 
 
 class ServiceStartupPersistence:
-    def _persist_startup_maintenance(self) -> None:
-        self.storage.save_startup_maintenance(
+    def _commit_startup_maintenance(self) -> None:
+        changes = StartupMaintenanceChanges(
             book_changes=self._book_changes(),
-            assets=self.assets.dirty_assets(),
-            categories=self.categories.dirty_categories(),
+            assets=tuple(self.assets.dirty_assets()),
+            categories=tuple(self.categories.dirty_categories()),
             category_history=self._category_history_changes(),
             metadata=self._write_metadata(),
         )
+        self.storage.save_startup_maintenance(changes)
         self.books.mark_clean()
         self.assets.mark_clean()
         self.credentials.mark_clean()
@@ -21,36 +42,37 @@ class ServiceStartupPersistence:
 
 
 class ServiceMetadataPersistence:
-    def _persist_idempotency(self) -> None:
-        self.storage.save_idempotency(self._write_metadata())
+    def _commit_idempotency(self) -> None:
+        self.storage.save_idempotency(IdempotencyChanges(metadata=self._write_metadata()))
         self.credentials.mark_clean()
         self.idempotency.mark_clean()
 
-    def _persist_credential_change(self) -> None:
-        self.storage.save_credential_change(metadata=self._write_metadata())
+    def _commit_credential_change(self) -> None:
+        self.storage.save_credential_change(CredentialChanges(metadata=self._write_metadata()))
         self.credentials.mark_clean()
         self.audit.mark_persisted()
         self.idempotency.mark_clean()
 
-    def _persist_replay_or(self, replay: bool, persist) -> None:
+    def _commit_replay_or(self, replay: bool, commit) -> None:
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            persist()
+            commit()
 
 
 class ServiceCatalogPersistence:
-    def _persist_catalog_change(self) -> None:
+    def _commit_catalog_change(self) -> None:
         counterparties = self.counterparties.dirty_counterparties()
         payment_instruments = self.payment_instruments.dirty_instruments()
-        self.storage.save_catalog_change(
+        changes = CatalogChanges(
             metadata=self._write_metadata(),
-            assets=self.assets.dirty_assets(),
-            categories=self.categories.dirty_categories(),
+            assets=tuple(self.assets.dirty_assets()),
+            categories=tuple(self.categories.dirty_categories()),
             category_history=self._category_history_changes(),
-            counterparties=counterparties,
-            payment_instruments=payment_instruments,
+            counterparties=tuple(counterparties),
+            payment_instruments=tuple(payment_instruments),
         )
+        self.storage.save_catalog_change(changes)
         self.credentials.mark_clean()
         self.assets.mark_clean()
         self.categories.mark_clean()
@@ -61,16 +83,17 @@ class ServiceCatalogPersistence:
 
 
 class ServiceLedgerPersistence:
-    def _persist_ledger_change(self, *transactions, accounts=(), include_category_history: bool = False) -> None:
-        self.storage.save_ledger_change(
-            transactions,
+    def _commit_ledger_change(self, *transactions, accounts=(), include_category_history: bool = False) -> None:
+        changes = LedgerChanges(
+            transactions=tuple(transactions),
             metadata=self._write_metadata(),
-            accounts=accounts,
-            assets=self.assets.dirty_assets(),
-            adjustment_account_ids=self.adjustment_account_ids,
+            accounts=tuple(accounts),
+            assets=tuple(self.assets.dirty_assets()),
+            adjustment_account_ids=dict(self.adjustment_account_ids),
             category_history=self._category_history_changes() if include_category_history else None,
-            counterparties=self.counterparties.dirty_counterparties(),
+            counterparties=tuple(self.counterparties.dirty_counterparties()),
         )
+        self.storage.save_ledger_change(changes)
         self.credentials.mark_clean()
         self.assets.mark_clean()
         self.counterparties.mark_clean()
@@ -79,13 +102,14 @@ class ServiceLedgerPersistence:
         self.audit.mark_persisted()
         self.idempotency.mark_clean()
 
-    def _persist_reclassification_change(self, transaction, line_id: str) -> None:
-        self.storage.save_reclassification_change(
-            transaction,
-            line_id,
+    def _commit_reclassification_change(self, transaction, line_id: str) -> None:
+        changes = ReclassificationChanges(
+            transaction=transaction,
+            line_id=line_id,
             category_history=self._category_history_changes(),
             metadata=self._write_metadata(),
         )
+        self.storage.save_reclassification_change(changes)
         self.storage.update_read_cache(transactions=(transaction,))
         self.categories.mark_clean()
         self.audit.mark_persisted()
@@ -93,14 +117,15 @@ class ServiceLedgerPersistence:
 
 
 class ServiceDirectoryPersistence:
-    def _persist_user_change(self, *users) -> None:
-        self.storage.save_user_change(users, metadata=self._write_metadata())
+    def _commit_user_change(self, *users) -> None:
+        self.storage.save_user_change(UserChanges(users=tuple(users), metadata=self._write_metadata()))
         self.credentials.mark_clean()
         self.audit.mark_persisted()
         self.idempotency.mark_clean()
 
-    def _persist_book_change(self) -> None:
-        self.storage.save_book_change(self._book_changes(), metadata=self._write_metadata())
+    def _commit_book_change(self) -> None:
+        changes = BookDirectoryChanges(book_changes=self._book_changes(), metadata=self._write_metadata())
+        self.storage.save_book_change(changes)
         self.books.mark_clean()
         self.credentials.mark_clean()
         self.audit.mark_persisted()
@@ -108,30 +133,46 @@ class ServiceDirectoryPersistence:
 
 
 class ServiceWorkflowPersistence:
-    def _persist_draft_change(self, *drafts, transactions=()) -> None:
-        self.storage.save_draft_change(drafts, transactions=transactions, metadata=self._write_metadata())
+    def _commit_draft_change(self, *drafts, transactions=()) -> None:
+        changes = DraftChanges(drafts=tuple(drafts), transactions=tuple(transactions), metadata=self._write_metadata())
+        self.storage.save_draft_change(changes)
         self.credentials.mark_clean()
         self.audit.mark_persisted()
         self.idempotency.mark_clean()
 
-    def _persist_recurring_change(self, *items, drafts=(), accounts=()) -> None:
-        self.storage.save_recurring_change(items, drafts=drafts, accounts=accounts, metadata=self._write_metadata())
+    def _commit_recurring_change(self, *items, drafts=(), accounts=()) -> None:
+        changes = RecurringChanges(
+            items=tuple(items),
+            drafts=tuple(drafts),
+            accounts=tuple(accounts),
+            metadata=self._write_metadata(),
+        )
+        self.storage.save_recurring_change(changes)
         self.credentials.mark_clean()
         self.audit.mark_persisted()
         self.idempotency.mark_clean()
 
 
 class ServiceFinancePersistence:
-    def _persist_finance_change(self, *, funds=(), budgets: bool = False, transactions=(), accounts=(), actions=()) -> None:
-        self.storage.save_finance_change(
+    def _commit_finance_change(
+        self,
+        *,
+        funds=(),
+        budgets: bool = False,
+        transactions=(),
+        accounts=(),
+        actions=(),
+    ) -> None:
+        changes = FinanceChanges(
             metadata=self._write_metadata(),
-            funds=funds,
+            funds=tuple(funds),
             budget_changes=self._budget_changes() if budgets else None,
-            transactions=transactions,
-            accounts=accounts,
-            assets=self.assets.dirty_assets(),
-            actions=actions,
+            transactions=tuple(transactions),
+            accounts=tuple(accounts),
+            assets=tuple(self.assets.dirty_assets()),
+            actions=tuple(actions),
         )
+        self.storage.save_finance_change(changes)
         if budgets:
             self.budgets.mark_clean()
         self.credentials.mark_clean()
@@ -139,16 +180,17 @@ class ServiceFinancePersistence:
         self.audit.mark_persisted()
         self.idempotency.mark_clean()
 
-    def _persist_investment_change(self, *, events=(), valuations=(), transactions=(), accounts=()) -> None:
-        self.storage.save_investment_change(
+    def _commit_investment_change(self, *, events=(), valuations=(), transactions=(), accounts=()) -> None:
+        changes = InvestmentChanges(
             metadata=self._write_metadata(),
-            events=events,
-            valuations=valuations,
-            transactions=transactions,
-            accounts=accounts,
-            assets=self.assets.dirty_assets(),
-            adjustment_account_ids=self.adjustment_account_ids,
+            events=tuple(events),
+            valuations=tuple(valuations),
+            transactions=tuple(transactions),
+            accounts=tuple(accounts),
+            assets=tuple(self.assets.dirty_assets()),
+            adjustment_account_ids=dict(self.adjustment_account_ids),
         )
+        self.storage.save_investment_change(changes)
         self.credentials.mark_clean()
         self.assets.mark_clean()
         self.audit.mark_persisted()
@@ -156,22 +198,30 @@ class ServiceFinancePersistence:
 
 
 class ServiceProfilePersistence:
-    def _persist_credit_card_profile_change(self, *profiles) -> None:
-        self.storage.save_credit_card_profile_change(profiles, metadata=self._write_metadata())
+    def _commit_credit_card_profile_change(self, *profiles) -> None:
+        self.storage.save_credit_card_profile_change(
+            CreditCardProfileChanges(profiles=tuple(profiles), metadata=self._write_metadata())
+        )
         self.credentials.mark_clean()
         self.audit.mark_persisted()
         self.idempotency.mark_clean()
 
-    def _persist_payment_profile_change(self) -> None:
+    def _commit_payment_profile_change(self) -> None:
         profiles = self.payment_profiles.dirty_profiles()
-        self.storage.save_payment_profile_change(profiles, metadata=self._write_metadata())
+        changes = PaymentProfileChanges(profiles=tuple(profiles), metadata=self._write_metadata())
+        self.storage.save_payment_profile_change(changes)
         self.payment_profiles.mark_clean()
         self.credentials.mark_clean()
         self.audit.mark_persisted()
         self.idempotency.mark_clean()
 
-    def _persist_attachment_change(self, *, attachments=(), drafts=()) -> None:
-        self.storage.save_attachment_change(metadata=self._write_metadata(), attachments=attachments, drafts=drafts)
+    def _commit_attachment_change(self, *, attachments=(), drafts=()) -> None:
+        changes = AttachmentChanges(
+            metadata=self._write_metadata(),
+            attachments=tuple(attachments),
+            drafts=tuple(drafts),
+        )
+        self.storage.save_attachment_change(changes)
         self.credentials.mark_clean()
         self.audit.mark_persisted()
         self.idempotency.mark_clean()

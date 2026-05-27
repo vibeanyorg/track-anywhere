@@ -63,9 +63,9 @@ class CreditCardUseCases:
             fn=run,
         )
         if replay:
-            self._persist_idempotency()
+            self._commit_idempotency()
         else:
-            self._persist_credit_card_profile_change(result["profile"])
+            self._commit_credit_card_profile_change(result["profile"])
         return result, replay
 
     def _require_credit_card_account(self, account_id: str) -> Account:

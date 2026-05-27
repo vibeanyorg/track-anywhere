@@ -3,30 +3,23 @@ from __future__ import annotations
 from .domain_storage_models import TransactionLineRecord
 from .errors import NotFound
 from .ledger import Transaction, TransactionLine
-from .storage_changes import CategoryHistoryChanges, WriteMetadata
+from .storage_changes import ReclassificationChanges
 from .storage_json import to_jsonable
 
 
 class AnnotationStorageWriters:
-    def save_reclassification_change(
-        self,
-        transaction: Transaction,
-        line_id: str,
-        *,
-        category_history: CategoryHistoryChanges,
-        metadata: WriteMetadata,
-    ) -> None:
-        line = _line_by_id(transaction, line_id)
+    def save_reclassification_change(self, changes: ReclassificationChanges) -> None:
+        line = _line_by_id(changes.transaction, changes.line_id)
         with self.session_factory.begin() as session:
             self._upsert_transaction_line(session, line)
             self._save_category_history(
                 session,
-                aliases=category_history.aliases,
-                versions=category_history.versions,
-                events=category_history.events,
+                aliases=changes.category_history.aliases,
+                versions=changes.category_history.versions,
+                events=changes.category_history.events,
             )
-            self._save_audit_events(session, metadata.audit_events)
-            self._save_idempotency_receipts(session, metadata.idempotency_receipts)
+            self._save_audit_events(session, changes.metadata.audit_events)
+            self._save_idempotency_receipts(session, changes.metadata.idempotency_receipts)
 
     def _upsert_transaction_line(self, session, line: TransactionLine) -> None:
         self._upsert_record(
