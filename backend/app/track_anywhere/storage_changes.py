@@ -56,6 +56,16 @@ class AuditChanges:
 
 
 @dataclass(frozen=True)
+class AuthorizationGrantChanges:
+    grants: tuple[Any, ...] = ()
+
+
+@dataclass(frozen=True)
+class DeviceGrantChanges:
+    grants: tuple[Any, ...] = ()
+
+
+@dataclass(frozen=True)
 class CatalogChanges:
     metadata: WriteMetadata = field(default_factory=WriteMetadata)
     assets: tuple[Any, ...] = ()

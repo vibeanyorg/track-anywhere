@@ -21,6 +21,7 @@ from .security import (
     AuthIdentityRepository,
     CredentialRepository,
     IdempotencyRepository,
+    PlatformGrantRepository,
     UserRepository,
 )
 from .workflow import AttachmentRepository, DraftRepository, RecurringRepository

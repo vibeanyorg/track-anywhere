@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Iterable
 
 from ..storage_audit_idempotency_writers import save_audit_events, save_idempotency_receipts
-from ..storage_auth import save_credentials
+from ..storage_auth import save_authorization_grants, save_credentials, save_device_grants
 from ..storage_models import AuthIdentityRecord, UserRecord
 
 
@@ -67,3 +67,14 @@ class IdempotencyRepository:
 
     def save_receipts(self, receipts: Iterable[Any]) -> None:
         save_idempotency_receipts(self.session, receipts)
+
+
+class PlatformGrantRepository:
+    def __init__(self, session) -> None:
+        self.session = session
+
+    def save_authorization_grants(self, grants: Iterable[Any]) -> None:
+        save_authorization_grants(self.session, grants)
+
+    def save_device_grants(self, grants: Iterable[Any]) -> None:
+        save_device_grants(self.session, grants)

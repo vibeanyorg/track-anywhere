@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from ..storage_changes import AuditChanges, CredentialChanges, IdempotencyChanges, WriteMetadata
+from ..storage_changes import (
+    AuditChanges,
+    AuthorizationGrantChanges,
+    CredentialChanges,
+    DeviceGrantChanges,
+    IdempotencyChanges,
+    WriteMetadata,
+)
 
 
 class ServiceMetadataPersistence:
@@ -32,6 +39,12 @@ class ServiceMetadataPersistence:
         metadata = WriteMetadata(audit_events=(event,))
         self.storage.save_audit_change(AuditChanges(metadata=metadata))
         self._mark_metadata_committed(metadata)
+
+    def _commit_authorization_grant_change(self, grant) -> None:
+        self.storage.save_authorization_grant_change(AuthorizationGrantChanges(grants=(grant,)))
+
+    def _commit_device_grant_change(self, grant) -> None:
+        self.storage.save_device_grant_change(DeviceGrantChanges(grants=(grant,)))
 
     def _commit_replay_or(self, replay: bool, commit) -> None:
         if replay:

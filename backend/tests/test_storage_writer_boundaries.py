@@ -43,6 +43,7 @@ def test_partial_storage_writer_facade_stays_context_scoped():
         "workflow.py",
         "finance.py",
         "profile.py",
+        "platform_auth.py",
     }
     for module in expected_modules:
         assert (BACKEND / "storage_change_writers" / module).exists()

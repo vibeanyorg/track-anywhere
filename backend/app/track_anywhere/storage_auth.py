@@ -33,52 +33,54 @@ def save_credentials(session, credentials) -> None:
         )
 
 
-class AuthStorageWriters:
-    def save_authorization_grant(self, grant: AuthorizationGrant) -> None:
-        with self.session_factory.begin() as session:
-            session.merge(
-                OAuthAuthorizationGrantRecord(
-                    code_hash=grant.code_hash,
-                    client_id=grant.client_id,
-                    redirect_uri=grant.redirect_uri,
-                    actor_id=grant.actor.actor_id,
-                    actor_type=grant.actor.actor_type,
-                    actor_scopes=sorted(grant.actor.scopes),
-                    scopes=list(grant.scopes),
-                    code_challenge=grant.code_challenge,
-                    resource=grant.resource,
-                    expires_at=grant.expires_at.isoformat(),
-                    used=grant.used,
-                )
+def save_authorization_grants(session, grants) -> None:
+    for grant in grants:
+        session.merge(
+            OAuthAuthorizationGrantRecord(
+                code_hash=grant.code_hash,
+                client_id=grant.client_id,
+                redirect_uri=grant.redirect_uri,
+                actor_id=grant.actor.actor_id,
+                actor_type=grant.actor.actor_type,
+                actor_scopes=sorted(grant.actor.scopes),
+                scopes=list(grant.scopes),
+                code_challenge=grant.code_challenge,
+                resource=grant.resource,
+                expires_at=grant.expires_at.isoformat(),
+                used=grant.used,
             )
+        )
 
+
+def save_device_grants(session, grants) -> None:
+    for grant in grants:
+        actor = grant.approved_actor
+        session.merge(
+            OAuthDeviceGrantRecord(
+                device_code_hash=grant.device_code_hash,
+                user_code_hash=grant.user_code_hash,
+                client_id=grant.client_id,
+                scopes=list(grant.scopes),
+                resource=grant.resource,
+                status=grant.status,
+                expires_at=grant.expires_at.isoformat(),
+                interval_seconds=grant.interval_seconds,
+                created_at=grant.created_at.isoformat(),
+                last_poll_at=grant.last_poll_at.isoformat() if grant.last_poll_at else None,
+                poll_count=grant.poll_count,
+                approved_actor_id=actor.actor_id if actor else None,
+                approved_actor_type=actor.actor_type if actor else None,
+                approved_actor_scopes=sorted(actor.scopes) if actor else None,
+                approved_at=grant.approved_at.isoformat() if grant.approved_at else None,
+            )
+        )
+
+
+class AuthStorageWriters:
     def load_authorization_grant(self, code_hash: str) -> AuthorizationGrant | None:
         with self.session_factory() as session:
             row = session.get(OAuthAuthorizationGrantRecord, code_hash)
             return _authorization_grant(row) if row is not None else None
-
-    def save_device_grant(self, grant: DeviceGrant) -> None:
-        with self.session_factory.begin() as session:
-            actor = grant.approved_actor
-            session.merge(
-                OAuthDeviceGrantRecord(
-                    device_code_hash=grant.device_code_hash,
-                    user_code_hash=grant.user_code_hash,
-                    client_id=grant.client_id,
-                    scopes=list(grant.scopes),
-                    resource=grant.resource,
-                    status=grant.status,
-                    expires_at=grant.expires_at.isoformat(),
-                    interval_seconds=grant.interval_seconds,
-                    created_at=grant.created_at.isoformat(),
-                    last_poll_at=grant.last_poll_at.isoformat() if grant.last_poll_at else None,
-                    poll_count=grant.poll_count,
-                    approved_actor_id=actor.actor_id if actor else None,
-                    approved_actor_type=actor.actor_type if actor else None,
-                    approved_actor_scopes=sorted(actor.scopes) if actor else None,
-                    approved_at=grant.approved_at.isoformat() if grant.approved_at else None,
-                )
-            )
 
     def load_device_grant_by_device_hash(self, device_code_hash: str) -> DeviceGrant | None:
         with self.session_factory() as session:
@@ -89,6 +91,7 @@ class AuthStorageWriters:
         with self.session_factory() as session:
             row = session.query(OAuthDeviceGrantRecord).filter_by(user_code_hash=user_code_hash).first()
             return _device_grant(row) if row is not None else None
+
 
 def _authorization_grant(row) -> AuthorizationGrant:
     from datetime import datetime

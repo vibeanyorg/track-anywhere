@@ -18,6 +18,7 @@ from .storage_repositories import (
     LedgerRepository,
     PaymentInstrumentRepository,
     PaymentProfileRepository,
+    PlatformGrantRepository,
     ReconciliationRepository,
     RecurringRepository,
     StateRepository,
@@ -55,6 +56,7 @@ class StorageUnitOfWork:
         self.audit = AuditRepository(self.storage, self.session)
         self.credentials = CredentialRepository(self.storage, self.session)
         self.idempotency = IdempotencyRepository(self.storage, self.session)
+        self.platform_grants = PlatformGrantRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool | None:
