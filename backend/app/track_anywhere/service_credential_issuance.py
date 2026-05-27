@@ -50,7 +50,7 @@ class CredentialIssuanceUseCases:
             role="editor",
             scopes=sorted(scopes),
         )
-        self.books.members[(default_book.book_id, actor_id)] = member
+        self.books.save_member(member)
         audit_event = self.audit.record(
             operation="credential.issue",
             actor=actor,
@@ -59,14 +59,7 @@ class CredentialIssuanceUseCases:
         )
         if credential is None:
             raise ValidationError("issued credential could not be loaded")
-        metadata = self._write_metadata()
-        self.storage.save_credential_issue_state(
-            book=default_book,
-            member=member,
-            credentials=metadata.credentials,
-            audit_event=audit_event,
-        )
-        self._mark_metadata_committed(metadata)
+        self._commit_book_change()
         return agent_token
 
     def issue_agent_credential_command(self, token: str, payload: dict[str, Any], *, idempotency_key: str):

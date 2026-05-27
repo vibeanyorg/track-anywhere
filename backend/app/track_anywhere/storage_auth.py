@@ -1,17 +1,12 @@
 from __future__ import annotations
 
 from .audit import AuditEvent
-from .auth_identities import LinkedAuthIdentity
-from .domain_storage_models import BookMemberRecord, LedgerBookRecord
 from .oauth_grants import AuthorizationGrant, DeviceGrant
 from .security import Actor
 from .storage_audit_idempotency_writers import save_audit_events
 from .storage_auth_models import CredentialRecord
 from .storage_auth_models import OAuthAuthorizationGrantRecord, OAuthDeviceGrantRecord
-from .storage_json import to_jsonable
-from .storage_models import AuthIdentityRecord, UserRecord
 from .storage_upsert_writers import upsert_record
-from .users import AppUser
 
 
 def save_credentials(session, credentials) -> None:
@@ -51,35 +46,6 @@ class AuthStorageWriters:
     def save_credential_and_audit_event(self, credential, audit_event: AuditEvent) -> None:
         with self.session_factory.begin() as session:
             self._save_credentials(session, [credential])
-            save_audit_events(session, [audit_event])
-
-    def save_credential_issue_state(self, *, book, member, credentials, audit_event: AuditEvent) -> None:
-        with self.session_factory.begin() as session:
-            session.merge(
-                LedgerBookRecord(
-                    book_id=book.book_id,
-                    name=book.name,
-                    kind=book.kind,
-                    base_currency=book.base_currency,
-                    timezone=book.timezone,
-                    status=book.status,
-                    template_key=book.template_key,
-                    settings=to_jsonable(book.settings),
-                    created_by=book.created_by,
-                    version=book.version,
-                )
-            )
-            session.merge(
-                BookMemberRecord(
-                    book_id=member.book_id,
-                    user_id=member.user_id,
-                    role=member.role,
-                    status=member.status,
-                    scopes=list(member.scopes),
-                    version=member.version,
-                )
-            )
-            self._save_credentials(session, credentials)
             save_audit_events(session, [audit_event])
 
     def save_authorization_grant(self, grant: AuthorizationGrant) -> None:
@@ -137,73 +103,6 @@ class AuthStorageWriters:
         with self.session_factory() as session:
             row = session.query(OAuthDeviceGrantRecord).filter_by(user_code_hash=user_code_hash).first()
             return _device_grant(row) if row is not None else None
-
-    def save_auth_login_state(
-        self,
-        *,
-        book,
-        members,
-        user: AppUser,
-        identity: LinkedAuthIdentity,
-        credential,
-        audit_event: AuditEvent,
-    ) -> None:
-        with self.session_factory.begin() as session:
-            session.merge(
-                LedgerBookRecord(
-                    book_id=book.book_id,
-                    name=book.name,
-                    kind=book.kind,
-                    base_currency=book.base_currency,
-                    timezone=book.timezone,
-                    status=book.status,
-                    template_key=book.template_key,
-                    settings=to_jsonable(book.settings),
-                    created_by=book.created_by,
-                    version=book.version,
-                )
-            )
-            seen_members = set()
-            for member in members:
-                member_key = (member.book_id, member.user_id)
-                if member_key in seen_members:
-                    continue
-                seen_members.add(member_key)
-                session.merge(
-                    BookMemberRecord(
-                        book_id=member.book_id,
-                        user_id=member.user_id,
-                        role=member.role,
-                        status=member.status,
-                        scopes=list(member.scopes),
-                        version=member.version,
-                    )
-                )
-            session.merge(
-                UserRecord(
-                    user_id=user.user_id,
-                    username=user.username,
-                    display_name=user.display_name,
-                    version=user.version,
-                )
-            )
-            session.merge(
-                AuthIdentityRecord(
-                    identity_id=identity.identity_id,
-                    provider=identity.provider,
-                    subject=identity.subject,
-                    user_id=identity.user_id,
-                    email=identity.email,
-                    email_verified=identity.email_verified,
-                    display_name=identity.display_name,
-                    picture_url=identity.picture_url,
-                    status=identity.status,
-                    version=identity.version,
-                )
-            )
-            self._save_credentials(session, [credential])
-            save_audit_events(session, [audit_event])
-
 
 def _authorization_grant(row) -> AuthorizationGrant:
     from datetime import datetime

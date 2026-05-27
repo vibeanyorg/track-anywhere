@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import Any
 
 from .auth_identities import OAuthIdentity
-from .books import DEFAULT_OWNER_ID, BookMember
+from .books import BookMember
 from .errors import ValidationError
 from .service_auth import scopes_for_role
 
@@ -47,11 +47,11 @@ class IdentityUseCases:
         member = self.books.members.get((book.book_id, user.user_id))
         if member is None or member.status != "active":
             member = BookMember(book_id=book.book_id, user_id=user.user_id, role=role, scopes=sorted(scopes))
-            self.books.members[(book.book_id, user.user_id)] = member
         else:
             member.role = role
             member.scopes = sorted(scopes)
             member.version += 1
+        self.books.save_member(member)
 
         credential_token = self.credentials.issue(
             actor_id=user.user_id,
@@ -73,16 +73,7 @@ class IdentityUseCases:
                 "role": member.role,
             },
         )
-        owner_member = self.books.members.get((book.book_id, DEFAULT_OWNER_ID))
-        members = [member] if owner_member is None else [owner_member, member]
-        self.storage.save_auth_login_state(
-            book=book,
-            members=members,
-            user=user,
-            identity=linked_identity,
-            credential=credential,
-            audit_event=audit_event,
-        )
+        self._commit_auth_login_change(users=(user,), identities=(linked_identity,))
         return {
             "credential_token": credential_token,
             "user": {

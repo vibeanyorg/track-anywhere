@@ -120,6 +120,11 @@ class BookDirectory:
             books = [book for book in books if book.status == status]
         return sorted(books, key=lambda book: (book.name, book.book_id))
 
+    def save_member(self, member: BookMember) -> None:
+        member_key = (member.book_id, member.user_id)
+        self.members[member_key] = member
+        self._dirty_member_keys.add(member_key)
+
     def dirty_books(self) -> list[LedgerBook]:
         return [self.books[book_id] for book_id in self._dirty_book_ids if book_id in self.books]
 

@@ -37,3 +37,26 @@ def test_security_failure_audit_uses_change_set_boundary():
 
     assert "self._commit_audit_event(event)" in source
     assert "self.storage.save_audit_event" not in source
+
+
+def test_auth_directory_state_writes_use_change_set_boundaries():
+    storage_auth = (BACKEND / "storage_auth.py").read_text()
+    service_identity = (BACKEND / "service_identity.py").read_text()
+    credential_issuance = (BACKEND / "service_credential_issuance.py").read_text()
+
+    assert "def save_auth_login_state" not in storage_auth
+    assert "def save_credential_issue_state" not in storage_auth
+    assert "save_auth_login_state" not in service_identity
+    assert "save_credential_issue_state" not in credential_issuance
+    assert "self._commit_auth_login_change" in service_identity
+    assert "self._commit_book_change()" in credential_issuance
+
+
+def test_auth_use_cases_do_not_bypass_book_member_dirty_tracking():
+    offenders = []
+    for filename in ["service_identity.py", "service_credential_issuance.py"]:
+        source = (BACKEND / filename).read_text()
+        if "books.members[" in source:
+            offenders.append(filename)
+
+    assert offenders == []

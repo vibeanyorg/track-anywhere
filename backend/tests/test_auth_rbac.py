@@ -47,27 +47,30 @@ def test_oauth_login_creates_persistent_user_identity_and_book_role(tmp_path):
 def test_oauth_login_uses_incremental_persist(monkeypatch, tmp_path):
     database_url = f"sqlite:///{tmp_path / 'auth-rbac-incremental.sqlite3'}"
     service = FinanceService(database_url=database_url)
-    saved_states = []
+    saved_changes = []
 
     def fail_startup_maintenance(_service):
         raise AssertionError("login should not use startup maintenance persistence")
 
-    def capture_login_state(**kwargs):
-        saved_states.append(kwargs)
+    def capture_login_change(changes):
+        saved_changes.append(changes)
 
     monkeypatch.setattr(service.storage, "save_startup_maintenance", fail_startup_maintenance)
-    monkeypatch.setattr(service.storage, "save_auth_login_state", capture_login_state)
+    monkeypatch.setattr(service.storage, "save_auth_login_change", capture_login_change)
 
     login = service.login_oauth_identity(oauth_identity("incremental@example.com"), role="viewer")
 
-    assert len(saved_states) == 1
-    persisted = saved_states[0]
-    assert persisted["book"].book_id == "book_default"
-    assert persisted["user"].user_id == login["user"]["user_id"]
-    assert persisted["identity"].identity_id == login["identity"]["identity_id"]
-    assert persisted["credential"].actor.actor_id == login["user"]["user_id"]
-    assert persisted["audit_event"].operation == "auth.login"
-    assert {member.user_id for member in persisted["members"]} == {"owner", login["user"]["user_id"]}
+    assert len(saved_changes) == 1
+    persisted = saved_changes[0]
+    assert [book.book_id for book in persisted.book_changes.books] == ["book_default"]
+    assert {member.user_id for member in persisted.book_changes.members} == {"owner", login["user"]["user_id"]}
+    assert [user.user_id for user in persisted.users] == [login["user"]["user_id"]]
+    assert [identity.identity_id for identity in persisted.identities] == [login["identity"]["identity_id"]]
+    assert {credential.actor.actor_id for credential in persisted.metadata.credentials} == {
+        "owner",
+        login["user"]["user_id"],
+    }
+    assert [event.operation for event in persisted.metadata.audit_events] == ["auth.login"]
 
 
 def test_oauth_login_reuses_identity_and_can_promote_role(tmp_path):

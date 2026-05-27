@@ -228,6 +228,7 @@ def test_storage_change_writers_accept_single_explicit_change_set():
         "save_reclassification_change",
         "save_user_change",
         "save_book_change",
+        "save_auth_login_change",
         "save_draft_change",
         "save_recurring_change",
         "save_finance_change",

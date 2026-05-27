@@ -97,6 +97,14 @@ class BookDirectoryChanges:
 
 
 @dataclass(frozen=True)
+class AuthLoginChanges:
+    book_changes: BookChanges = field(default_factory=BookChanges)
+    users: tuple[Any, ...] = ()
+    identities: tuple[Any, ...] = ()
+    metadata: WriteMetadata = field(default_factory=WriteMetadata)
+
+
+@dataclass(frozen=True)
 class DraftChanges:
     drafts: tuple[Any, ...] = ()
     transactions: tuple[Any, ...] = ()
