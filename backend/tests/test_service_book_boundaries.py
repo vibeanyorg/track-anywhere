@@ -45,3 +45,16 @@ def test_book_ledger_use_cases_read_through_focused_repositories():
     assert offenders == []
     assert "_get_account_from_storage" in source
     assert "_list_transactions_from_storage" in source
+
+
+def test_book_category_use_cases_read_transactions_through_focused_repository():
+    source = (BACKEND / "service_book_categories.py").read_text()
+    forbidden = re.compile(r"\bself\.storage\.list_all_confirmed_transactions\b")
+    offenders = [
+        f"service_book_categories.py:{line_number}: {line.strip()}"
+        for line_number, line in enumerate(source.splitlines(), start=1)
+        if forbidden.search(line)
+    ]
+
+    assert offenders == []
+    assert "_list_all_transactions_from_storage" in source

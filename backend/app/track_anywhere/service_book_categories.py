@@ -80,7 +80,7 @@ class BookCategoryUseCases:
         def run():
             affected = sum(
                 1
-                for transaction in self.storage.list_all_confirmed_transactions(book_id=book_id)
+                for transaction in self._list_all_transactions_from_storage(book_id=book_id)
                 for line in transaction.lines
                 if line.category_id == category_id
             )
