@@ -11,8 +11,8 @@ from .transaction_builder import add_transaction_line, build_transaction
 class FxUseCases:
     def record_fx_exchange(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[Transaction, bool]:
         command = RecordFxExchangeCommand.model_validate(payload)
-        source = self.storage.get_account(command.from_account_id)
-        target = self.storage.get_account(command.to_account_id)
+        source = self._get_account_from_storage(command.from_account_id)
+        target = self._get_account_from_storage(command.to_account_id)
         if source.book_id != target.book_id:
             raise ValidationError("FX exchange accounts must belong to one book")
         if source.currency != command.from_currency:
@@ -59,7 +59,7 @@ class FxUseCases:
                 ),
             ]
             if command.fee_amount is not None and command.fee_account_id is not None:
-                fee_account = self.storage.get_account(command.fee_account_id)
+                fee_account = self._get_account_from_storage(command.fee_account_id)
                 if fee_account.book_id != source.book_id:
                     raise ValidationError("FX fee account must belong to the exchange book")
                 if fee_account.currency != command.from_currency:

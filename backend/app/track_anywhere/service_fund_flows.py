@@ -15,7 +15,7 @@ class FundFlowUseCases:
         if fund is None:
             raise NotFound(f"fund not found: {command.fund_id}")
         actor = self.actor_for_book(token, fund.book_id, "budget:write")
-        source = self.storage.get_account(command.source_account_id)
+        source = self._get_account_from_storage(command.source_account_id)
         if source.book_id != fund.book_id:
             raise ValidationError("fund allocation account must belong to the fund book")
         if source.currency != command.currency or fund.currency != command.currency:
@@ -25,7 +25,7 @@ class FundFlowUseCases:
 
         def run():
             current_fund = self.budgets.require_current(command.fund_id, command.expected_version)
-            fund_account = self.storage.get_account(current_fund.account_id)
+            fund_account = self._get_account_from_storage(current_fund.account_id)
             transaction = build_transaction(
                 memo=command.memo,
                 purpose="fund_allocation",
@@ -73,7 +73,7 @@ class FundFlowUseCases:
         if fund is None:
             raise NotFound(f"fund not found: {command.fund_id}")
         actor = self.actor_for_book(token, fund.book_id, "budget:write")
-        expense = self.storage.get_account(command.expense_account_id)
+        expense = self._get_account_from_storage(command.expense_account_id)
         if expense.book_id != fund.book_id:
             raise ValidationError("fund spend account must belong to the fund book")
         if expense.currency != command.currency or fund.currency != command.currency:
@@ -83,7 +83,7 @@ class FundFlowUseCases:
 
         def run():
             current_fund = self.budgets.require_current(command.fund_id, command.expected_version)
-            fund_account = self.storage.get_account(current_fund.account_id)
+            fund_account = self._get_account_from_storage(current_fund.account_id)
             transaction = build_transaction(
                 memo=command.memo,
                 purpose="fund_spend",

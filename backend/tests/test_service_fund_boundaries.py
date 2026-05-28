@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 
@@ -27,3 +28,16 @@ def test_fund_use_cases_are_context_scoped():
     assert "CreateFundCommand" not in source
     assert "FundAllocationCommand" not in source
     assert "FundSpendCommand" not in source
+
+
+def test_fund_flow_use_cases_read_accounts_through_focused_repository():
+    source = (BACKEND / "service_fund_flows.py").read_text()
+    forbidden = re.compile(r"\bself\.storage\.get_account\b")
+    offenders = [
+        f"service_fund_flows.py:{line_number}: {line.strip()}"
+        for line_number, line in enumerate(source.splitlines(), start=1)
+        if forbidden.search(line)
+    ]
+
+    assert offenders == []
+    assert "_get_account_from_storage" in source
