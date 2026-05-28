@@ -10,7 +10,7 @@ from .investments import InvestmentValuation
 class InvestmentValuationUseCases:
     def record_investment_valuation(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[InvestmentValuation, bool]:
         command = RecordInvestmentValuationCommand.model_validate(payload)
-        account = self.storage.get_account(command.account_id)
+        account = self._get_account_from_storage(command.account_id)
         actor = self.actor_for_book(token, account.book_id, "investment:write")
         if account.type != "asset":
             raise ValidationError("investment valuations can only be recorded against asset accounts")
@@ -37,6 +37,6 @@ class InvestmentValuationUseCases:
         return valuation, replay
 
     def list_investment_valuations(self, token: str, account_id: str) -> list[InvestmentValuation]:
-        account = self.storage.get_account(account_id)
+        account = self._get_account_from_storage(account_id)
         self.actor_for_book(token, account.book_id, "investment:read")
         return self.investments.list_valuations(account_id, book_id=account.book_id)

@@ -9,7 +9,7 @@ from .investments import investment_performance_report
 
 class InvestmentPerformanceUseCases:
     def investment_performance(self, token: str, account_id: str, *, as_of: str | None = None):
-        account = self.storage.get_account(account_id)
+        account = self._get_account_from_storage(account_id)
         self.actor_for_book(token, account.book_id, "investment:read")
         try:
             as_of_datetime = datetime.fromisoformat(as_of) if as_of is not None else None
@@ -19,7 +19,7 @@ class InvestmentPerformanceUseCases:
         if as_of_datetime is None:
             as_of_datetime = max((event.occurred_at for event in events), default=None)
         if as_of_datetime is None:
-            latest = self.storage.list_confirmed_transactions(book_id=account.book_id, account_id=account_id, limit=1)
+            latest = self._list_transactions_from_storage(book_id=account.book_id, account_id=account_id, limit=1)
             as_of_datetime = latest[0].occurred_at if latest else None
         if as_of_datetime is None:
             as_of_datetime = datetime.now(timezone.utc)

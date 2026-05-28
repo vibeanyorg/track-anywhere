@@ -13,7 +13,7 @@ from .transaction_builder import add_transaction_line, build_transaction
 class InvestmentEventUseCases:
     def record_investment_event(self, token: str, payload: dict[str, Any], *, idempotency_key: str) -> tuple[InvestmentEvent, bool]:
         command = RecordInvestmentEventCommand.model_validate(payload)
-        account = self.storage.get_account(command.account_id)
+        account = self._get_account_from_storage(command.account_id)
         actor = self.actor_for_book(token, account.book_id, "investment:write")
         if account.type != "asset":
             raise ValidationError("investment events can only be recorded against asset accounts")
@@ -23,13 +23,13 @@ class InvestmentEventUseCases:
         if command.transaction_id is not None and command.cash_account_id is not None:
             raise ValidationError("transaction_id and cash_account_id cannot both be provided")
         if command.transaction_id is not None:
-            linked = self.storage.get_confirmed_transaction(command.transaction_id)
+            linked = self._get_transaction_from_storage(command.transaction_id)
             if linked is None:
                 raise NotFound(f"transaction not found: {command.transaction_id}")
             if linked.book_id != account.book_id:
                 raise ValidationError("investment event transaction must belong to the account book")
         if command.cash_account_id is not None:
-            cash_account = self.storage.get_account(command.cash_account_id)
+            cash_account = self._get_account_from_storage(command.cash_account_id)
             if cash_account.book_id != account.book_id:
                 raise ValidationError("investment cash account must belong to the investment account book")
             if cash_account.currency != command.currency:
@@ -78,8 +78,8 @@ class InvestmentEventUseCases:
 
     def _post_investment_event_transaction(self, command: RecordInvestmentEventCommand, book_id: str, *, created_accounts):
         assert command.cash_account_id is not None
-        cash_account = self.storage.get_account(command.cash_account_id)
-        investment_account = self.storage.get_account(command.account_id)
+        cash_account = self._get_account_from_storage(command.cash_account_id)
+        investment_account = self._get_account_from_storage(command.account_id)
         if command.event_type in {"buy", "add"}:
             postings = [
                 Posting(command.cash_account_id, -command.amount, command.currency),
@@ -131,7 +131,7 @@ class InvestmentEventUseCases:
 
     def list_investment_events(self, token: str, account_id: str | None = None) -> list[InvestmentEvent]:
         if account_id is not None:
-            account = self.storage.get_account(account_id)
+            account = self._get_account_from_storage(account_id)
             self.actor_for_book(token, account.book_id, "investment:read")
             return self.investments.list(account_id, book_id=account.book_id)
         self.actor_for_book(token, DEFAULT_BOOK_ID, "investment:read")
