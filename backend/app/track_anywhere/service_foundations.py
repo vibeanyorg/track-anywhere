@@ -12,7 +12,7 @@ class DomainFoundationBootstrap:
         self.assets.ensure_defaults()
         for book in self.books.books.values():
             self.assets.ensure(book.base_currency)
-        accounts = self.storage.list_accounts(book_id=None)
+        accounts = self._list_accounts_from_storage(book_id=None)
         accounts_by_id = {account.account_id: account for account in accounts}
         validator = Ledger(asset_scale_lookup=self.assets.scale_for)
         validator.accounts = accounts_by_id
@@ -35,7 +35,7 @@ class DomainFoundationBootstrap:
 
     def _ensure_transaction_foundations(self, accounts_by_id: dict[str, Any], validator: Ledger) -> None:
         for book in self.books.books.values():
-            for transaction in self.storage.list_all_confirmed_transactions(book_id=book.book_id):
+            for transaction in self._list_all_transactions_from_storage(book_id=book.book_id):
                 self._ensure_transaction_foundation(transaction, accounts_by_id, validator)
 
     def _ensure_draft_foundations(self, accounts_by_id: dict[str, Any]) -> None:
@@ -45,7 +45,7 @@ class DomainFoundationBootstrap:
     def _ensure_recurring_foundations(self) -> None:
         for item in self.recurring.items.values():
             if not item.book_id and item.source_account_id is not None:
-                item.book_id = self.storage.get_account(item.source_account_id).book_id
+                item.book_id = self._get_account_from_storage(item.source_account_id).book_id
             if item.currency is not None:
                 self.assets.ensure(item.currency)
 

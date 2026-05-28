@@ -36,6 +36,23 @@ def test_startup_foundations_do_not_read_runtime_ledger_mirror():
     assert "self.ledger.transactions" not in source
 
 
+def test_startup_foundations_read_through_focused_helpers():
+    source = (Path.cwd() / "backend/app/track_anywhere/service_foundations.py").read_text()
+    forbidden = re.compile(
+        r"\bself\.storage\.(list_accounts|get_account|list_all_confirmed_transactions)\b"
+    )
+    offenders = [
+        f"service_foundations.py:{line_number}: {line.strip()}"
+        for line_number, line in enumerate(source.splitlines(), start=1)
+        if forbidden.search(line)
+    ]
+
+    assert offenders == []
+    assert "_list_accounts_from_storage" in source
+    assert "_get_account_from_storage" in source
+    assert "_list_all_transactions_from_storage" in source
+
+
 def test_storage_load_does_not_hydrate_runtime_ledger_mirror():
     source = (Path.cwd() / "backend/app/track_anywhere/storage.py").read_text()
 
