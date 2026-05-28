@@ -23,3 +23,12 @@ def test_credit_card_use_cases_read_catalog_through_focused_repositories():
     assert "_get_account_from_storage" in source
     assert "uow.credit_cards.get_profile_optional" in source
     assert "def get_profile_optional" in repository_source
+
+
+def test_credit_card_use_cases_read_balances_through_focused_helper():
+    source = (BACKEND / "service_credit_cards.py").read_text()
+    balance_source = (BACKEND / "service_balance_queries.py").read_text()
+
+    assert "self.storage.account_balance" not in source
+    assert "_account_balance_from_storage" in source
+    assert "def _account_balance_from_storage(" in balance_source

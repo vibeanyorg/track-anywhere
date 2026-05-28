@@ -56,3 +56,12 @@ def test_investment_use_cases_read_through_focused_repositories():
     assert "_get_account_from_storage" in performance_source
     assert "_list_transactions_from_storage" in performance_source
     assert "_get_account_from_storage" in valuations_source
+
+
+def test_investment_performance_reads_balances_through_focused_helper():
+    source = (BACKEND / "service_investment_performance.py").read_text()
+    balance_source = (BACKEND / "service_balance_queries.py").read_text()
+
+    assert "self.storage.account_balance" not in source
+    assert "_account_balance_from_storage" in source
+    assert "def _account_balance_from_storage(" in balance_source

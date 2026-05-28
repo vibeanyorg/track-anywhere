@@ -77,7 +77,7 @@ class CreditCardUseCases:
     def _credit_card_overview(self, account_id: str, *, profile=None) -> dict[str, Any]:
         account = self._require_credit_card_account(account_id)
         profile = profile if profile is not None else self._get_credit_card_profile_from_storage(account_id)
-        current_balance = self.storage.account_balance(account_id).get(account.currency, Decimal("0"))
+        current_balance = self._account_balance_from_storage(account_id).get(account.currency, Decimal("0"))
         credit_limit = profile.credit_limit if profile is not None else None
         derived_available_credit = credit_limit - current_balance if credit_limit is not None else None
         utilization_rate = None

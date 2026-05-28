@@ -27,7 +27,7 @@ class InvestmentPerformanceUseCases:
         if valuation is not None:
             current_value, current_value_source, valuation_id = valuation.value, "valuation_snapshot", valuation.valuation_id
         else:
-            current_value = self.storage.account_balance(account_id).get(account.currency, Decimal("0"))
+            current_value = self._account_balance_from_storage(account_id).get(account.currency, Decimal("0"))
             current_value_source, valuation_id = "account_balance", None
         return investment_performance_report(
             account_id=account_id,
