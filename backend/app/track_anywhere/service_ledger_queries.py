@@ -102,3 +102,7 @@ class LedgerQueryUseCases:
     def _get_transaction_from_storage(self, transaction_id: str) -> Transaction | None:
         with self.storage.unit_of_work() as uow:
             return uow.transactions.get_confirmed_transaction(transaction_id)
+
+    def _list_all_transactions_from_storage(self, *, book_id: str) -> list[Transaction]:
+        with self.storage.unit_of_work() as uow:
+            return uow.transactions.list_all_confirmed_transactions(book_id=book_id)

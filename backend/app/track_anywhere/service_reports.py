@@ -17,7 +17,7 @@ class BookReportUseCases:
             raise ValidationError("budget does not belong to book")
         target_reports = []
         total_spent = Decimal("0")
-        transactions = self.storage.list_all_confirmed_transactions(book_id=book_id)
+        transactions = self._list_all_transactions_from_storage(book_id=book_id)
         for target in self.budgets.list_targets(budget_id):
             amount = self._budget_target_spend(book_id, target, transactions=transactions)
             if target.mode == "exclude":
@@ -46,7 +46,7 @@ class BookReportUseCases:
     def spending_report(self, token: str, book_id: str, *, group_by: str = "category_parent", currency: str | None = None) -> dict[str, Any]:
         self.actor_for_book(token, book_id, "ledger:read")
         groups: dict[tuple[str, str], dict[str, Any]] = {}
-        for transaction in self.storage.list_all_confirmed_transactions(book_id=book_id):
+        for transaction in self._list_all_transactions_from_storage(book_id=book_id):
             if transaction.book_id != book_id or transaction.reversed_by is not None:
                 continue
             for line in self._report_lines_for_transaction(transaction):
@@ -72,7 +72,7 @@ class BookReportUseCases:
 
     def _budget_target_spend(self, book_id: str, target, *, transactions=None) -> Decimal:
         total = Decimal("0")
-        for transaction in transactions if transactions is not None else self.storage.list_all_confirmed_transactions(book_id=book_id):
+        for transaction in transactions if transactions is not None else self._list_all_transactions_from_storage(book_id=book_id):
             if transaction.book_id != book_id or transaction.reversed_by is not None:
                 continue
             for line in self._report_lines_for_transaction(transaction):

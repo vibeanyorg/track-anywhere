@@ -21,7 +21,7 @@ class CategoryReportingUseCases:
             raise ValidationError("category kind must be income or expense")
 
         groups: dict[tuple[str, str], dict[str, Any]] = {}
-        for transaction in self.storage.list_all_confirmed_transactions(book_id=book_id):
+        for transaction in self._list_all_transactions_from_storage(book_id=book_id):
             if transaction.book_id != book_id or transaction.reversed_by is not None:
                 continue
             for line in self._report_lines_for_transaction(transaction):

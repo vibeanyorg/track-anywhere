@@ -49,9 +49,11 @@ def test_ledger_query_use_cases_read_through_focused_repositories():
     assert "_get_account_from_storage" in source
     assert "_get_category_from_storage" in source
     assert "uow.transactions.list_confirmed_transactions" in source
+    assert "uow.transactions.list_all_confirmed_transactions" in source
     assert "uow.transactions.get_confirmed_transaction" in source
     assert "class TransactionRepository" in repository_source
     assert "def list_confirmed_transactions(" in repository_source
+    assert "def list_all_confirmed_transactions(" in repository_source
     assert "def get_confirmed_transaction(" in repository_source
 
 
