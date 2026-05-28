@@ -10,7 +10,7 @@ from .ledger import Transaction
 class ReclassificationUseCases:
     def reclassify_transaction(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = ReclassifyTransactionCommand.model_validate(payload)
-        transaction = self.storage.get_confirmed_transaction(command.transaction_id)
+        transaction = self._get_transaction_from_storage(command.transaction_id)
         if transaction is None:
             raise NotFound(f"transaction not found: {command.transaction_id}")
         category = self.categories.get(command.category_id)
