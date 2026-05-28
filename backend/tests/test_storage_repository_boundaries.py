@@ -29,11 +29,13 @@ def test_transaction_repository_owns_hot_ledger_reads_and_writes():
     assert "self.storage._replace_transaction_lines" not in source
 
 
-def test_workflow_repositories_own_workflow_writes():
+def test_workflow_repositories_own_workflow_reads_and_writes():
     source = (BACKEND / "storage_repositories/workflow.py").read_text()
 
+    assert "def get_draft" in source
     assert "def save(self, drafts" in source
     assert "def save_items" in source
+    assert "self.storage.get_draft" not in source
     assert "self.storage._save_drafts" not in source
     assert "self.storage._save_recurring_items" not in source
 

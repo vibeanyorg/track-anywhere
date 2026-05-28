@@ -6,7 +6,9 @@ from typing import Any, Iterable
 
 from sqlalchemy import delete, select
 
+from ..drafts import DraftTransaction
 from ..errors import NotFound
+from ..ledger import Posting
 from ..recurring import Recurrence, RecurringItem
 from ..storage_json import to_jsonable
 from ..storage_models import AttachmentRecord, DraftPostingRecord, DraftRecord, RecurringItemRecord
@@ -15,6 +17,20 @@ from ..storage_models import AttachmentRecord, DraftPostingRecord, DraftRecord, 
 class DraftRepository:
     def __init__(self, _storage, session) -> None:
         self.session = session
+
+    def get_draft(self, draft_id: str) -> DraftTransaction | None:
+        row = self.session.get(DraftRecord, draft_id)
+        if row is None:
+            return None
+        postings = [
+            Posting(posting.account_id, Decimal(posting.amount), posting.currency)
+            for posting in self.session.scalars(
+                select(DraftPostingRecord)
+                .where(DraftPostingRecord.draft_id == draft_id)
+                .order_by(DraftPostingRecord.position, DraftPostingRecord.id)
+            )
+        ]
+        return draft_from_record(row, postings)
 
     def save(self, drafts: Iterable[Any]) -> None:
         for draft in drafts:
@@ -47,6 +63,23 @@ class DraftRepository:
                     currency=posting.currency,
                 )
             )
+
+
+def draft_from_record(row: DraftRecord, postings: list[Posting]) -> DraftTransaction:
+    return DraftTransaction(
+        draft_id=row.draft_id,
+        memo=row.memo,
+        state=row.state,
+        proposed_postings=postings,
+        missing_fields=list(row.missing_fields),
+        source=row.source,
+        confidence=row.confidence,
+        book_id=row.book_id,
+        version=row.version,
+        attachment_id=row.attachment_id,
+        category_id=row.category_id,
+        metadata=dict(row.metadata_json or {}),
+    )
 
 
 class RecurringRepository:

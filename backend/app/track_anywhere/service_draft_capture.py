@@ -50,8 +50,8 @@ class DraftCaptureUseCases:
             expense_account_id = command.expense_account_id
             if amount is None or source_account_id is None or expense_account_id is None:
                 raise ValidationError("complete draft command lost required posting fields")
-            source = self.storage.get_account(source_account_id)
-            expense = self.storage.get_account(expense_account_id)
+            source = self._get_account_from_storage(source_account_id)
+            expense = self._get_account_from_storage(expense_account_id)
             if source.book_id != expense.book_id:
                 raise ValidationError("draft postings must belong to one book")
             if source.currency != command.currency or expense.currency != command.currency:

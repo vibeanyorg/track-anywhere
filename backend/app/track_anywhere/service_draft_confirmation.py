@@ -29,7 +29,7 @@ class DraftConfirmationUseCases:
                 scale_lookup=self.assets.scale_for,
             )
             if draft.category_id is not None:
-                self._add_category_line_for_transaction(transaction, self.storage.get_category(draft.category_id))
+                self._add_category_line_for_transaction(transaction, self._get_category_from_storage(draft.category_id))
             draft.state = "confirmed"
             draft.version += 1
             self.drafts.drafts[draft.draft_id] = draft
