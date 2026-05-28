@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Iterable
 
+from ..credit_cards import CreditCardProfile
 from ..domain_storage_models import BudgetRecord, BudgetTargetRecord
 from ..storage_json import to_jsonable
 from ..storage_models import (
@@ -16,6 +18,20 @@ from ..storage_models import (
 class CreditCardRepository:
     def __init__(self, session) -> None:
         self.session = session
+
+    def get_profile_optional(self, account_id: str) -> CreditCardProfile | None:
+        row = self.session.get(CreditCardProfileRecord, account_id)
+        if row is None:
+            return None
+        return CreditCardProfile(
+            account_id=row.account_id,
+            credit_limit=Decimal(row.credit_limit) if row.credit_limit is not None else None,
+            available_credit=Decimal(row.available_credit) if row.available_credit is not None else None,
+            statement_day=row.statement_day,
+            due_day=row.due_day,
+            annual_fee=Decimal(row.annual_fee) if row.annual_fee is not None else None,
+            version=row.version,
+        )
 
     def save_profiles(self, profiles: Iterable[Any]) -> None:
         for profile in profiles:

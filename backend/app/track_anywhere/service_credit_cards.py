@@ -11,7 +11,7 @@ from .ledger import Account
 class CreditCardUseCases:
     def list_credit_cards(self, token: str) -> list[dict[str, Any]]:
         self.actor_from_token(token, "credit-card:read")
-        accounts = self.storage.list_accounts(book_id=None, type="liability", subtype="credit_card")
+        accounts = self._list_accounts_from_storage(book_id=None, type="liability", subtype="credit_card")
         return [self._credit_card_overview(account.account_id) for account in sorted(accounts, key=lambda item: item.name)]
 
     def get_credit_card(self, token: str, account_id: str) -> dict[str, Any]:
@@ -69,14 +69,14 @@ class CreditCardUseCases:
         return result, replay
 
     def _require_credit_card_account(self, account_id: str) -> Account:
-        account = self.storage.get_account(account_id)
+        account = self._get_account_from_storage(account_id)
         if account.type != "liability" or account.subtype != "credit_card":
             raise ValidationError("credit card profile requires a liability account with subtype credit_card")
         return account
 
     def _credit_card_overview(self, account_id: str, *, profile=None) -> dict[str, Any]:
         account = self._require_credit_card_account(account_id)
-        profile = profile if profile is not None else self.storage.get_credit_card_profile_optional(account_id)
+        profile = profile if profile is not None else self._get_credit_card_profile_from_storage(account_id)
         current_balance = self.storage.account_balance(account_id).get(account.currency, Decimal("0"))
         credit_limit = profile.credit_limit if profile is not None else None
         derived_available_credit = credit_limit - current_balance if credit_limit is not None else None
@@ -97,3 +97,7 @@ class CreditCardUseCases:
             "derived_available_credit": derived_available_credit,
             "utilization_rate": utilization_rate,
         }
+
+    def _get_credit_card_profile_from_storage(self, account_id: str):
+        with self.storage.unit_of_work() as uow:
+            return uow.credit_cards.get_profile_optional(account_id)

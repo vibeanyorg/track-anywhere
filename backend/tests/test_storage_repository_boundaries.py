@@ -40,13 +40,15 @@ def test_workflow_repositories_own_workflow_reads_and_writes():
     assert "self.storage._save_recurring_items" not in source
 
 
-def test_finance_repositories_own_finance_writes():
+def test_finance_repositories_own_finance_reads_and_writes():
     source = (BACKEND / "storage_repositories/finance.py").read_text()
 
+    assert "def get_profile_optional" in source
     assert "def save(self, funds" in source
     assert "def save(self, budgets" in source
     assert "def save_events" in source
     assert "def save_valuations" in source
+    assert "self.storage.get_credit_card_profile_optional" not in source
     assert "self.storage._save_funds" not in source
     assert "self.storage._save_budgets" not in source
     assert "self.storage._save_investment_events" not in source
