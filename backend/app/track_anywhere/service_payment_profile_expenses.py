@@ -46,7 +46,7 @@ class PaymentProfileExpenseUseCases:
 
         def run():
             counterparty = self._resolve_counterparty_for_write(command.counterparty, book_id=profile.book_id)
-            confirmed_backing_balance = self.storage.account_balance(profile.backing_account_id).get(
+            confirmed_backing_balance = self._account_balance_from_storage(profile.backing_account_id).get(
                 profile.backing_currency,
                 Decimal("0"),
             )

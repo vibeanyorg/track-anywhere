@@ -8,7 +8,7 @@ class BalanceQueryUseCases:
     def account_balance(self, token: str, account_id: str, *, include_drafts: bool = False) -> dict[str, Any]:
         account = self._get_account_from_storage(account_id)
         self.actor_for_book(token, account.book_id, "account:read")
-        official = self.storage.account_balance(account_id)
+        official = self._account_balance_from_storage(account_id)
         pending: dict[str, Decimal] = {}
         included_draft_ids: list[str] = []
         draft_count = self.storage.draft_count()
@@ -39,3 +39,6 @@ class BalanceQueryUseCases:
                 "projection_version": draft_count,
             }
         return result
+
+    def _account_balance_from_storage(self, account_id: str) -> dict[str, Decimal]:
+        return self.storage.account_balance(account_id)

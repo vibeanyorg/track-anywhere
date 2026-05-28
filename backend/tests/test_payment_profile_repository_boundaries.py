@@ -49,3 +49,25 @@ def test_payment_profile_use_cases_read_accounts_and_categories_through_focused_
     assert "_get_account_from_storage" in lifecycle_source
     assert "_get_account_from_storage" in expense_source
     assert "_get_category_from_storage" in expense_source
+
+
+def test_payment_profile_use_cases_read_balances_through_focused_helper():
+    checked_files = [
+        BACKEND / "service_payment_profile_lifecycle.py",
+        BACKEND / "service_payment_profile_expenses.py",
+    ]
+    forbidden = re.compile(r"\bself\.storage\.account_balance\b")
+    offenders = []
+    for path in checked_files:
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if forbidden.search(line):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: {line.strip()}")
+
+    lifecycle_source = (BACKEND / "service_payment_profile_lifecycle.py").read_text()
+    expense_source = (BACKEND / "service_payment_profile_expenses.py").read_text()
+    balance_source = (BACKEND / "service_balance_queries.py").read_text()
+
+    assert offenders == []
+    assert "_account_balance_from_storage" in lifecycle_source
+    assert "_account_balance_from_storage" in expense_source
+    assert "def _account_balance_from_storage(" in balance_source

@@ -74,8 +74,11 @@ class PaymentProfileLifecycleUseCases:
 
     def payment_profile_status(self, token: str, profile_ref: str, *, book_id: str = DEFAULT_BOOK_ID) -> dict[str, Any]:
         profile = self.resolve_payment_profile(token, profile_ref, book_id=book_id)
-        backing_balance = self.storage.account_balance(profile.backing_account_id).get(profile.backing_currency, Decimal("0"))
-        instrument_clearing_balance = self.storage.account_balance(profile.instrument_account_id).get(
+        backing_balance = self._account_balance_from_storage(profile.backing_account_id).get(
+            profile.backing_currency,
+            Decimal("0"),
+        )
+        instrument_clearing_balance = self._account_balance_from_storage(profile.instrument_account_id).get(
             profile.instrument_currency,
             Decimal("0"),
         )
