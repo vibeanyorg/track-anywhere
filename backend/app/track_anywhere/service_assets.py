@@ -22,11 +22,11 @@ class AssetUseCases:
         }
         for book_id in book_ids:
             visible_codes.add(self.books.books[book_id].base_currency)
-        for account in self.storage.list_accounts(book_id=None):
+        for account in self._list_accounts_from_storage(book_id=None):
             if account.book_id in book_ids:
                 visible_codes.add(account.currency)
         for book_id in book_ids:
-            for transaction in self.storage.list_all_confirmed_transactions(book_id=book_id):
+            for transaction in self._list_all_transactions_from_storage(book_id=book_id):
                 visible_codes.update(posting.currency for posting in transaction.postings)
                 visible_codes.update(line.currency for line in transaction.lines)
         for item in self.recurring.items.values():
