@@ -10,7 +10,7 @@ from .errors import NotFound, ValidationError
 class PaymentInstrumentUseCases:
     def create_payment_instrument(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = CreatePaymentInstrumentCommand.model_validate(payload)
-        account = self.storage.get_account(command.account_id)
+        account = self._get_account_from_storage(command.account_id)
         actor = self.actor_for_book(token, account.book_id, "credit-card:write")
         self._validate_payment_instrument_account(command.kind, account)
         request_hash = self._hash_command(command)
@@ -60,7 +60,7 @@ class PaymentInstrumentUseCases:
         status: str | None = "active",
     ):
         if account_id is not None:
-            account = self.storage.get_account(account_id)
+            account = self._get_account_from_storage(account_id)
             book_id = account.book_id
         self.actor_for_book(token, book_id, "credit-card:read")
         if status is not None and status not in {"active", "hidden", "archived"}:

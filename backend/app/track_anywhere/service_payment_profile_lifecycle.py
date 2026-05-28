@@ -12,8 +12,8 @@ from .payment_profiles import PaymentProfile
 class PaymentProfileLifecycleUseCases:
     def create_payment_profile(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = CreatePaymentProfileCommand.model_validate(payload)
-        instrument = self.storage.get_account(command.instrument_account_id)
-        backing = self.storage.get_account(command.backing_account_id)
+        instrument = self._get_account_from_storage(command.instrument_account_id)
+        backing = self._get_account_from_storage(command.backing_account_id)
 
         if instrument.book_id != backing.book_id:
             raise ValidationError("payment profile accounts must belong to one book")

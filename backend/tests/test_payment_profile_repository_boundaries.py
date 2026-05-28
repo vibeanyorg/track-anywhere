@@ -28,3 +28,24 @@ def test_payment_profile_use_cases_read_through_focused_repository():
     assert "def list_profiles(" in repository_source
     assert "def get_profile(" in repository_source
     assert "def get_profile_by_slug(" in repository_source
+
+
+def test_payment_profile_use_cases_read_accounts_and_categories_through_focused_repositories():
+    checked_files = [
+        BACKEND / "service_payment_profile_lifecycle.py",
+        BACKEND / "service_payment_profile_expenses.py",
+    ]
+    forbidden = re.compile(r"\bself\.storage\.(get_account|get_category)\b")
+    offenders = []
+    for path in checked_files:
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if forbidden.search(line):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: {line.strip()}")
+
+    lifecycle_source = (BACKEND / "service_payment_profile_lifecycle.py").read_text()
+    expense_source = (BACKEND / "service_payment_profile_expenses.py").read_text()
+
+    assert offenders == []
+    assert "_get_account_from_storage" in lifecycle_source
+    assert "_get_account_from_storage" in expense_source
+    assert "_get_category_from_storage" in expense_source

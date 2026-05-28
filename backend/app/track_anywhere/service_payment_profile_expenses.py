@@ -19,8 +19,8 @@ class PaymentProfileExpenseUseCases:
     ) -> tuple[Transaction, bool]:
         command = RecordPaymentProfileExpenseCommand.model_validate(payload)
         profile = self._resolve_payment_profile_reference(command.payment)
-        instrument = self.storage.get_account(profile.instrument_account_id)
-        backing = self.storage.get_account(profile.backing_account_id)
+        instrument = self._get_account_from_storage(profile.instrument_account_id)
+        backing = self._get_account_from_storage(profile.backing_account_id)
 
         if profile.kind != "token_backed_card" or profile.settlement_mode != "immediate":
             raise ValidationError("payment profile is not an immediate token-backed card")
@@ -34,7 +34,7 @@ class PaymentProfileExpenseUseCases:
         backing_amount = command.amount * profile.settlement_rate
         self.assets.validate_amount(profile.backing_currency, backing_amount, field_name="backing amount")
 
-        category = self.storage.get_category(command.category_id)
+        category = self._get_category_from_storage(command.category_id)
         if category.book_id != profile.book_id:
             raise ValidationError("expense category must belong to the payment profile book")
         if category.kind != "expense":
