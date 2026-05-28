@@ -30,3 +30,17 @@ def test_recurring_item_use_cases_read_through_focused_repository():
     assert "uow.recurring.get_item" in query_source
     assert "def list_items(" in workflow_repo
     assert "def get_item(" in workflow_repo
+
+
+def test_recurring_item_validation_reads_accounts_and_categories_through_focused_repositories():
+    source = (BACKEND / "service_recurring_item_validation.py").read_text()
+    forbidden = re.compile(r"\bself\.storage\.(get_account|get_category)\b")
+    offenders = [
+        f"service_recurring_item_validation.py:{line_number}: {line.strip()}"
+        for line_number, line in enumerate(source.splitlines(), start=1)
+        if forbidden.search(line)
+    ]
+
+    assert offenders == []
+    assert "_get_account_from_storage" in source
+    assert "_get_category_from_storage" in source

@@ -11,12 +11,12 @@ class RecurringItemValidationUseCases:
             return
         if command.currency is None or command.source_account_id is None or command.category_id is None:
             return
-        source = self.storage.get_account(command.source_account_id)
+        source = self._get_account_from_storage(command.source_account_id)
         if source.book_id != book_id:
             raise ValidationError("recurring source account must belong to the recurring book")
         if source.currency != command.currency:
             raise ValidationError("recurring currency must match source account currency")
-        category = self.storage.get_category(command.category_id)
+        category = self._get_category_from_storage(command.category_id)
         if category.book_id != book_id:
             raise ValidationError("recurring category must belong to the recurring book")
         if category.kind != "expense":
@@ -27,12 +27,12 @@ class RecurringItemValidationUseCases:
             return
         if item.currency is None or item.source_account_id is None or item.category_id is None:
             return
-        source = self.storage.get_account(item.source_account_id)
+        source = self._get_account_from_storage(item.source_account_id)
         if source.book_id != item.book_id:
             raise ValidationError("recurring source account must belong to the recurring book")
         if source.currency != item.currency:
             raise ValidationError("recurring currency must match source account currency")
-        category = self.storage.get_category(item.category_id)
+        category = self._get_category_from_storage(item.category_id)
         if category.book_id != item.book_id:
             raise ValidationError("recurring category must belong to the recurring book")
         if category.kind != "expense":
