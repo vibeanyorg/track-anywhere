@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from decimal import Decimal
 from typing import Any
 
@@ -42,3 +43,6 @@ class BalanceQueryUseCases:
 
     def _account_balance_from_storage(self, account_id: str) -> dict[str, Decimal]:
         return self.storage.account_balance(account_id)
+
+    def _account_balances_from_storage(self, account_ids: Iterable[str]) -> dict[tuple[str, str], Decimal]:
+        return self.storage.account_balances(account_ids)

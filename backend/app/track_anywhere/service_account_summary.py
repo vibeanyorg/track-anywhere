@@ -28,7 +28,7 @@ class AccountSummaryUseCases:
             institution_type=institution_type,
         )
         accounts = [account for account in accounts if include_system or account.type in {"asset", "liability", "fund"}]
-        balances = self.storage.account_balances(account.account_id for account in accounts)
+        balances = self._account_balances_from_storage(account.account_id for account in accounts)
 
         groups: dict[tuple[str, str], dict[str, Any]] = {}
         for account in accounts:

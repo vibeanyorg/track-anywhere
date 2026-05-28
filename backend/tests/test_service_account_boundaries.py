@@ -59,7 +59,8 @@ def test_account_use_cases_read_through_focused_repository():
 
 def test_account_summary_reads_through_focused_repository():
     source = (BACKEND / "service_account_summary.py").read_text()
-    forbidden = re.compile(r"\bself\.storage\.list_accounts\b")
+    balance_source = (BACKEND / "service_balance_queries.py").read_text()
+    forbidden = re.compile(r"\bself\.storage\.(list_accounts|account_balances)\b")
     offenders = [
         f"service_account_summary.py:{line_number}: {line.strip()}"
         for line_number, line in enumerate(source.splitlines(), start=1)
@@ -68,3 +69,5 @@ def test_account_summary_reads_through_focused_repository():
 
     assert offenders == []
     assert "_list_accounts_from_storage" in source
+    assert "_account_balances_from_storage" in source
+    assert "def _account_balances_from_storage(" in balance_source
