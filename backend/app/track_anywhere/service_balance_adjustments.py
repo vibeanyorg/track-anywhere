@@ -11,7 +11,7 @@ from .transaction_builder import build_transaction
 class BalanceAdjustmentUseCases:
     def adjust_balance(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
         command = BalanceAdjustmentCommand.model_validate(payload)
-        account = self.storage.get_account(command.account_id)
+        account = self._get_account_from_storage(command.account_id)
         actor = self.actor_for_book(token, account.book_id, "ledger:confirm")
         self.assets.validate_amount(command.currency, command.amount)
         request_hash = self._hash_command(command)

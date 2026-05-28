@@ -22,7 +22,11 @@ class AccountSummaryUseCases:
         if group_by not in allowed_groupings:
             raise ValidationError(f"group_by must be one of {sorted(allowed_groupings)}")
 
-        accounts = self.storage.list_accounts(book_id=DEFAULT_BOOK_ID, currency=currency, institution_type=institution_type)
+        accounts = self._list_accounts_from_storage(
+            book_id=DEFAULT_BOOK_ID,
+            currency=currency,
+            institution_type=institution_type,
+        )
         accounts = [account for account in accounts if include_system or account.type in {"asset", "liability", "fund"}]
         balances = self.storage.account_balances(account.account_id for account in accounts)
 

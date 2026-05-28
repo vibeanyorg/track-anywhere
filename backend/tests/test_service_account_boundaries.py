@@ -55,3 +55,16 @@ def test_account_use_cases_read_through_focused_repository():
     assert "class AccountRepository" in repository_source
     assert "def list_accounts(" in repository_source
     assert "def get_account(" in repository_source
+
+
+def test_account_summary_reads_through_focused_repository():
+    source = (BACKEND / "service_account_summary.py").read_text()
+    forbidden = re.compile(r"\bself\.storage\.list_accounts\b")
+    offenders = [
+        f"service_account_summary.py:{line_number}: {line.strip()}"
+        for line_number, line in enumerate(source.splitlines(), start=1)
+        if forbidden.search(line)
+    ]
+
+    assert offenders == []
+    assert "_list_accounts_from_storage" in source

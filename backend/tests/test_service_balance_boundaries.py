@@ -43,3 +43,23 @@ def test_system_account_helpers_read_through_focused_repository():
     assert offenders == []
     assert "_get_account_from_storage" in source
     assert "_list_accounts_from_storage" in source
+
+
+def test_balance_use_cases_read_accounts_through_focused_repository():
+    checked_files = [
+        BACKEND / "service_balance_queries.py",
+        BACKEND / "service_balance_adjustments.py",
+    ]
+    forbidden = re.compile(r"\bself\.storage\.get_account\b")
+    offenders = []
+    for path in checked_files:
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if forbidden.search(line):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{line_number}: {line.strip()}")
+
+    query_source = (BACKEND / "service_balance_queries.py").read_text()
+    adjustment_source = (BACKEND / "service_balance_adjustments.py").read_text()
+
+    assert offenders == []
+    assert "_get_account_from_storage" in query_source
+    assert "_get_account_from_storage" in adjustment_source

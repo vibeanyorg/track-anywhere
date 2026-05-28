@@ -6,7 +6,7 @@ from typing import Any
 
 class BalanceQueryUseCases:
     def account_balance(self, token: str, account_id: str, *, include_drafts: bool = False) -> dict[str, Any]:
-        account = self.storage.get_account(account_id)
+        account = self._get_account_from_storage(account_id)
         self.actor_for_book(token, account.book_id, "account:read")
         official = self.storage.account_balance(account_id)
         pending: dict[str, Decimal] = {}
