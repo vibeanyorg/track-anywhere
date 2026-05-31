@@ -120,7 +120,7 @@ def run_api(args: Namespace, *, state: ClickState, command_path: str) -> int:
         emit_outcome(outcome, json_mode=args.json, no_color=args.no_color)
         return outcome.exit_code
     try:
-        result = dispatch_api_command(args, config, state.requester)
+        result = dispatch_api_command(args, config, state.requester, command_path=command_path)
     except Exception as exc:
         outcome = build_outcome(
             command_path,
