@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from decimal import Decimal
 from typing import Any
 
@@ -19,7 +20,26 @@ class CreditCardUseCases:
     def list_credit_cards(self, token: str) -> list[dict[str, Any]]:
         self.actor_from_token(token, "credit-card:read")
         accounts = self._list_accounts_from_storage(book_id=None, type="liability", subtype="credit_card")
-        return [self._credit_card_overview(account.account_id) for account in sorted(accounts, key=lambda item: item.name)]
+        sorted_accounts = sorted(accounts, key=lambda item: item.name)
+        account_ids = [account.account_id for account in sorted_accounts]
+        balances = self._account_balances_from_storage(account_ids)
+        instruments_by_account: dict[str, list[Any]] = defaultdict(list)
+        for instrument in self._list_payment_instruments_from_storage(book_id=None):
+            if instrument.account_id in account_ids:
+                instruments_by_account[instrument.account_id].append(instrument)
+        profiles: dict[str, Any] = {}
+        with self.storage.unit_of_work() as uow:
+            for account_id in account_ids:
+                profiles[account_id] = uow.credit_cards.get_profile_optional(account_id)
+        return [
+            self._credit_card_overview_from_parts(
+                account=account,
+                profile=profiles[account.account_id],
+                instruments=instruments_by_account[account.account_id],
+                natural_balance=balances.get((account.account_id, account.currency), Decimal("0")),
+            )
+            for account in sorted_accounts
+        ]
 
     def get_credit_card(self, token: str, account_id: str) -> dict[str, Any]:
         self.actor_from_token(token, "credit-card:read")
@@ -85,6 +105,25 @@ class CreditCardUseCases:
         account = self._require_credit_card_account(account_id)
         profile = profile if profile is not None else self._get_credit_card_profile_from_storage(account_id)
         natural_balance = self._account_balance_from_storage(account_id).get(account.currency, Decimal("0"))
+        instruments = self._list_payment_instruments_from_storage(
+            book_id=account.book_id,
+            account_id=account.account_id,
+        )
+        return self._credit_card_overview_from_parts(
+            account=account,
+            profile=profile,
+            instruments=instruments,
+            natural_balance=natural_balance,
+        )
+
+    def _credit_card_overview_from_parts(
+        self,
+        *,
+        account: Account,
+        profile,
+        instruments,
+        natural_balance: Decimal,
+    ) -> dict[str, Any]:
         liability_amounts = liability_balance_amounts(natural_balance)
         liability_semantics = liability_split_amount_semantics()
         outstanding_balance = liability_amounts["outstanding_amount"]
@@ -97,10 +136,7 @@ class CreditCardUseCases:
         return {
             "account": account,
             "profile": profile,
-            "instruments": self._list_payment_instruments_from_storage(
-                book_id=account.book_id,
-                account_id=account.account_id,
-            ),
+            "instruments": instruments,
             "currency": account.currency,
             "natural_balance": natural_balance,
             "natural_balance_semantics": ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"],
