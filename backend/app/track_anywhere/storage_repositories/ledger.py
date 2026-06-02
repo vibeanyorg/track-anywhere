@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Iterable
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from ..books import DEFAULT_BOOK_ID
 from ..errors import NotFound
 from ..ledger import Account
-from ..storage_models import AdjustmentAccountRecord, AppStateRecord
+from ..storage_ledger_reads import (
+    _amount_scale_expression,
+    _canonical_decimal,
+    _effective_posting_amount_expression,
+)
+from ..storage_models import AdjustmentAccountRecord, AppStateRecord, PostingRecord
 from ..storage_models import AccountRecord
 from ..storage_upsert_writers import upsert_record
 
@@ -89,6 +95,28 @@ class AccountRepository:
 class LedgerRepository:
     def __init__(self, _storage, session) -> None:
         self.session = session
+
+    def account_balances(self, account_ids: Iterable[str]) -> dict[tuple[str, str], Decimal]:
+        ids = sorted(set(account_ids))
+        if not ids:
+            return {}
+        max_scale = _amount_scale_expression(self.session, PostingRecord.amount)
+        effective_amount = _effective_posting_amount_expression(self.session)
+        rows = self.session.execute(
+            select(
+                PostingRecord.account_id,
+                PostingRecord.currency,
+                func.sum(effective_amount).label("amount"),
+                max_scale.label("scale"),
+            )
+            .join(AccountRecord, AccountRecord.account_id == PostingRecord.account_id)
+            .where(PostingRecord.account_id.in_(ids))
+            .group_by(PostingRecord.account_id, PostingRecord.currency)
+        )
+        return {
+            (account_id, currency): _canonical_decimal(Decimal(amount or 0), scale=int(scale or 0))
+            for account_id, currency, amount, scale in rows
+        }
 
     def save_adjustment_accounts(self, adjustment_account_ids: dict[str, str]) -> None:
         for currency, account_id in adjustment_account_ids.items():

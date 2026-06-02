@@ -19,22 +19,20 @@ from .ledger import Account
 class CreditCardUseCases:
     def list_credit_cards(self, token: str) -> list[dict[str, Any]]:
         self.actor_from_token(token, "credit-card:read")
-        accounts = self._list_accounts_from_storage(book_id=None, type="liability", subtype="credit_card")
-        sorted_accounts = sorted(accounts, key=lambda item: item.name)
-        account_ids = [account.account_id for account in sorted_accounts]
-        balances = self._account_balances_from_storage(account_ids)
-        instruments_by_account: dict[str, list[Any]] = defaultdict(list)
-        for instrument in self._list_payment_instruments_from_storage(book_id=None):
-            if instrument.account_id in account_ids:
-                instruments_by_account[instrument.account_id].append(instrument)
-        profiles: dict[str, Any] = {}
         with self.storage.unit_of_work() as uow:
-            for account_id in account_ids:
-                profiles[account_id] = uow.credit_cards.get_profile_optional(account_id)
+            accounts = uow.accounts.list_accounts(book_id=None, type="liability", subtype="credit_card")
+            sorted_accounts = sorted(accounts, key=lambda item: item.name)
+            account_ids = [account.account_id for account in sorted_accounts]
+            balances = uow.ledger.account_balances(account_ids)
+            profiles = uow.credit_cards.list_profiles(account_ids)
+            instruments_by_account: dict[str, list[Any]] = defaultdict(list)
+            for instrument in uow.payment_instruments.list_instruments(book_id=None):
+                if instrument.account_id in account_ids:
+                    instruments_by_account[instrument.account_id].append(instrument)
         return [
             self._credit_card_overview_from_parts(
                 account=account,
-                profile=profiles[account.account_id],
+                profile=profiles.get(account.account_id),
                 instruments=instruments_by_account[account.account_id],
                 natural_balance=balances.get((account.account_id, account.currency), Decimal("0")),
             )

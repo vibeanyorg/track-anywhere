@@ -3,6 +3,8 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Iterable
 
+from sqlalchemy import select
+
 from ..credit_cards import CreditCardProfile
 from ..domain_storage_models import BudgetRecord, BudgetTargetRecord
 from ..storage_json import to_jsonable
@@ -23,15 +25,16 @@ class CreditCardRepository:
         row = self.session.get(CreditCardProfileRecord, account_id)
         if row is None:
             return None
-        return CreditCardProfile(
-            account_id=row.account_id,
-            credit_limit=Decimal(row.credit_limit) if row.credit_limit is not None else None,
-            available_credit=Decimal(row.available_credit) if row.available_credit is not None else None,
-            statement_day=row.statement_day,
-            due_day=row.due_day,
-            annual_fee=Decimal(row.annual_fee) if row.annual_fee is not None else None,
-            version=row.version,
+        return credit_card_profile_from_record(row)
+
+    def list_profiles(self, account_ids: Iterable[str]) -> dict[str, CreditCardProfile]:
+        ids = sorted(set(account_ids))
+        if not ids:
+            return {}
+        rows = self.session.scalars(
+            select(CreditCardProfileRecord).where(CreditCardProfileRecord.account_id.in_(ids))
         )
+        return {row.account_id: credit_card_profile_from_record(row) for row in rows}
 
     def save_profiles(self, profiles: Iterable[Any]) -> None:
         for profile in profiles:
@@ -46,6 +49,19 @@ class CreditCardRepository:
                     version=profile.version,
                 )
             )
+
+
+def credit_card_profile_from_record(row: CreditCardProfileRecord) -> CreditCardProfile:
+    return CreditCardProfile(
+        account_id=row.account_id,
+        credit_limit=Decimal(row.credit_limit) if row.credit_limit is not None else None,
+        available_credit=Decimal(row.available_credit) if row.available_credit is not None else None,
+        statement_day=row.statement_day,
+        due_day=row.due_day,
+        annual_fee=Decimal(row.annual_fee) if row.annual_fee is not None else None,
+        version=row.version,
+    )
+
 
 class FundRepository:
     def __init__(self, _storage, session) -> None:
