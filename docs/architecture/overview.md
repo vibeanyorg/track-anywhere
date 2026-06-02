@@ -45,7 +45,17 @@ Each account remains single-asset. Multi-currency providers such as Wise should 
 
 Account summaries group confirmed balances by `type`, `institution_type`, `subtype`, `institution`, or `currency`. Summaries do not do FX conversion; multi-currency providers are returned as separate currency totals.
 
-Summary rows expose raw `amount` plus `asset_amount`, `liability_amount`, and `net_amount`. Use `asset_amount` for total assets and `net_amount` for net-worth style views; liabilities are stored as positive amounts owed.
+Summary rows expose `amount` plus `asset_amount`, `fund_amount`,
+`liability_amount`, `liability_outstanding_amount`,
+`liability_overpayment_amount`, and `net_amount`. `amount` is only the sum of
+natural account balances in the row; it is not a net-worth field for mixed
+asset/liability groups. Use `asset_amount` for ordinary assets, `fund_amount`
+for earmarked fund balances, and `net_amount` for net-worth style views.
+`liability_amount` is the natural liability net balance;
+`liability_outstanding_amount` is the positive amount owed, and
+`liability_overpayment_amount` is the positive overpayment amount. Summary
+responses include `summary_semantics` and per-row `*_semantics` fields so agents
+do not infer liability meaning from a bare sign.
 
 ## Security Posture
 

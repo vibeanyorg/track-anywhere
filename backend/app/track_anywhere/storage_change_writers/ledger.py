@@ -9,7 +9,10 @@ class LedgerChangeStorageWriters:
         with self.unit_of_work() as uow:
             uow.assets.save(changes.assets)
             uow.accounts.save(accounts)
-            uow.transactions.save(changes.transactions)
+            uow.transactions.save(
+                changes.transactions,
+                allow_legacy_signed=changes.allow_legacy_signed_postings,
+            )
             if changes.category_history is not None:
                 uow.categories.save_history(
                     aliases=changes.category_history.aliases,

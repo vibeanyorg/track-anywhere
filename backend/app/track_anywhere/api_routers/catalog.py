@@ -15,6 +15,7 @@ from ..commands import (
     UpdateCreditCardProfileCommand,
 )
 from ..domain_commands import UpdateCategoryCommand
+from ..balance_semantics import balance_semantics_for_account_type
 from .common import COMMAND_ERRORS, command_payload, protected
 
 
@@ -42,8 +43,9 @@ def list_accounts(
 ):
     try:
         return {
-            "accounts": serialize(
-                service.list_accounts(
+            "accounts": [
+                _serialize_account(account)
+                for account in service.list_accounts(
                     token,
                     name=name,
                     type=type,
@@ -52,7 +54,7 @@ def list_accounts(
                     subtype=subtype,
                     institution=institution,
                 )
-            )
+            ]
         }
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "account.list", recorder=service)
@@ -62,7 +64,7 @@ def list_accounts(
 def create_account(payload: CreateAccountCommand, token: AuthToken, key: IdempotencyKey, service: CatalogService):
     try:
         account, replay = service.create_account(token, command_payload(payload), idempotency_key=key)
-        return {"account": serialize(account), "idempotent_replay": replay}
+        return {"account": _serialize_account(account), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "account.create", recorder=service)
 
@@ -70,7 +72,7 @@ def create_account(payload: CreateAccountCommand, token: AuthToken, key: Idempot
 @router.get("/accounts/{account_id}", dependencies=protected)
 def get_account(account_id: str, token: AuthToken, service: CatalogService):
     try:
-        return {"account": serialize(service.get_account(token, account_id))}
+        return {"account": _serialize_account(service.get_account(token, account_id))}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "account.get", recorder=service)
 
@@ -90,9 +92,15 @@ def update_account_metadata(
             command_payload(payload),
             idempotency_key=key,
         )
-        return {"account": serialize(account), "idempotent_replay": replay}
+        return {"account": _serialize_account(account), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "account.metadata.update", recorder=service)
+
+
+def _serialize_account(account) -> dict[str, object]:
+    payload = serialize(account)
+    payload["balance_semantics"] = balance_semantics_for_account_type(account.type)
+    return payload
 
 
 @router.get("/summary/accounts", dependencies=protected)

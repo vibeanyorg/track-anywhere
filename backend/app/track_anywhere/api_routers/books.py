@@ -16,6 +16,7 @@ from ..domain_commands import (
     ReverseBookTransactionCommand,
     UpdateCategoryCommand,
 )
+from ..balance_semantics import balance_semantics_for_account_type
 from .common import COMMAND_ERRORS, command_payload, protected
 
 
@@ -50,7 +51,7 @@ def get_book(book_id: str, token: AuthToken, service: BookService):
 @router.get("/{book_id}/accounts", dependencies=protected)
 def list_book_accounts(book_id: str, token: AuthToken, service: BookService):
     try:
-        return {"accounts": serialize(service.list_book_accounts(token, book_id))}
+        return {"accounts": [_serialize_book_account(account) for account in service.list_book_accounts(token, book_id)]}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "book.account.list", recorder=service)
 
@@ -65,7 +66,7 @@ def create_book_account(
 ):
     try:
         account, replay = service.create_book_account(token, book_id, command_payload(payload), idempotency_key=key)
-        return {"account": serialize(account), "idempotent_replay": replay}
+        return {"account": _serialize_book_account(account), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "book.account.create", recorder=service)
 
@@ -117,6 +118,12 @@ def reverse_book_transaction(
         return {"transaction": serialize(transaction), "idempotent_replay": replay}
     except COMMAND_ERRORS as exc:
         raise_command_error(exc, "book.transaction.reverse", recorder=service)
+
+
+def _serialize_book_account(account) -> dict[str, object]:
+    payload = serialize(account)
+    payload["balance_semantics"] = balance_semantics_for_account_type(account.type)
+    return payload
 
 
 @router.get("/{book_id}/categories", dependencies=protected)

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from track_anywhere.auth_identities import OAuthIdentity
 from track_anywhere.api import app, service
 from track_anywhere.api_browser_sessions import browser_sessions
+from track_anywhere.balance_semantics import ACCOUNT_TYPE_BALANCE_SEMANTICS
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
@@ -80,6 +81,10 @@ def test_backoffice_read_models_are_available_from_fastapi():
     assert audit_events.status_code == 200
     assert roles.status_code == 200
     assert account_id in [item["account_id"] for item in accounts.json()]
+    assert (
+        next(item for item in accounts.json() if item["account_id"] == account_id)["balance_semantics"]
+        == ACCOUNT_TYPE_BALANCE_SEMANTICS["asset"]
+    )
     assert category_id in [item["category_id"] for item in categories.json()]
     assert any(item["book_id"] == "book_default" for item in books.json())
     assert any(item["role"] == "owner" for item in members.json())

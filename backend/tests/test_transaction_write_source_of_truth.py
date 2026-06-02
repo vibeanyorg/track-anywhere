@@ -32,12 +32,13 @@ def test_account_opening_balance_does_not_use_in_memory_transaction_factory(tmp_
         if transaction.purpose == "opening_balance"
     )
     assert opening.transaction_id not in service.ledger.transactions
-    assert [(posting.account_id, str(posting.amount), posting.currency) for posting in opening.postings][0] == (
+    assert [(posting.account_id, posting.side, str(posting.amount), posting.currency) for posting in opening.postings][0] == (
         account.account_id,
+        "debit",
         "42",
         "CNY",
     )
-    assert [(str(posting.amount), posting.currency) for posting in opening.postings][1] == ("-42", "CNY")
+    assert [(posting.side, str(posting.amount), posting.currency) for posting in opening.postings][1] == ("credit", "42", "CNY")
 
 
 def test_core_transaction_writes_use_storage_truth_when_memory_maps_are_stale(tmp_path):

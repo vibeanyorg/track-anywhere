@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from decimal import Decimal
 
+from track_anywhere.balance_semantics import ACCOUNT_TYPE_BALANCE_SEMANTICS
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
 
@@ -67,3 +68,39 @@ def test_fund_flows_use_storage_truth_when_memory_maps_are_stale(tmp_path):
     assert Decimal(service.account_balance(token, cash.account_id)["official_balance"]["amount"]) == Decimal("60")
     assert Decimal(service.account_balance(token, fund.account_id)["official_balance"]["amount"]) == Decimal("25")
     assert Decimal(service.account_balance(token, expense.account_id)["official_balance"]["amount"]) == Decimal("15")
+
+
+def test_account_summary_separates_funds_from_assets(tmp_path):
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Summary Cash", "type": "asset", "currency": "CNY", "opening_balance": "100"},
+        idempotency_key="fund-summary-cash",
+    )
+    fund, _ = service.create_fund(
+        token,
+        {"name": "Summary Envelope", "currency": "CNY"},
+        idempotency_key="fund-summary-create",
+    )
+    service.allocate_fund(
+        token,
+        {
+            "fund_id": fund.fund_id,
+            "source_account_id": cash.account_id,
+            "amount": "40",
+            "currency": "CNY",
+            "expected_version": fund.version,
+            "memo": "summary fund allocation",
+        },
+        idempotency_key="fund-summary-allocate",
+    )
+
+    summary = service.account_summary(token, group_by="currency", currency="CNY")
+    cny = summary["groups"][0]
+
+    assert cny["asset_amount"] == "60"
+    assert cny["fund_amount"] == "40"
+    assert cny["net_amount"] == "100"
+    assert cny["asset_amount_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["asset"]
+    assert cny["fund_amount_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["fund"]

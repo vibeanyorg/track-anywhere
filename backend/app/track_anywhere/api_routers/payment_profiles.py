@@ -16,7 +16,13 @@ from .common import COMMAND_ERRORS, command_payload, protected
 
 
 class RecordPaymentProfileExpenseBody(StrictCommand):
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(
+        gt=0,
+        description=(
+            "Positive payment-profile expense amount. Do not pass signed posting amounts; "
+            "persisted postings use positive debit/credit rows."
+        ),
+    )
     currency: str = Field(pattern=ASSET_CODE_PATTERN)
     category_id: str
     purpose: str = Field(min_length=1, max_length=256)

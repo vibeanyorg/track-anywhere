@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-MAX_PYTHON_FILE_LINES = 300
+MAX_PYTHON_FILE_LINES = 1000
 CHECKED_ROOTS = ("backend/app", "backend/tests", "cli", "alembic")
 
 

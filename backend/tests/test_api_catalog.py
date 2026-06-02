@@ -10,6 +10,16 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 from track_anywhere.api import app, service
+from track_anywhere.balance_semantics import (
+    ACCOUNT_TYPE_BALANCE_SEMANTICS,
+    CREDIT_CARD_CURRENT_BALANCE_COMPATIBILITY_ALIAS,
+    CREDIT_CARD_DERIVED_AVAILABLE_CREDIT_SEMANTICS,
+    LIABILITY_OUTSTANDING_AMOUNT_SEMANTICS,
+    LIABILITY_OVERPAYMENT_AMOUNT_SEMANTICS,
+    account_summary_group_semantics_fields,
+    account_summary_semantics_metadata,
+    liability_balance_view,
+)
 
 
 def test_api_categories_expense_income_and_summary_flow():
@@ -122,9 +132,24 @@ def test_api_credit_card_profile_flow():
     assert update_resp.status_code == 200
     payload = update_resp.json()["credit_card"]
     assert payload["profile"]["credit_limit"] == "10000"
+    assert payload["natural_balance"] == "300"
+    assert payload["natural_balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
     assert payload["current_balance"] == "300"
+    assert payload["current_balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
+    assert payload["balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
+    assert payload["compatibility_aliases"]["current_balance"] == CREDIT_CARD_CURRENT_BALANCE_COMPATIBILITY_ALIAS
+    assert payload["outstanding_balance"] == "300"
+    assert payload["outstanding_balance_semantics"] == LIABILITY_OUTSTANDING_AMOUNT_SEMANTICS
+    assert payload["overpayment_balance"] == "0"
+    assert payload["overpayment_balance_semantics"] == LIABILITY_OVERPAYMENT_AMOUNT_SEMANTICS
     assert payload["derived_available_credit"] == "9700"
+    assert payload["derived_available_credit_semantics"] == CREDIT_CARD_DERIVED_AVAILABLE_CREDIT_SEMANTICS
     assert payload["utilization_rate"] == "0.03"
+
+    balance_resp = client.get(f"/api/v1/query/accounts/{card_id}/balance", headers=headers)
+    assert balance_resp.status_code == 200
+    assert balance_resp.json()["liability_balance"] == liability_balance_view(Decimal("300"))
+    assert balance_resp.json()["official_balance"]["amount_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
 
     list_resp = client.get("/api/v1/credit-cards", headers=headers)
     assert list_resp.status_code == 200
@@ -201,6 +226,32 @@ def test_api_account_supports_crypto_wallet_asset_codes():
     assert balance_resp.json()["official_balance"]["amount"] == "9.126095"
 
 
+def test_api_book_scoped_accounts_include_balance_semantics():
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {service.owner_token}"}
+    book_resp = client.post(
+        "/api/v1/books",
+        json={"name": "Semantics Book", "kind": "personal", "base_currency": "USD", "timezone": "UTC"},
+        headers={**headers, "X-Idempotency-Key": "api-semantics-book"},
+    )
+    assert book_resp.status_code == 200
+    book_id = book_resp.json()["book"]["book_id"]
+
+    account_resp = client.post(
+        f"/api/v1/books/{book_id}/accounts",
+        json={"name": "Semantics Card", "type": "liability", "currency": "USD", "subtype": "credit_card"},
+        headers={**headers, "X-Idempotency-Key": "api-semantics-book-card"},
+    )
+    assert account_resp.status_code == 200
+    account_id = account_resp.json()["account"]["account_id"]
+    assert account_resp.json()["account"]["balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
+
+    list_resp = client.get(f"/api/v1/books/{book_id}/accounts", headers=headers)
+    assert list_resp.status_code == 200
+    accounts_by_id = {account["account_id"]: account for account in list_resp.json()["accounts"]}
+    assert accounts_by_id[account_id]["balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
+
+
 def test_api_account_summary_groups_real_accounts_by_subtype():
     client = TestClient(app)
     headers = {"Authorization": f"Bearer {service.owner_token}"}
@@ -260,18 +311,40 @@ def test_api_account_summary_separates_assets_and_liabilities():
         },
         headers={**headers, "X-Idempotency-Key": "api-summary-bank-liability"},
     )
+    overpayment_resp = client.post(
+        "/api/v1/accounts",
+        json={
+            "name": "Summary Bank Overpaid Credit",
+            "type": "liability",
+            "currency": "CNY",
+            "opening_balance": "-10",
+            "institution_type": "bank",
+            "subtype": "credit_card",
+            "institution": "Summary Bank",
+        },
+        headers={**headers, "X-Idempotency-Key": "api-summary-bank-overpaid-liability"},
+    )
     assert asset_resp.status_code == 200
     assert liability_resp.status_code == 200
+    assert overpayment_resp.status_code == 200
+    assert asset_resp.json()["account"]["balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["asset"]
+    assert liability_resp.json()["account"]["balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
 
     summary_resp = client.get("/api/v1/summary/accounts?group_by=institution&institution_type=bank&currency=CNY", headers=headers)
 
     assert summary_resp.status_code == 200
+    assert summary_resp.json()["summary_semantics"] == account_summary_semantics_metadata()
     groups = summary_resp.json()["groups"]
     summary_bank = [group for group in groups if group["key"] == "Summary Bank"][0]
-    assert summary_bank["amount"] == "130"
+    assert summary_bank["amount"] == "120"
     assert summary_bank["asset_amount"] == "100"
-    assert summary_bank["liability_amount"] == "30"
-    assert summary_bank["net_amount"] == "70"
+    assert summary_bank["fund_amount"] == "0"
+    assert summary_bank["system_amount"] == "0"
+    assert summary_bank["liability_amount"] == "20"
+    assert summary_bank["liability_outstanding_amount"] == "30"
+    assert summary_bank["liability_overpayment_amount"] == "10"
+    assert summary_bank["net_amount"] == "80"
+    assert {key: summary_bank[key] for key in account_summary_group_semantics_fields()} == account_summary_group_semantics_fields()
     assert summary_bank["types"] == ["asset", "liability"]
 
 

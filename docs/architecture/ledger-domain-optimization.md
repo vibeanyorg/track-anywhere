@@ -194,8 +194,8 @@ Amount migration policy:
 | Invariant | Enforcing layer now | Target enforcing layer |
 | --- | --- | --- |
 | Transaction has at least two postings | Domain service | Domain service plus migration validation query. |
-| Posting amount is non-zero | Domain service for commands | DB `check (amount_units <> 0)` after canonical amount migration. |
-| Transaction balances by asset in same-asset transactions | Domain service | Domain service plus deferred DB validation job. |
+| Debit/credit posting amount is positive; legacy signed rows are non-zero until rewritten | Domain service for commands | DB checks keyed by `amount_semantics`. |
+| Debit totals equal credit totals by currency for debit/credit transactions | Domain service | Domain service plus deferred DB validation job. |
 | Posting account belongs to the transaction book | Domain service | Composite FK `(book_id, account_id)` and `(book_id, transaction_id)`. |
 | Confirmed transaction is append-only | Domain service | Domain service, audit, and no update APIs for posted postings. |
 | Reversal is append-only | Domain service via `reversed_by` | Reversal transaction plus FK to original transaction. |
@@ -417,8 +417,10 @@ Target fields:
 - `transaction_id`
 - `position`
 - `account_id`
+- `side`
 - `amount_units`
 - `asset_code`
+- `amount_semantics`
 - optional `memo`
 - timestamps
 
@@ -426,7 +428,9 @@ Constraints:
 
 - FK `(book_id, transaction_id) -> transactions(book_id, transaction_id)`
 - FK `(book_id, account_id) -> accounts(book_id, account_id)`
-- `amount_units <> 0`
+- `side in ('debit', 'credit')` for `amount_semantics = 'debit_credit'`
+- `amount_units > 0` for `amount_semantics = 'debit_credit'`
+- `amount_units <> 0` only for quarantined `amount_semantics = 'legacy_signed'`
 - `unique (transaction_id, position)`
 
 ### `transaction_lines`
@@ -627,8 +631,8 @@ Migration strategy:
 | --- | --- | --- | --- |
 | Book isolation | Account, transaction, posting, line, category, budget target must share book | Domain service | Composite FKs on `(book_id, id)`. |
 | Transaction postings | At least two postings per posted transaction | Domain service | Validation job or deferred trigger where supported. |
-| Posting amount | Non-zero exact amount | Domain command | `check (amount_units <> 0)`. |
-| Transaction balance | Sum postings by asset equals zero for same-asset transactions | Domain service | Validation query in migration/CI; trigger only if practical. |
+| Posting amount | Positive exact amount for debit/credit rows; non-zero signed amount only for quarantined legacy rows | Domain command | `check (amount_semantics != 'debit_credit' or amount_units > 0)`. |
+| Transaction balance | Debit totals equal credit totals by currency for debit/credit transactions; legacy signed rows are audit-only until rewritten | Domain service | Validation query in migration/CI; trigger only if practical. |
 | Account currency | Posting asset equals account asset unless explicit FX flow | Domain service | Composite FK plus check through domain service. |
 | Category kind | Expense lines cannot use income category, and vice versa | Domain service | Domain service plus optional trigger/report validation. |
 | Category uniqueness | No duplicate active node under same parent/kind/book | Domain service | Unique index or partial unique index. |
@@ -871,10 +875,12 @@ Scope:
 
 Backfill rules:
 
-- For an expense category, derive line amount from positive postings to expense
-  accounts.
-- For an income category, derive line amount from negative postings from income
-  accounts.
+- For an expense category, derive line amount from debit postings to expense
+  accounts, falling back to legacy positive expense postings only during the
+  historical backfill.
+- For an income category, derive line amount from credit postings to income
+  accounts, falling back to legacy negative income postings only during the
+  historical backfill.
 - If a legacy transaction cannot derive exactly one line, mark it for manual
   migration review and block cutover rather than guessing.
 
@@ -960,7 +966,7 @@ Assertions:
 Fixture:
 
 - one pre-cutover transaction with `category_id` and no `transaction_lines`;
-- postings: cash `-38`, expense system/account `+38`;
+- postings: cash `credit 38`, expense system/account `debit 38`;
 - one canonical transaction with equivalent persisted line.
 
 Assertions:

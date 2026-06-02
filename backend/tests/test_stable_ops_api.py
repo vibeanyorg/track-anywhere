@@ -10,6 +10,7 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 from track_anywhere.api import app, service
+from track_anywhere.posting_semantics import canonical_posting_semantics_metadata
 
 
 def _headers(idempotency_key: str | None = None) -> dict[str, str]:
@@ -83,7 +84,13 @@ def test_transaction_snapshot_includes_related_category_and_accounts():
     assert snapshot.status_code == 200
     data = snapshot.json()["snapshot"]
     assert data["schema_version"] == "tx-snapshot.v1"
+    assert data["posting_semantics"] == {
+        **canonical_posting_semantics_metadata(),
+        "row_model": "debit_credit",
+        "amount_semantics": ["debit_credit"],
+    }
     assert data["transaction"]["transaction_id"] == transaction_id
+    assert data["transaction"]["posting_semantics"] == data["posting_semantics"]
     assert {account["account_id"] for account in data["accounts"]} >= {cash.json()["account"]["account_id"]}
     assert data["categories"][0]["category_id"] == category.json()["category"]["category_id"]
     assert data["category_versions"][0]["category_id"] == category.json()["category"]["category_id"]

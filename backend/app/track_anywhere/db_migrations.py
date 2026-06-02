@@ -29,11 +29,17 @@ LEGACY_SQLITE_COLUMNS = {
     },
     "postings": {
         "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
+        "side": "VARCHAR(10)",
+        "amount_semantics": "VARCHAR(20) NOT NULL DEFAULT 'legacy_signed'",
     },
     "drafts": {
         "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",
         "category_id": "VARCHAR(80)",
         "metadata": "JSON NOT NULL DEFAULT '{}'",
+    },
+    "draft_postings": {
+        "side": "VARCHAR(10)",
+        "amount_semantics": "VARCHAR(20) NOT NULL DEFAULT 'legacy_signed'",
     },
     "funds": {
         "book_id": "VARCHAR(80) NOT NULL DEFAULT 'book_default'",

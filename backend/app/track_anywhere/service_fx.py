@@ -5,7 +5,7 @@ from typing import Any
 
 from .domain_commands import RecordFxExchangeCommand
 from .errors import ValidationError
-from .ledger import Account, Posting, Transaction
+from .ledger import Account, Transaction, credit_posting, debit_posting
 from .transaction_builder import add_transaction_line, build_transaction
 
 
@@ -89,17 +89,17 @@ class FxUseCases:
         )
         accounts = [context.from_account, context.to_account, from_clearing_account, to_clearing_account]
         postings = [
-            Posting(command.from_account_id, -command.from_amount, command.from_currency),
-            Posting(from_clearing_account.account_id, command.from_amount, command.from_currency),
-            Posting(command.to_account_id, command.to_amount, command.to_currency),
-            Posting(to_clearing_account.account_id, -command.to_amount, command.to_currency),
+            credit_posting(command.from_account_id, command.from_amount, command.from_currency),
+            debit_posting(from_clearing_account.account_id, command.from_amount, command.from_currency),
+            debit_posting(command.to_account_id, command.to_amount, command.to_currency),
+            credit_posting(to_clearing_account.account_id, command.to_amount, command.to_currency),
         ]
         if context.fee_account is not None and command.fee_amount is not None:
             accounts.append(context.fee_account)
             postings.extend(
                 [
-                    Posting(command.from_account_id, -command.fee_amount, command.from_currency),
-                    Posting(context.fee_account.account_id, command.fee_amount, command.from_currency),
+                    credit_posting(command.from_account_id, command.fee_amount, command.from_currency),
+                    debit_posting(context.fee_account.account_id, command.fee_amount, command.from_currency),
                 ]
             )
 

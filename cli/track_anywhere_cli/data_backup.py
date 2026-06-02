@@ -9,6 +9,7 @@ from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.engine import make_url
 
 from .config import create_sqlite_backup, database_url_from_env, safe_backup_label
+from .posting_semantics import backup_posting_semantics
 
 
 POSTGRES_BACKUP_COUNT_TABLES = (
@@ -79,6 +80,7 @@ def create_postgres_backup(
             "alembic_revision": alembic_revision,
             "database_url": make_url(database_url).render_as_string(hide_password=True),
             "backup_type": "postgres_transaction_json",
+            "posting_semantics": backup_posting_semantics(),
             "transaction_id": transaction_id,
             "counts": _counts(connection),
             "transactions": transaction_rows,

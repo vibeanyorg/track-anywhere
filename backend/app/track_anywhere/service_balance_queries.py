@@ -4,6 +4,12 @@ from collections.abc import Iterable
 from decimal import Decimal
 from typing import Any
 
+from .balance_semantics import (
+    balance_delta_semantics_for_account_type,
+    balance_semantics_for_account_type,
+    liability_balance_view,
+)
+
 
 class BalanceQueryUseCases:
     def account_balance(self, token: str, account_id: str, *, include_drafts: bool = False) -> dict[str, Any]:
@@ -18,11 +24,15 @@ class BalanceQueryUseCases:
         currency = account.currency
         official_amount = official.get(currency, Decimal("0"))
         pending_amount = pending.get(currency, Decimal("0"))
+        balance_semantics = balance_semantics_for_account_type(account.type)
         result = {
             "account_id": account_id,
+            "account_type": account.type,
             "currency": currency,
+            "balance_semantics": balance_semantics,
             "official_balance": {
                 "amount": str(official_amount),
+                "amount_semantics": balance_semantics,
                 "source": "confirmed_postings",
                 "as_of_ledger_version": self.storage.confirmed_transaction_count(book_id=account.book_id),
             },
@@ -35,10 +45,16 @@ class BalanceQueryUseCases:
         if include_drafts:
             result["projected_balance"] = {
                 "amount": str(official_amount + pending_amount),
+                "amount_semantics": balance_semantics,
                 "pending_impact": str(pending_amount),
+                "pending_impact_semantics": balance_delta_semantics_for_account_type(account.type),
                 "included_draft_ids": included_draft_ids,
                 "projection_version": draft_count,
             }
+        if account.type == "liability":
+            result["liability_balance"] = liability_balance_view(official_amount)
+            if include_drafts:
+                result["projected_liability_balance"] = liability_balance_view(official_amount + pending_amount)
         return result
 
     def _account_balance_from_storage(self, account_id: str) -> dict[str, Decimal]:

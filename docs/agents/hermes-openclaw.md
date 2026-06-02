@@ -58,24 +58,38 @@ ta tx record --amount <amount> --currency CNY --from-account-id <source> --to-ac
 
 ### Balance Snapshots
 
-`ta account adjust` takes a delta, not a target balance.
+`ta account adjust` takes a natural-balance delta, not a target balance. First
+read `ta account balance <account_id> --json` and use
+`official_balance.amount` together with `official_balance.amount_semantics`.
+For liability and credit-card screenshots, convert the provider display to
+`natural_liability_balance` before computing the delta: amount owed is positive,
+and overpayment or credit balance is negative. Do not use provider signs or
+legacy posting signs directly.
 
 ```text
-delta = screenshot_balance - current_official_balance
+delta = target_natural_balance - official_balance.amount
 ```
 
 Use snapshots when the user provides only a current balance or explicitly says not to record spending details.
+Only compute this delta after the target balance and
+`official_balance.amount_semantics` refer to the same natural balance semantics.
 
 ### Credit Card Repayment
 
-Liabilities are positive amounts owed. A normal asset-to-liability transfer would increase the debt.
+Liabilities use natural balance semantics: a positive credit-card balance means
+amount owed, and a negative balance means overpayment. A normal
+asset-to-liability transfer is the repayment flow: it credits the source asset
+and debits the credit-card liability, so the debt goes down.
 
 For repayment with a fee:
 
-1. Record the fee as source asset -> fee expense.
-2. Decrease the source asset by the repayment principal with `account adjust`.
-3. Decrease the credit-card liability by the same principal with `account adjust`.
-4. Verify source, liability, and fee balances.
+1. Record the fee as source asset -> fee expense, if the fee is paid by the source asset.
+2. Record the repayment principal with `ta tx record --from-account-id <source_asset> --to-account-id <credit_card_liability>`.
+3. Verify source, liability, and fee balances.
+
+Do not use negative signs to force credit-card direction. Use the account types:
+payment to a liability reduces the liability; purchase from a liability
+increases the liability.
 
 ### Multi-Currency Summaries
 
@@ -136,6 +150,14 @@ ta income record --amount <amount> --to-account-id <target> --category-id <categ
 ta summary categories --kind expense --currency CNY --json
 ```
 
+Credit-card purchases and repayments both use positive amounts. For a
+credit-card purchase, call `ta expense record --from-account-id <credit_card>`;
+the ledger credits the liability and increases outstanding debt. For a
+repayment, call `ta tx record --from-account-id <source_asset>
+--to-account-id <credit_card_liability>`; the ledger debits the liability and
+decreases outstanding debt. Do not use negative amounts or raw posting fields
+to force credit-card direction.
+
 For SafePal Card USD backed by SafePal USD24, use `--payment safepal` instead of manually creating a card top-up or balance adjustment. The payment-profile expense command records both the USD expense and the immediate USD24 backing settlement in one confirmed transaction. Check the user-facing SafePal balance with:
 
 ```bash
@@ -146,7 +168,10 @@ The first version treats `1 USD = 1 USD24`. Do not ask the user to manually clea
 
 ## Credit Card Profiles
 
-Credit-card balances are liabilities and mean current amount owed. Record non-ledger metadata such as limit, available credit, statement day, due day, and annual fee through the profile surface:
+Credit-card balances are natural liability balances: positive means current
+amount owed and negative means overpayment. Record non-ledger metadata such as
+limit, available credit, statement day, due day, and annual fee through the
+profile surface:
 
 ```bash
 ta credit-card update <credit_card_account_id> --credit-limit <limit> --statement-day <day> --due-day <day> --idempotency-key <key> --json

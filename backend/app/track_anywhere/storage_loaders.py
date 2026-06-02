@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from .accounting import STORAGE_POSTING_AMOUNT_SEMANTICS_MISSING, storage_posting_amount_semantics
 from .audit import AuditEvent
 from .budgets import BudgetFund
 from .drafts import DraftTransaction
@@ -52,7 +53,15 @@ class StorageLoaders:
         postings_by_draft: dict[str, list[Posting]] = {}
         for posting in session.query(DraftPostingRecord).order_by(DraftPostingRecord.position).all():
             postings_by_draft.setdefault(posting.draft_id, []).append(
-                Posting(posting.account_id, Decimal(posting.amount), posting.currency)
+                Posting(
+                    posting.account_id,
+                    Decimal(posting.amount),
+                    posting.currency,
+                    side=getattr(posting, "side", None),
+                    amount_semantics=storage_posting_amount_semantics(
+                        getattr(posting, "amount_semantics", STORAGE_POSTING_AMOUNT_SEMANTICS_MISSING)
+                    ),
+                )
             )
         return {
             row.draft_id: DraftTransaction(

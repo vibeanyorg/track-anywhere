@@ -18,14 +18,30 @@ def _money_amounts(rows: Any) -> str:
             continue
         amount = row.get("amount")
         currency = row.get("currency")
+        side = row.get("side")
+        amount_semantics = row.get("amount_semantics")
         if amount is None and currency is None:
             continue
+        amount_text = ""
         if amount is None:
-            parts.append(_stringify(currency))
+            amount_text = _stringify(currency)
         elif currency is None:
-            parts.append(_stringify(amount))
+            amount_text = _stringify(amount)
         else:
-            parts.append(f"{amount} {currency}")
+            amount_text = f"{amount} {currency}"
+        if amount_semantics == "debit_credit":
+            side_text = _stringify(side) if side else "missing-side"
+            parts.append(f"{side_text} {amount_text} (debit_credit, positive amount)")
+        elif amount_semantics == "legacy_signed":
+            parts.append(f"legacy signed {amount_text} (audit before cutover)")
+        else:
+            posting_parts = []
+            if side:
+                posting_parts.append(_stringify(side))
+            posting_parts.append(amount_text)
+            if amount_semantics:
+                posting_parts.append(f"({_stringify(amount_semantics)})")
+            parts.append(" ".join(posting_parts))
     return ", ".join(parts)
 
 
@@ -42,6 +58,19 @@ def _transaction_category(transaction: dict[str, Any]) -> Any:
     return transaction.get("category_id")
 
 
+def _posting_semantics_summary(transaction: dict[str, Any]) -> str:
+    semantics = transaction.get("posting_semantics")
+    if not isinstance(semantics, dict):
+        return ""
+    parts = [
+        semantics.get("canonical_model"),
+        semantics.get("row_model"),
+        semantics.get("debit_credit_amount_rule"),
+        semantics.get("debit_credit_side_rule"),
+    ]
+    return " | ".join(_stringify(part) for part in parts if part)
+
+
 def transaction_summary(data: Any, *, title: str) -> Table:
     transaction = _as_dict(_as_dict(data).get("transaction"))
     if not transaction:
@@ -56,6 +85,7 @@ def transaction_summary(data: Any, *, title: str) -> Table:
         ("Category", _transaction_category(transaction)),
         ("Version", transaction.get("version")),
         ("Reversed by", transaction.get("reversed_by")),
+        ("Posting semantics", _posting_semantics_summary(transaction)),
         ("Amount row count", amount_row_count),
         ("Amounts", _money_amounts(amount_rows)),
     ]

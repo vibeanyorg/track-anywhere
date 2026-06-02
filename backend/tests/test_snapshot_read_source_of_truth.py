@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
+from track_anywhere.posting_semantics import canonical_posting_semantics_metadata
 
 
 def test_transaction_snapshot_accounts_use_storage_truth_when_memory_mirror_is_stale(tmp_path):
@@ -32,4 +33,9 @@ def test_transaction_snapshot_accounts_use_storage_truth_when_memory_mirror_is_s
 
     snapshot = service.transaction_snapshot(token, transaction.transaction_id)
 
+    assert snapshot["posting_semantics"] == {
+        **canonical_posting_semantics_metadata(),
+        "row_model": "debit_credit",
+        "amount_semantics": ["debit_credit"],
+    }
     assert cash.account_id in {account.account_id for account in snapshot["accounts"]}

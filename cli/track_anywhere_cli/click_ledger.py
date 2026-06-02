@@ -184,7 +184,14 @@ def _transactions(root: click.Group) -> None:
 
 def _record_command(group: click.Group, name: str = "record", command: str = "tx", tx_command: str | None = None) -> None:
     @group.command(name)
-    @click.option("--amount", required=True)
+    @click.option(
+        "--amount",
+        required=True,
+        help=(
+            "Signed natural balance delta. For liability accounts, positive increases debt; "
+            "negative decreases debt or creates overpayment. Stored as debit/credit postings."
+        ),
+    )
     @click.option("--from-account-id", "--from", "from_account_id", required=True)
     @click.option("--to-account-id", "--to", "to_account_id", required=True)
     @click.option("--purpose", required=True)
@@ -256,7 +263,14 @@ def _category_money_group(root: click.Group, group_name: str, account_dest: str,
 def _balances(root: click.Group) -> None:
     @root.command("balance-adjust")
     @click.argument("account_id")
-    @click.option("--amount", required=True)
+    @click.option(
+        "--amount",
+        required=True,
+        help=(
+            "Signed natural balance delta. For liability accounts, positive increases debt; "
+            "negative decreases debt or creates overpayment. Stored as debit/credit postings."
+        ),
+    )
     @click.option("--purpose", required=True)
     @click.option("--memo", default="")
     @click.option("--occurred-at")

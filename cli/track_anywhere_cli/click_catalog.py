@@ -190,7 +190,14 @@ def _account_create_command(group: click.Group, name: str = "create", command_va
     @click.argument("name")
     @click.option("--type", "account_type", default="asset")
     @click.option("--currency", default="CNY")
-    @click.option("--opening-balance", default="0")
+    @click.option(
+        "--opening-balance",
+        default="0",
+        help=(
+            "Signed natural opening balance. For liability accounts, positive means initial debt; "
+            "negative means initial overpayment. Stored as debit/credit postings."
+        ),
+    )
     @click.option("--institution-type")
     @click.option("--subtype")
     @click.option("--institution")
@@ -274,7 +281,14 @@ def _account_show_update_balance(group: click.Group) -> None:
 
     @group.command("adjust")
     @click.argument("account_id")
-    @click.option("--amount", required=True)
+    @click.option(
+        "--amount",
+        required=True,
+        help=(
+            "Signed natural balance delta. For liability accounts, positive increases debt; "
+            "negative decreases debt or creates overpayment. Stored as debit/credit postings."
+        ),
+    )
     @click.option("--purpose", required=True)
     @click.option("--memo", default="")
     @click.option("--occurred-at")

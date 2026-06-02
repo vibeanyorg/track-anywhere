@@ -3,6 +3,10 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+from .balance_semantics import (
+    account_summary_group_semantics_fields,
+    account_summary_semantics_metadata,
+)
 from .books import DEFAULT_BOOK_ID
 from .errors import ValidationError
 
@@ -46,7 +50,11 @@ class AccountSummaryUseCases:
                     "currency": account_currency,
                     "amount": Decimal("0"),
                     "asset_amount": Decimal("0"),
+                    "fund_amount": Decimal("0"),
+                    "system_amount": Decimal("0"),
                     "liability_amount": Decimal("0"),
+                    "liability_outstanding_amount": Decimal("0"),
+                    "liability_overpayment_amount": Decimal("0"),
                     "account_count": 0,
                     "account_ids": [],
                     "types": set(),
@@ -55,6 +63,12 @@ class AccountSummaryUseCases:
             group["amount"] += amount
             if account.type == "liability":
                 group["liability_amount"] += amount
+                group["liability_outstanding_amount"] += max(amount, Decimal("0"))
+                group["liability_overpayment_amount"] += max(-amount, Decimal("0"))
+            elif account.type == "fund":
+                group["fund_amount"] += amount
+            elif account.type == "system":
+                group["system_amount"] += amount
             else:
                 group["asset_amount"] += amount
             group["account_count"] += 1
@@ -66,14 +80,26 @@ class AccountSummaryUseCases:
             "currency": currency,
             "institution_type": institution_type,
             "include_system": include_system,
+            "summary_semantics": account_summary_semantics_metadata(),
             "groups": [
                 {
                     "key": group["key"],
                     "currency": group["currency"],
                     "amount": str(group["amount"]),
                     "asset_amount": str(group["asset_amount"]),
+                    "fund_amount": str(group["fund_amount"]),
+                    "system_amount": str(group["system_amount"]),
                     "liability_amount": str(group["liability_amount"]),
-                    "net_amount": str(group["asset_amount"] - group["liability_amount"]),
+                    "liability_outstanding_amount": str(group["liability_outstanding_amount"]),
+                    "liability_overpayment_amount": str(group["liability_overpayment_amount"]),
+                    "net_amount": str(
+                        group["asset_amount"]
+                        + group["fund_amount"]
+                        + group["system_amount"]
+                        + group["liability_overpayment_amount"]
+                        - group["liability_outstanding_amount"]
+                    ),
+                    **account_summary_group_semantics_fields(),
                     "account_count": group["account_count"],
                     "account_ids": sorted(group["account_ids"]),
                     "types": sorted(group["types"]),

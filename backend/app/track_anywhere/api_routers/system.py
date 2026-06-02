@@ -5,11 +5,13 @@ from fastapi.responses import JSONResponse
 
 from ..api_auth_runtime import auth_cookie_secure
 from ..api_browser_sessions import browser_sessions
-from ..api_dependencies import AuthToken
+from ..api_dependencies import AuthToken, IdempotencyKey
+from ..api_errors import raise_command_error
 from ..api_ports.system import SystemService
 from ..api_sessions import set_browser_session_cookies
+from ..commands import PostingSemanticsRewriteCommand, PostingSemanticsReviewResolutionsCommand
 from ..errors import PolicyDenied
-from .common import protected
+from .common import COMMAND_ERRORS, command_payload, protected
 
 
 router = APIRouter()
@@ -40,6 +42,44 @@ def ready(service: SystemService):
 @router.get("/system/status", dependencies=protected)
 def system_status(token: AuthToken, service: SystemService, include_counts: bool = False):
     return service.system_status(token, include_counts=include_counts)
+
+
+@router.get("/system/posting-semantics-audit", dependencies=protected)
+def posting_semantics_audit(token: AuthToken, service: SystemService, book_id: str = "book_default"):
+    return service.posting_semantics_audit(token, book_id=book_id)
+
+
+@router.get("/system/posting-semantics-cutover-plan", dependencies=protected)
+def posting_semantics_cutover_plan(token: AuthToken, service: SystemService, book_id: str = "book_default"):
+    return service.posting_semantics_cutover_plan(token, book_id=book_id)
+
+
+@router.post("/system/posting-semantics-rewrite", dependencies=protected)
+def rewrite_posting_semantics(
+    payload: PostingSemanticsRewriteCommand,
+    token: AuthToken,
+    key: IdempotencyKey,
+    service: SystemService,
+    book_id: str = "book_default",
+):
+    try:
+        return service.rewrite_posting_semantics(token, book_id=book_id, idempotency_key=key)
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "system.posting_semantics.rewrite", recorder=service)
+
+
+@router.post("/system/posting-semantics-review-resolutions", dependencies=protected)
+def resolve_posting_semantics_reviews(
+    payload: PostingSemanticsReviewResolutionsCommand,
+    token: AuthToken,
+    key: IdempotencyKey,
+    service: SystemService,
+    book_id: str = "book_default",
+):
+    try:
+        return service.resolve_posting_semantics_reviews(token, command_payload(payload), book_id=book_id, idempotency_key=key)
+    except COMMAND_ERRORS as exc:
+        raise_command_error(exc, "system.posting_semantics.resolve", recorder=service)
 
 
 @router.post("/session/dev-local")

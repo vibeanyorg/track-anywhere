@@ -5,6 +5,12 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
+from .accounting import (
+    PostingSide,
+    debit_credit_balanced,
+    posting_balance_delta,
+    validate_posting_semantic_shape,
+)
 from .books import DEFAULT_BOOK_ID
 from .errors import NotFound, StaleVersion, ValidationError
 from .ledger import Posting
@@ -43,6 +49,7 @@ class DraftBook:
         metadata: dict[str, Any] | None = None,
         book_id: str = DEFAULT_BOOK_ID,
     ) -> DraftTransaction:
+        _validate_draft_postings(proposed_postings)
         state = "ready_to_confirm" if not missing_fields and proposed_postings else "needs_review"
         draft = DraftTransaction(
             draft_id=f"draft_{uuid4().hex}",
@@ -83,16 +90,47 @@ class DraftBook:
         draft = self.require_current(draft_id, expected_version)
         if draft.state in {"confirmed", "rejected", "superseded"}:
             raise ValidationError(f"draft cannot be superseded from state: {draft.state}")
+        _validate_draft_postings(replacement.proposed_postings)
         draft.state = "superseded"
         draft.version += 1
         return replacement
 
-    def projected_impact(self, account_id: str) -> dict[str, Decimal]:
+    def projected_impact(self, account_id: str, *, account_type: str) -> dict[str, Decimal]:
         totals: dict[str, Decimal] = {}
         for draft in self.drafts.values():
             if draft.state not in {"ready_to_confirm", "needs_review", "parsed", "captured"}:
                 continue
             for posting in draft.proposed_postings:
                 if posting.account_id == account_id:
-                    totals[posting.currency] = totals.get(posting.currency, Decimal("0")) + posting.amount
+                    try:
+                        amount = posting_balance_delta(
+                            account_type,
+                            side=posting.side,
+                            amount=posting.amount,
+                            amount_semantics=posting.amount_semantics,
+                        )
+                    except ValidationError:
+                        continue
+                    totals[posting.currency] = totals.get(posting.currency, Decimal("0")) + amount
         return totals
+
+
+def _validate_draft_postings(postings: list[Posting]) -> None:
+    debit_credit_totals: dict[str, dict[PostingSide, Decimal]] = {}
+    for posting in postings:
+        validate_posting_semantic_shape(
+            side=posting.side,
+            amount=posting.amount,
+            amount_semantics=posting.amount_semantics,
+        )
+        if posting.amount_semantics != "debit_credit":
+            raise ValidationError("new draft postings must use debit_credit semantics")
+        if posting.side is None:
+            raise ValidationError("debit/credit posting requires side")
+        side_totals = debit_credit_totals.setdefault(
+            posting.currency,
+            {"debit": Decimal("0"), "credit": Decimal("0")},
+        )
+        side_totals[posting.side] += posting.amount
+    if debit_credit_balanced(debit_credit_totals):
+        raise ValidationError("draft postings must balance by currency under debit_credit semantics")

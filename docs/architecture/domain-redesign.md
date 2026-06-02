@@ -167,7 +167,7 @@ Rules:
 
 ### `postings`
 
-Postings stay close to the current model.
+Postings use the canonical debit/credit model.
 
 Core fields:
 
@@ -175,12 +175,18 @@ Core fields:
 - `transaction_id`
 - `position`
 - `account_id`
+- `side`: `debit` or `credit`
 - `amount`
 - `currency`
+- `amount_semantics`: `debit_credit` for new rows; `legacy_signed` only for
+  historical migration/audit rows
 
 Rules:
 
 - Posting accounts must belong to the same book as the transaction.
+- New postings must use explicit `side` plus positive `amount`; signed posting
+  amounts are not a runtime representation.
+- Posted transactions balance when debit totals equal credit totals by currency.
 - Reports about balances use postings.
 - Reports about spending purpose use transaction lines.
 

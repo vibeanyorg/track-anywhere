@@ -6,6 +6,7 @@ from typing import Any
 from .books import DEFAULT_BOOK_ID
 from .errors import NotFound
 from .ledger import Transaction
+from .posting_semantics_views import transaction_posting_semantics
 
 
 class LedgerQueryUseCases:
@@ -75,6 +76,7 @@ class LedgerQueryUseCases:
             "schema_version": "tx-snapshot.v1",
             "captured_at": datetime.now(timezone.utc),
             "book_id": transaction.book_id,
+            "posting_semantics": transaction_posting_semantics(transaction),
             "transaction": transaction,
             "accounts": accounts,
             "categories": categories,

@@ -70,7 +70,7 @@ def test_alembic_migrates_transaction_line_merchant_to_counterparty(tmp_path):
         ).fetchone()
         version = connection.execute("select version_num from alembic_version").fetchone()[0]
 
-    assert version == "0016_budget_counterparty_targets"
+    assert version == "0019_posting_constraints"
     assert TRANSACTION_LINE_COLUMNS <= columns
     assert "merchant_id" not in columns
     assert indexes["ix_transaction_lines_book_counterparty"] == (False, ("book_id", "counterparty_id"))

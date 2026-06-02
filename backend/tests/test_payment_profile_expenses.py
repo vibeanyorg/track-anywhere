@@ -85,25 +85,28 @@ def _assert_backed_card_postings(
     assert len(transaction.postings) == 6
     assert [line.line_type for line in transaction.lines] == ["expense", "fx_exchange"]
 
-    actual = Counter((posting.account_id, posting.amount, posting.currency) for posting in transaction.postings)
+    actual = Counter((posting.account_id, posting.side, posting.amount, posting.currency) for posting in transaction.postings)
     expected = Counter(
         {
-            (card_account_id, Decimal("-3.40"), "USD"): 1,
-            (usd24_account_id, Decimal("-3.40"), "USD24"): 1,
-            (card_account_id, Decimal("3.40"), "USD"): 1,
+            (card_account_id, "credit", Decimal("3.40"), "USD"): 1,
+            (usd24_account_id, "credit", Decimal("3.40"), "USD24"): 1,
+            (card_account_id, "debit", Decimal("3.40"), "USD"): 1,
             (
                 _system_account_id(service, account_type="expense", currency="USD", subtype="expense_clearing"),
+                "debit",
                 Decimal("3.40"),
                 "USD",
             ): 1,
             (
                 _system_account_id(service, account_type="system", currency="USD24", subtype="fx_clearing"),
+                "debit",
                 Decimal("3.40"),
                 "USD24",
             ): 1,
             (
                 _system_account_id(service, account_type="system", currency="USD", subtype="fx_clearing"),
-                Decimal("-3.40"),
+                "credit",
+                Decimal("3.40"),
                 "USD",
             ): 1,
         },

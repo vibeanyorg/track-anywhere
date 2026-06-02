@@ -6,13 +6,22 @@ from typing import Any, Iterable
 
 from sqlalchemy import delete, select
 
+from ..accounting import (
+    legacy_signed_amount_to_debit_credit,
+    STORAGE_POSTING_AMOUNT_SEMANTICS_MISSING,
+    storage_posting_amount_semantics_or_dirty,
+    validate_posting_semantic_shape,
+)
+from ..assets import default_asset_definition
 from ..domain_storage_models import TransactionLineRecord
 from ..errors import ValidationError
 from ..ledger import Posting, Transaction, TransactionLine
 from ..storage_json import to_jsonable
-from ..storage_models import PostingRecord, TransactionRecord
+from ..storage_models import AccountRecord, AssetRecord, PostingRecord, TransactionRecord
 from ..storage_posting_integrity import stored_posting_entries, transaction_posting_entries
 from ..storage_upsert_writers import upsert_record
+from ..transaction_builder import validate_transaction_postings
+from .ledger import account_from_record
 
 
 class TransactionRepository:
@@ -75,7 +84,7 @@ class TransactionRepository:
         )
         return self._transactions_from_joined_rows(rows)
 
-    def save(self, transactions: Iterable[Any]) -> None:
+    def save(self, transactions: Iterable[Any], *, allow_legacy_signed: bool = False) -> None:
         for transaction in transactions:
             upsert_record(
                 self.session,
@@ -92,7 +101,7 @@ class TransactionRepository:
                 },
                 ["transaction_id"],
             )
-            self._save_transaction_postings(transaction)
+            self._save_transaction_postings(transaction, allow_legacy_signed=allow_legacy_signed)
             self._replace_transaction_lines(transaction)
 
     def _selected_transaction_ids(
@@ -203,7 +212,7 @@ class TransactionRepository:
             lines.setdefault(row.transaction_id, []).append(line_from_record(row))
         return lines
 
-    def _save_transaction_postings(self, transaction: Transaction) -> None:
+    def _save_transaction_postings(self, transaction: Transaction, *, allow_legacy_signed: bool = False) -> None:
         existing = list(
             self.session.scalars(
                 select(PostingRecord)
@@ -212,18 +221,35 @@ class TransactionRepository:
             )
         )
         if existing:
-            if stored_posting_entries(existing, transaction.book_id) != transaction_posting_entries(transaction):
+            if stored_posting_entries(existing, transaction.book_id) != transaction_posting_entries(
+                transaction,
+                side_for_posting=lambda posting: _storage_side_for_posting(self.session, posting),
+            ):
                 raise ValidationError(
                     "confirmed transaction postings are immutable; write a reversal or adjustment instead"
                 )
             return
+        _validate_new_transaction_postings(
+            self.session,
+            transaction,
+            allow_legacy_signed=allow_legacy_signed,
+        )
         for index, posting in enumerate(transaction.postings):
+            validate_posting_semantic_shape(
+                side=posting.side,
+                amount=posting.amount,
+                amount_semantics=posting.amount_semantics,
+            )
+            if posting.amount_semantics == "legacy_signed" and not allow_legacy_signed:
+                raise ValidationError("new confirmed transactions must use debit_credit semantics")
             self.session.add(
                 PostingRecord(
                     transaction_id=transaction.transaction_id,
                     book_id=transaction.book_id,
                     position=index,
                     account_id=posting.account_id,
+                    side=_storage_side_for_posting(self.session, posting),
+                    amount_semantics=posting.amount_semantics,
                     amount=str(posting.amount),
                     currency=posting.currency,
                 )
@@ -272,11 +298,53 @@ def transaction_from_record(
         reversed_by=row.reversed_by,
         reverses_transaction_id=getattr(row, "reverses_transaction_id", None),
         version=row.version,
+            )
+
+
+def _validate_new_transaction_postings(session, transaction: Transaction, *, allow_legacy_signed: bool) -> None:
+    account_ids = {posting.account_id for posting in transaction.postings}
+    account_rows = session.scalars(select(AccountRecord).where(AccountRecord.account_id.in_(account_ids)))
+    accounts = {row.account_id: account_from_record(row) for row in account_rows}
+    validate_transaction_postings(
+        transaction.postings,
+        accounts=accounts,
+        book_id=transaction.book_id,
+        scale_lookup=lambda asset_code: _asset_scale(session, asset_code),
+        allow_legacy_signed=allow_legacy_signed,
     )
 
 
+def _asset_scale(session, asset_code: str) -> int:
+    row = session.get(AssetRecord, asset_code)
+    if row is not None:
+        return int(row.scale)
+    return default_asset_definition(asset_code).scale
+
+
 def posting_from_record(row: PostingRecord) -> Posting:
-    return Posting(row.account_id, Decimal(row.amount), row.currency)
+    return Posting(
+        row.account_id,
+        Decimal(row.amount),
+        row.currency,
+        side=getattr(row, "side", None),
+        amount_semantics=storage_posting_amount_semantics_or_dirty(
+            getattr(row, "amount_semantics", STORAGE_POSTING_AMOUNT_SEMANTICS_MISSING)
+        ),
+    )
+
+
+def _legacy_side_for_posting(session, posting: Posting) -> str | None:
+    account_type = session.scalar(select(AccountRecord.type).where(AccountRecord.account_id == posting.account_id))
+    if account_type is None:
+        return None
+    side, _amount = legacy_signed_amount_to_debit_credit(account_type, posting.amount)
+    return side
+
+
+def _storage_side_for_posting(session, posting: Posting) -> str | None:
+    if posting.side is not None or posting.amount_semantics != "legacy_signed":
+        return posting.side
+    return _legacy_side_for_posting(session, posting)
 
 
 def line_from_record(row: TransactionLineRecord) -> TransactionLine:

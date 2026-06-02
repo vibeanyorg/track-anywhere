@@ -4,8 +4,14 @@ from typing import Any
 
 from .commands import BalanceAdjustmentCommand
 from .errors import ValidationError
-from .ledger import Posting
+from .ledger import debit_credit_posting_for_balance_delta, opposite_side_posting
 from .transaction_builder import build_transaction
+
+
+def _balance_adjustment_postings(account, adjustment_account_id: str, amount, currency: str):
+    account_posting = debit_credit_posting_for_balance_delta(account.account_id, account.type, amount, currency)
+    adjustment_posting = opposite_side_posting(adjustment_account_id, account_posting.side, abs(amount), currency)
+    return [account_posting, adjustment_posting]
 
 
 class BalanceAdjustmentUseCases:
@@ -30,10 +36,7 @@ class BalanceAdjustmentUseCases:
                 memo=command.memo,
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
-                postings=[
-                    Posting(command.account_id, command.amount, command.currency),
-                    Posting(adjustment_account_id, -command.amount, command.currency),
-                ],
+                postings=_balance_adjustment_postings(account, adjustment_account_id, command.amount, command.currency),
                 accounts=[account, adjustment_account],
                 scale_lookup=self.assets.scale_for,
             )

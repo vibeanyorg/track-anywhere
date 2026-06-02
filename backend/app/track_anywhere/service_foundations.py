@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .books import DEFAULT_BOOK_ID
+from .errors import ValidationError
 from .ledger import Ledger
 
 
@@ -69,7 +70,12 @@ class DomainFoundationBootstrap:
             self.assets.ensure(posting.currency)
         for line in transaction.lines:
             self.assets.ensure(line.currency)
-        validator.validate_transaction_integrity(transaction, enforce_asset_scale=False)
+        try:
+            validator.validate_transaction_integrity(transaction, enforce_asset_scale=False)
+        except ValidationError:
+            if _requires_posting_semantics_audit(transaction, accounts_by_id):
+                return
+            raise
 
     @staticmethod
     def _book_id_for_postings(postings, accounts_by_id: dict[str, Any]) -> str:
@@ -78,3 +84,16 @@ class DomainFoundationBootstrap:
             if account is not None:
                 return account.book_id
         return DEFAULT_BOOK_ID
+
+
+def _requires_posting_semantics_audit(transaction, accounts_by_id: dict[str, Any]) -> bool:
+    for posting in transaction.postings:
+        if posting.account_id not in accounts_by_id:
+            return True
+        if posting.amount_semantics != "debit_credit":
+            return True
+        if posting.side not in {"debit", "credit"}:
+            return True
+        if posting.amount <= 0:
+            return True
+    return False

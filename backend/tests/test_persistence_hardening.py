@@ -1,15 +1,51 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from sqlalchemy import event
 
+from track_anywhere.drafts import DraftTransaction
 from track_anywhere.errors import ValidationError
-from track_anywhere.ledger import Posting
+from track_anywhere.ledger import Transaction, credit_posting, debit_posting, legacy_signed_posting
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND_APP = REPO_ROOT / "backend/app/track_anywhere"
+
+
+def test_public_app_code_does_not_directly_enable_legacy_signed_writes():
+    sources = {
+        path: path.read_text()
+        for path in BACKEND_APP.rglob("*.py")
+        if path.name != "ledger.py"
+    }
+
+    assert all("allow_legacy_signed_postings=True" not in source for source in sources.values())
+    assert all("allow_legacy_signed=True" not in source for source in sources.values())
+    assert all("legacy_signed_posting(" not in source for source in sources.values())
+
+
+def test_business_app_code_does_not_directly_construct_raw_postings():
+    allowed_raw_posting_construction_files = {
+        BACKEND_APP / "ledger.py",
+        BACKEND_APP / "storage_draft_reads.py",
+        BACKEND_APP / "storage_loaders.py",
+        BACKEND_APP / "storage_repositories/transactions.py",
+        BACKEND_APP / "storage_repositories/workflow.py",
+    }
+    sources = {
+        path: path.read_text()
+        for path in BACKEND_APP.rglob("*.py")
+        if path not in allowed_raw_posting_construction_files
+    }
+
+    assert all("Posting(" not in source for source in sources.values())
 
 
 def test_service_startup_does_not_persist_domain_defaults(tmp_path):
@@ -175,8 +211,8 @@ def test_confirmed_postings_are_immutable_after_initial_persist(tmp_path):
 
     transaction.postings.extend(
         [
-            Posting(account.account_id, Decimal("100"), "CNY"),
-            Posting(adjustment_account_id, Decimal("-100"), "CNY"),
+            debit_posting(account.account_id, Decimal("100"), "CNY"),
+            credit_posting(adjustment_account_id, Decimal("100"), "CNY"),
         ]
     )
 
@@ -190,6 +226,289 @@ def test_confirmed_postings_are_immutable_after_initial_persist(tmp_path):
         ).fetchone()[0]
 
     assert posting_count == 2
+
+
+def test_legacy_signed_side_inference_matches_immutability_check(tmp_path):
+    database_path = tmp_path / "track-anywhere.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Legacy Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="legacy-immutable-cash",
+    )
+    expense, _ = service.create_account(
+        token,
+        {"name": "Legacy Food", "type": "expense", "currency": "CNY"},
+        idempotency_key="legacy-immutable-food",
+    )
+    service.ledger.accounts[cash.account_id] = cash
+    service.ledger.accounts[expense.account_id] = expense
+    transaction = service.ledger.create_transaction(
+        "legacy transaction",
+        [
+            legacy_signed_posting(cash.account_id, Decimal("-12"), "CNY"),
+            legacy_signed_posting(expense.account_id, Decimal("12"), "CNY"),
+        ],
+        allow_legacy_signed=True,
+    )
+
+    service._commit_ledger_change(transaction, allow_legacy_signed_postings=True)
+    service._commit_ledger_change(transaction, allow_legacy_signed_postings=True)
+
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            select amount, side, amount_semantics
+            from postings
+            where transaction_id = ?
+            order by position
+            """,
+            (transaction.transaction_id,),
+        ).fetchall()
+
+    assert rows == [("-12", "credit", "legacy_signed"), ("12", "debit", "legacy_signed")]
+
+
+def test_service_reversal_rewrites_legacy_signed_postings_to_debit_credit(tmp_path):
+    database_path = tmp_path / "legacy-reversal-canonical.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Legacy Reverse Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="legacy-reverse-cash",
+    )
+    expense, _ = service.create_account(
+        token,
+        {"name": "Legacy Reverse Food", "type": "expense", "currency": "CNY"},
+        idempotency_key="legacy-reverse-food",
+    )
+    service.ledger.accounts[cash.account_id] = cash
+    service.ledger.accounts[expense.account_id] = expense
+    transaction = service.ledger.create_transaction(
+        "legacy transaction",
+        [
+            legacy_signed_posting(cash.account_id, Decimal("-12"), "CNY"),
+            legacy_signed_posting(expense.account_id, Decimal("12"), "CNY"),
+        ],
+        allow_legacy_signed=True,
+    )
+    service._commit_ledger_change(transaction, allow_legacy_signed_postings=True)
+
+    reversal, replay = service.reverse_transaction(
+        token,
+        {"transaction_id": transaction.transaction_id, "memo": "reverse legacy"},
+        idempotency_key="reverse-legacy-canonical",
+    )
+
+    assert replay is False
+    assert [(posting.amount, posting.side, posting.amount_semantics) for posting in reversal.postings] == [
+        (Decimal("12"), "debit", "debit_credit"),
+        (Decimal("12"), "credit", "debit_credit"),
+    ]
+
+    with sqlite3.connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            select amount, side, amount_semantics
+            from postings
+            where transaction_id = ?
+            order by position
+            """,
+            (reversal.transaction_id,),
+        ).fetchall()
+
+    assert rows == [("12", "debit", "debit_credit"), ("12", "credit", "debit_credit")]
+
+
+def test_repository_save_rejects_new_legacy_signed_postings_without_explicit_compatibility(tmp_path):
+    database_path = tmp_path / "legacy-write-guard.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Guard Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="legacy-write-guard-cash",
+    )
+    expense, _ = service.create_account(
+        token,
+        {"name": "Guard Expense", "type": "expense", "currency": "CNY"},
+        idempotency_key="legacy-write-guard-expense",
+    )
+    service.ledger.accounts[cash.account_id] = cash
+    service.ledger.accounts[expense.account_id] = expense
+    transaction = service.ledger.create_transaction(
+        "legacy write guard",
+        [
+            legacy_signed_posting(cash.account_id, Decimal("-12"), "CNY"),
+            legacy_signed_posting(expense.account_id, Decimal("12"), "CNY"),
+        ],
+        allow_legacy_signed=True,
+    )
+
+    with pytest.raises(ValidationError, match="new confirmed transactions must use debit_credit semantics"):
+        service._commit_ledger_change(transaction)
+
+
+def test_repository_save_rejects_new_legacy_signed_draft_postings_without_explicit_compatibility(tmp_path):
+    database_path = tmp_path / "legacy-draft-write-guard.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Guard Draft Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="legacy-draft-write-guard-cash",
+    )
+    draft = DraftTransaction(
+        draft_id="draft_legacy_write_guard",
+        memo="legacy draft write guard",
+        state="ready_to_confirm",
+        proposed_postings=[legacy_signed_posting(cash.account_id, Decimal("-12"), "CNY")],
+        missing_fields=[],
+        source="agent",
+        confidence=0.9,
+        book_id=cash.book_id,
+    )
+
+    with pytest.raises(ValidationError, match="new draft postings must use debit_credit semantics"):
+        service._commit_draft_change(draft)
+
+
+def test_repository_save_rejects_unbalanced_debit_credit_draft_postings_without_builder(tmp_path):
+    database_path = tmp_path / "unbalanced-draft-repository-write.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Unbalanced Draft Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="unbalanced-draft-repository-cash",
+    )
+    expense, _ = service.create_account(
+        token,
+        {"name": "Unbalanced Draft Expense", "type": "expense", "currency": "CNY"},
+        idempotency_key="unbalanced-draft-repository-expense",
+    )
+    draft = DraftTransaction(
+        draft_id="draft_unbalanced_repository_write",
+        memo="unbalanced draft repository write",
+        state="ready_to_confirm",
+        proposed_postings=[
+            credit_posting(cash.account_id, Decimal("12"), "CNY"),
+            debit_posting(expense.account_id, Decimal("10"), "CNY"),
+        ],
+        missing_fields=[],
+        source="agent",
+        confidence=0.9,
+        book_id=cash.book_id,
+    )
+
+    with pytest.raises(ValidationError, match="draft postings must balance by currency"):
+        service._commit_draft_change(draft)
+
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "select count(*) from drafts where draft_id = ?",
+            (draft.draft_id,),
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "select count(*) from draft_postings where draft_id = ?",
+            (draft.draft_id,),
+        ).fetchone()[0] == 0
+
+
+def test_repository_save_rejects_mixed_draft_posting_semantics_even_with_legacy_compatibility(tmp_path):
+    database_path = tmp_path / "mixed-draft-repository-write.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Mixed Draft Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="mixed-draft-repository-cash",
+    )
+    expense, _ = service.create_account(
+        token,
+        {"name": "Mixed Draft Expense", "type": "expense", "currency": "CNY"},
+        idempotency_key="mixed-draft-repository-expense",
+    )
+    draft = DraftTransaction(
+        draft_id="draft_mixed_repository_write",
+        memo="mixed draft repository write",
+        state="ready_to_confirm",
+        proposed_postings=[
+            legacy_signed_posting(cash.account_id, Decimal("-12"), "CNY"),
+            debit_posting(expense.account_id, Decimal("12"), "CNY"),
+        ],
+        missing_fields=[],
+        source="agent",
+        confidence=0.9,
+        book_id=cash.book_id,
+    )
+
+    with pytest.raises(ValidationError, match="draft postings must not mix legacy signed and debit/credit semantics"):
+        service._commit_draft_change(draft, allow_legacy_signed_postings=True)
+
+
+def test_repository_save_rejects_unbalanced_legacy_signed_draft_postings_even_with_compatibility(tmp_path):
+    database_path = tmp_path / "unbalanced-legacy-draft-repository-write.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Unbalanced Legacy Draft Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="unbalanced-legacy-draft-repository-cash",
+    )
+    expense, _ = service.create_account(
+        token,
+        {"name": "Unbalanced Legacy Draft Expense", "type": "expense", "currency": "CNY"},
+        idempotency_key="unbalanced-legacy-draft-repository-expense",
+    )
+    draft = DraftTransaction(
+        draft_id="draft_unbalanced_legacy_repository_write",
+        memo="unbalanced legacy draft repository write",
+        state="ready_to_confirm",
+        proposed_postings=[
+            legacy_signed_posting(cash.account_id, Decimal("-12"), "CNY"),
+            legacy_signed_posting(expense.account_id, Decimal("10"), "CNY"),
+        ],
+        missing_fields=[],
+        source="agent",
+        confidence=0.9,
+        book_id=cash.book_id,
+    )
+
+    with pytest.raises(ValidationError, match="legacy signed draft postings must balance by currency"):
+        service._commit_draft_change(draft, allow_legacy_signed_postings=True)
+
+
+def test_repository_save_rejects_unbalanced_debit_credit_postings_without_builder(tmp_path):
+    database_path = tmp_path / "unbalanced-repository-write.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Unbalanced Cash", "type": "asset", "currency": "CNY"},
+        idempotency_key="unbalanced-repository-cash",
+    )
+    expense, _ = service.create_account(
+        token,
+        {"name": "Unbalanced Expense", "type": "expense", "currency": "CNY"},
+        idempotency_key="unbalanced-repository-expense",
+    )
+    transaction = Transaction(
+        transaction_id="txn_unbalanced_repository_write",
+        book_id=cash.book_id,
+        memo="unbalanced repository write",
+        occurred_at=datetime.now(timezone.utc),
+        purpose="unbalanced repository write",
+        postings=[
+            debit_posting(cash.account_id, Decimal("10"), "CNY"),
+            debit_posting(expense.account_id, Decimal("10"), "CNY"),
+        ],
+    )
+
+    with pytest.raises(ValidationError, match="postings must balance by currency"):
+        service._commit_ledger_change(transaction)
 
 
 def test_service_startup_rejects_duplicate_balance_adjustment_postings(tmp_path):
@@ -213,24 +532,26 @@ def test_service_startup_rejects_duplicate_balance_adjustment_postings(tmp_path)
     )
 
     with sqlite3.connect(database_path) as connection:
-        rows = connection.execute(
-            """
-            select transaction_id, book_id, account_id, amount, currency
-            from postings
-            where transaction_id = ?
-            order by position
-            """,
-            (transaction.transaction_id,),
-        ).fetchall()
-        for offset, row in enumerate(rows, start=2):
-            transaction_id, book_id, account_id, amount, currency = row
-            connection.execute(
+            rows = connection.execute(
                 """
-                insert into postings (transaction_id, book_id, position, account_id, amount, currency)
-                values (?, ?, ?, ?, ?, ?)
+                select transaction_id, book_id, account_id, side, amount_semantics, amount, currency
+                from postings
+                where transaction_id = ?
+                order by position
                 """,
-                (transaction_id, book_id, offset, account_id, amount, currency),
-            )
+                (transaction.transaction_id,),
+            ).fetchall()
+            for offset, row in enumerate(rows, start=2):
+                transaction_id, book_id, account_id, side, amount_semantics, amount, currency = row
+                connection.execute(
+                    """
+                    insert into postings (
+                        transaction_id, book_id, position, account_id, side, amount_semantics, amount, currency
+                    )
+                    values (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (transaction_id, book_id, offset, account_id, side, amount_semantics, amount, currency),
+                )
 
     with pytest.raises(ValidationError, match="balance adjustment transaction requires exactly two postings"):
         FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")

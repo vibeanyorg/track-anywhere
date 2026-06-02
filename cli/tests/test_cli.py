@@ -8,6 +8,7 @@ from click.testing import CliRunner
 
 import track_anywhere_cli.main as cli_main
 import track_anywhere_cli.oauth_login as oauth_login
+from track_anywhere.posting_semantics import backup_posting_semantics_metadata
 from track_anywhere_cli.main import EXIT_AUTH, EXIT_VALIDATION, cli, exit_for_status, main
 from track_anywhere_cli.output import CliDiagnostic
 
@@ -242,6 +243,7 @@ def test_data_backup_creates_readable_sqlite_copy(tmp_path, capsys):
     assert backup_path.exists()
     assert backup_path.parent == tmp_path / "backups"
     assert "before-real-write" in backup_path.name
+    assert payload["data"]["backup"]["posting_semantics"] == backup_posting_semantics_metadata()
     with sqlite3.connect(backup_path) as connection:
         assert connection.execute("select name from accounts where account_id = 'acc_1'").fetchone() == ("Cash",)
 

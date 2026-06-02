@@ -84,6 +84,7 @@ class LedgerChanges:
     adjustment_account_ids: dict[str, str] = field(default_factory=dict)
     category_history: CategoryHistoryChanges | None = None
     counterparties: tuple[Any, ...] = ()
+    allow_legacy_signed_postings: bool = False
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,7 @@ class AuthLoginChanges:
 class DraftChanges:
     drafts: tuple[Any, ...] = ()
     transactions: tuple[Any, ...] = ()
+    allow_legacy_signed_postings: bool = False
     metadata: WriteMetadata = field(default_factory=WriteMetadata)
 
 

@@ -13,6 +13,8 @@ from uuid import uuid4
 from .output import CliDiagnostic
 from sqlalchemy.engine import make_url
 
+from .posting_semantics import backup_posting_semantics
+
 
 DEFAULT_DATABASE_URL = "sqlite:///./.local/track-anywhere.sqlite3"
 
@@ -146,6 +148,7 @@ def create_sqlite_backup(database_url: str | None = None, output_dir: str | None
         "created_at": created_at.isoformat(),
         "database_url": resolved_database_url,
         "source_path": str(source_path),
+        "posting_semantics": backup_posting_semantics(),
     }
 
 

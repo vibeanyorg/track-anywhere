@@ -53,7 +53,10 @@ class CreateBudgetCommand(StrictCommand):
     name: str = Field(min_length=1, max_length=120)
     period: Literal["monthly", "weekly", "yearly", "custom"]
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
-    total_amount: Decimal = Field(gt=0)
+    total_amount: Decimal = Field(
+        gt=0,
+        description="Positive budget limit amount. This is not a ledger posting amount.",
+    )
     starts_on: date | None = None
     ends_on: date | None = None
     rollover_policy: Literal["none", "carry_remaining", "carry_overspend"] = "none"
@@ -63,7 +66,11 @@ class CreateBudgetTargetCommand(StrictCommand):
     target_type: Literal["book", "category_node", "category_subtree", "project", "counterparty"]
     target_id: str | None = None
     mode: Literal["include", "exclude"] = "include"
-    amount: Decimal | None = Field(default=None, gt=0)
+    amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description="Optional positive budget target amount. This is not a ledger posting amount.",
+    )
     metadata: dict[str, str] = Field(default_factory=dict)
 
 
@@ -74,7 +81,10 @@ class CreatePaymentProfileCommand(StrictCommand):
     instrument_account_id: str
     backing_account_id: str
     settlement_mode: str = Field(min_length=1, max_length=40)
-    settlement_rate: Decimal = Field(gt=0)
+    settlement_rate: Decimal = Field(
+        gt=0,
+        description="Positive settlement conversion rate. This is not a ledger posting amount.",
+    )
 
     @model_validator(mode="after")
     def _validate_first_version(self):
@@ -104,7 +114,13 @@ class CreateCounterpartyCommand(StrictCommand):
 
 class RecordPaymentProfileExpenseCommand(StrictCommand):
     payment: str = Field(min_length=1, max_length=80)
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(
+        gt=0,
+        description=(
+            "Positive payment-profile expense amount. Do not pass signed posting amounts; "
+            "persisted postings use positive debit/credit rows."
+        ),
+    )
     currency: str = Field(pattern=ASSET_CODE_PATTERN)
     category_id: str
     purpose: str = Field(min_length=1, max_length=256)
@@ -116,16 +132,35 @@ class RecordPaymentProfileExpenseCommand(StrictCommand):
 class RecordFxExchangeCommand(StrictCommand):
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     from_account_id: str
-    from_amount: Decimal = Field(gt=0)
+    from_amount: Decimal = Field(
+        gt=0,
+        description=(
+            "Positive source-currency amount. Do not pass signed posting amounts; "
+            "persisted postings use positive debit/credit rows."
+        ),
+    )
     from_currency: str = Field(pattern=ASSET_CODE_PATTERN)
     to_account_id: str
-    to_amount: Decimal = Field(gt=0)
+    to_amount: Decimal = Field(
+        gt=0,
+        description=(
+            "Positive target-currency amount. Do not pass signed posting amounts; "
+            "persisted postings use positive debit/credit rows."
+        ),
+    )
     to_currency: str = Field(pattern=ASSET_CODE_PATTERN)
     purpose: str = Field(default="fx_exchange", min_length=1, max_length=256)
     memo: str = Field(default="", max_length=256)
     rate_source: str = Field(default="manual", min_length=1, max_length=80)
     fee_account_id: str | None = None
-    fee_amount: Decimal | None = Field(default=None, gt=0)
+    fee_amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Positive optional fee amount. Do not pass signed posting amounts; "
+            "persisted postings use positive debit/credit rows."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_exchange_shape(self):
@@ -138,7 +173,10 @@ class RecordFxExchangeCommand(StrictCommand):
 
 class RecordInvestmentValuationCommand(StrictCommand):
     account_id: str
-    value: Decimal = Field(gt=0)
+    value: Decimal = Field(
+        gt=0,
+        description="Positive observed investment account value. This is a valuation snapshot, not a ledger posting amount.",
+    )
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
     observed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     source: str = Field(default="manual", min_length=1, max_length=80)

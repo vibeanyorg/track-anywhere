@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from decimal import Decimal
 
 import pytest
 
@@ -46,6 +47,9 @@ def test_reversal_restores_balance_and_records_reversal_link():
     assert service.account_balance(token, cash.account_id)["official_balance"]["amount"] == "100"
     assert service.get_transaction(token, transaction.transaction_id).reversed_by == reversal.transaction_id
     assert reversal.reverses_transaction_id == transaction.transaction_id
+    assert all(posting.amount_semantics == "debit_credit" for posting in reversal.postings)
+    assert all(posting.amount > Decimal("0") for posting in reversal.postings)
+    assert {posting.side for posting in reversal.postings} == {"debit", "credit"}
 
     with pytest.raises(ValidationError):
         service.reverse_transaction(
@@ -215,6 +219,59 @@ def test_fx_exchange_uses_clearing_accounts_and_keeps_plain_transfers_single_ass
     assert service.account_balance(token, cny.account_id)["official_balance"]["amount"] == "0.00"
     assert service.account_balance(token, usd.account_id)["official_balance"]["amount"] == "100.00"
     assert service.spending_report(token, "book_default")["groups"] == []
+
+
+def test_fx_exchange_to_credit_card_liability_reduces_outstanding_balance():
+    service = FinanceService(DeploymentSecurityConfig(), database_url="sqlite:///:memory:")
+    token = service.owner_token
+    cny, _ = service.create_account(
+        token,
+        {"name": "Wechat Lingqian Tong", "type": "asset", "currency": "CNY", "opening_balance": "20.00"},
+        idempotency_key="fx-repay-cny-source",
+    )
+    card, _ = service.create_account(
+        token,
+        {
+            "name": "Guangfa Visa",
+            "type": "liability",
+            "currency": "USD",
+            "opening_balance": "12.80",
+            "subtype": "credit_card",
+        },
+        idempotency_key="fx-repay-usd-card",
+    )
+    fee, _ = service.create_account(
+        token,
+        {
+            "name": "Fees",
+            "type": "expense",
+            "currency": "CNY",
+            "institution_type": "other",
+            "subtype": "fee",
+        },
+        idempotency_key="fx-repay-fee",
+    )
+
+    transaction, _ = service.record_fx_exchange(
+        token,
+        {
+            "from_account_id": cny.account_id,
+            "from_amount": "11.66",
+            "from_currency": "CNY",
+            "to_account_id": card.account_id,
+            "to_amount": "1.72",
+            "to_currency": "USD",
+            "fee_account_id": fee.account_id,
+            "fee_amount": "0.10",
+            "memo": "credit card fx repayment",
+        },
+        idempotency_key="fx-repay-credit-card",
+    )
+
+    assert [line.line_type for line in transaction.lines] == ["fx_exchange", "fx_fee"]
+    assert service.account_balance(token, cny.account_id)["official_balance"]["amount"] == "8.24"
+    assert service.account_balance(token, card.account_id)["official_balance"]["amount"] == "11.08"
+    assert service.account_balance(token, fee.account_id)["official_balance"]["amount"] == "0.10"
 
 
 def test_investment_event_can_link_to_ledger_transaction_and_valuation_persists(tmp_path):

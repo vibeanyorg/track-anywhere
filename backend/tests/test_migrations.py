@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 from alembic import command
@@ -14,6 +15,9 @@ from schema_assertions import (
 )
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_alembic_clears_legacy_duplicate_transaction_memos(tmp_path):
@@ -45,7 +49,7 @@ def test_alembic_clears_legacy_duplicate_transaction_memos(tmp_path):
         payment_instrument_columns = {row[1] for row in connection.execute("pragma table_info(payment_instruments)").fetchall()}
         counterparty_columns = {row[1] for row in connection.execute("pragma table_info(counterparties)").fetchall()}
 
-    assert version == "0016_budget_counterparty_targets"
+    assert version == "0019_posting_constraints"
     assert PAYMENT_PROFILE_COLUMNS <= payment_profile_columns
     assert PAYMENT_INSTRUMENT_COLUMNS <= payment_instrument_columns
     assert COUNTERPARTY_COLUMNS <= counterparty_columns
@@ -81,7 +85,7 @@ def test_alembic_drops_legacy_django_tables_without_dropping_track_anywhere_tabl
         payment_profile_indexes = index_columns(connection, "payment_profiles")
         counterparty_indexes = index_columns(connection, "counterparties")
 
-    assert version == "0016_budget_counterparty_targets"
+    assert version == "0019_posting_constraints"
     assert "accounts" in tables
     assert "auth_identities" in tables
     assert "payment_profiles" in tables
@@ -140,7 +144,7 @@ def test_alembic_backfills_lines_and_drops_legacy_category_columns(tmp_path):
             """
         ).fetchone()
 
-    assert version == "0016_budget_counterparty_targets"
+    assert version == "0019_posting_constraints"
     assert "category_id" not in transaction_columns
     assert "primary" not in category_columns
     assert "secondary" not in category_columns
@@ -172,6 +176,312 @@ def test_alembic_category_backfill_preflight_reports_all_blockers(tmp_path):
     assert "legacy category does not exist" in message
     assert "txn_ambiguous_amount" in message
     assert "cannot derive exactly one reporting line" in message
+
+
+def test_alembic_backfills_debit_credit_side_from_legacy_signed_postings(tmp_path):
+    database_path = tmp_path / "legacy-posting-side.sqlite3"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "0016_budget_counterparty_targets")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_account(connection, "acc_cash", type="asset")
+        _insert_account(connection, "acc_food", type="expense")
+        _insert_account(connection, "acc_card", type="liability")
+        _insert_transaction(connection, "txn_asset_expense", memo="", purpose="lunch")
+        _insert_posting(connection, "txn_asset_expense", 0, "acc_cash", "-38")
+        _insert_posting(connection, "txn_asset_expense", 1, "acc_food", "38")
+        _insert_transaction(connection, "txn_legacy_liability", memo="", purpose="legacy liability balance")
+        _insert_posting(connection, "txn_legacy_liability", 0, "acc_card", "12")
+        _insert_posting(connection, "txn_legacy_liability", 1, "acc_cash", "-12")
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(database_path) as connection:
+        postings = connection.execute(
+            """
+            select transaction_id, account_id, amount, side, amount_semantics
+            from postings
+            where transaction_id in ('txn_asset_expense', 'txn_legacy_liability')
+            order by transaction_id, position
+            """
+        ).fetchall()
+
+    assert postings == [
+        ("txn_asset_expense", "acc_cash", "-38", "credit", "legacy_signed"),
+        ("txn_asset_expense", "acc_food", "38", "debit", "legacy_signed"),
+        ("txn_legacy_liability", "acc_card", "12", "debit", "legacy_signed"),
+        ("txn_legacy_liability", "acc_cash", "-12", "credit", "legacy_signed"),
+    ]
+
+
+def test_legacy_sqlite_adoption_backfills_posting_side_and_future_debit_credit_defaults(tmp_path):
+    database_path = tmp_path / "legacy-sqlite-adoption-posting-semantics.sqlite3"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "0007_drop_django_tables")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_account(connection, "acc_cash", type="asset")
+        _insert_account(connection, "acc_food", type="expense")
+        _insert_transaction(connection, "txn_legacy_adopted", memo="", purpose="legacy adopted")
+        _insert_posting(connection, "txn_legacy_adopted", 0, "acc_cash", "-10")
+        _insert_posting(connection, "txn_legacy_adopted", 1, "acc_food", "10")
+        connection.execute("drop table alembic_version")
+
+    FinanceService(DeploymentSecurityConfig(), database_url=database_url)
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_transaction(connection, "txn_new_after_adoption", memo="", purpose="new debit credit")
+        connection.execute(
+            """
+            insert into postings (transaction_id, position, account_id, side, amount, currency)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            ("txn_new_after_adoption", 0, "acc_food", "debit", "10", "CNY"),
+        )
+        version = connection.execute("select version_num from alembic_version").fetchone()[0]
+        rows = connection.execute(
+            """
+            select transaction_id, side, amount, amount_semantics
+            from postings
+            where transaction_id in ('txn_legacy_adopted', 'txn_new_after_adoption')
+            order by transaction_id, position
+            """
+        ).fetchall()
+
+    assert version == "0019_posting_constraints"
+    assert rows == [
+        ("txn_legacy_adopted", "credit", "-10", "legacy_signed"),
+        ("txn_legacy_adopted", "debit", "10", "legacy_signed"),
+        ("txn_new_after_adoption", "debit", "10", "debit_credit"),
+    ]
+
+
+def test_alembic_defaults_new_postings_to_debit_credit_after_legacy_backfill(tmp_path):
+    database_path = tmp_path / "posting-semantics-default.sqlite3"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "0016_budget_counterparty_targets")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_account(connection, "acc_cash", type="asset")
+        _insert_account(connection, "acc_food", type="expense")
+        _insert_transaction(connection, "txn_legacy", memo="", purpose="legacy")
+        _insert_posting(connection, "txn_legacy", 0, "acc_cash", "-10")
+        _insert_posting(connection, "txn_legacy", 1, "acc_food", "10")
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_transaction(connection, "txn_new", memo="", purpose="new debit credit")
+        connection.execute(
+            """
+            insert into postings (transaction_id, position, account_id, side, amount, currency)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            ("txn_new", 0, "acc_food", "debit", "10", "CNY"),
+        )
+        rows = connection.execute(
+            """
+            select transaction_id, side, amount, amount_semantics
+            from postings
+            where transaction_id in ('txn_legacy', 'txn_new')
+            order by transaction_id, position
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("txn_legacy", "credit", "-10", "legacy_signed"),
+        ("txn_legacy", "debit", "10", "legacy_signed"),
+        ("txn_new", "debit", "10", "debit_credit"),
+    ]
+
+
+def test_alembic_defaults_new_draft_postings_to_debit_credit_after_legacy_backfill(tmp_path):
+    database_path = tmp_path / "draft-posting-semantics-default.sqlite3"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "0016_budget_counterparty_targets")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_draft(connection, "draft_legacy")
+        connection.execute(
+            """
+            insert into draft_postings (draft_id, position, account_id, amount, currency)
+            values (?, ?, ?, ?, ?)
+            """,
+            ("draft_legacy", 0, "acc_food", "10", "CNY"),
+        )
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_draft(connection, "draft_new")
+        connection.execute(
+            """
+            insert into draft_postings (draft_id, position, account_id, side, amount, currency)
+            values (?, ?, ?, ?, ?, ?)
+            """,
+            ("draft_new", 0, "acc_food", "debit", "10", "CNY"),
+        )
+        rows = connection.execute(
+            """
+            select draft_id, side, amount, amount_semantics
+            from draft_postings
+            where draft_id in ('draft_legacy', 'draft_new')
+            order by draft_id, position
+            """
+        ).fetchall()
+
+    assert rows == [
+        ("draft_legacy", "debit", "10", "legacy_signed"),
+        ("draft_new", "debit", "10", "debit_credit"),
+    ]
+
+
+def test_migration_preserves_invalid_legacy_signed_rows_for_audit(tmp_path):
+    database_path = tmp_path / "legacy-zero-posting-audit.sqlite3"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "0016_budget_counterparty_targets")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_account(connection, "acc_cash", type="asset")
+        _insert_account(connection, "acc_food", type="expense")
+        _insert_transaction(connection, "txn_zero_legacy", memo="", purpose="dirty legacy fixture")
+        _insert_posting(connection, "txn_zero_legacy", 0, "acc_cash", "0")
+        _insert_posting(connection, "txn_zero_legacy", 1, "acc_food", "5")
+
+    command.upgrade(config, "head")
+
+    service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
+
+    audit = service.posting_semantics_audit(service.owner_token)
+
+    assert audit["cutover_ready"] is False
+    assert audit["manual_review_blockers"][0]["issue_type"] == "invalid_legacy_signed_shape"
+
+
+def test_migrated_balance_reads_do_not_treat_unknown_posting_semantics_as_signed_amount(tmp_path):
+    database_path = tmp_path / "legacy-invalid-posting-semantics.sqlite3"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "0016_budget_counterparty_targets")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_account(connection, "acc_cash", type="asset")
+        _insert_transaction(connection, "txn_unknown_semantics", memo="", purpose="dirty semantic fixture")
+        _insert_posting(connection, "txn_unknown_semantics", 0, "acc_cash", "25")
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            update postings
+            set amount_semantics = 'unknown'
+            where transaction_id = 'txn_unknown_semantics'
+            """
+        )
+
+    service = FinanceService(DeploymentSecurityConfig(), database_url=database_url)
+    service.storage._read_transactions = None
+
+    balance = service.account_balance(service.owner_token, "acc_cash")
+
+    assert balance["official_balance"]["amount"] == "0"
+
+
+def test_migration_makes_posting_amount_semantics_not_null(tmp_path):
+    database_path = tmp_path / "posting-semantics-not-null.sqlite3"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(database_path) as connection:
+        posting_columns = {
+            row[1]: row[3]
+            for row in connection.execute("pragma table_info(postings)")
+        }
+        draft_posting_columns = {
+            row[1]: row[3]
+            for row in connection.execute("pragma table_info(draft_postings)")
+        }
+
+    assert posting_columns["amount_semantics"] == 1
+    assert draft_posting_columns["amount_semantics"] == 1
+
+
+def test_migration_constraints_reject_invalid_debit_credit_shape(tmp_path):
+    database_path = tmp_path / "legacy-invalid-debit-credit-shape.sqlite3"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "0016_budget_counterparty_targets")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_account(connection, "acc_cash", type="asset")
+        _insert_transaction(connection, "txn_invalid_debit_credit_shape", memo="", purpose="dirty debit credit fixture")
+        _insert_posting(connection, "txn_invalid_debit_credit_shape", 0, "acc_cash", "25")
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(database_path) as connection, pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            """
+            update postings
+            set amount = '-25',
+                side = 'debit',
+                amount_semantics = 'debit_credit'
+            where transaction_id = 'txn_invalid_debit_credit_shape'
+            """
+        )
+
+
+def test_migration_constraints_reject_invalid_draft_debit_credit_shape(tmp_path):
+    database_path = tmp_path / "legacy-invalid-draft-debit-credit-shape.sqlite3"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "0016_budget_counterparty_targets")
+
+    with sqlite3.connect(database_path) as connection:
+        _insert_draft(connection, "draft_invalid_debit_credit_shape")
+        connection.execute(
+            """
+            insert into draft_postings (draft_id, position, account_id, amount, currency)
+            values (?, ?, ?, ?, ?)
+            """,
+            ("draft_invalid_debit_credit_shape", 0, "acc_food", "25", "CNY"),
+        )
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(database_path) as connection, pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            """
+            update draft_postings
+            set amount = '-25',
+                side = 'debit',
+                amount_semantics = 'debit_credit'
+            where draft_id = 'draft_invalid_debit_credit_shape'
+            """
+        )
+
+
+def test_posting_semantic_constraint_migration_only_blocks_canonical_debit_credit_shape():
+    source = (REPO_ROOT / "alembic/versions/0019_posting_constraints.py").read_text()
+
+    assert "ck_postings_debit_credit_shape" in source
+    assert "ck_draft_postings_debit_credit_shape" in source
+    assert "ck_postings_amount_semantics" not in source
+    assert "ck_draft_postings_amount_semantics" not in source
+    assert "ck_postings_legacy_nonzero" not in source
+    assert "ck_draft_postings_legacy_nonzero" not in source
 
 
 def _insert_account(sqlite_connection, account_id: str, *, type: str) -> None:
@@ -242,13 +552,21 @@ def _insert_transaction(
     purpose: str,
     category_id: str | None = None,
 ) -> None:
+    existing_columns = {row[1] for row in sqlite_connection.execute("pragma table_info(transactions)").fetchall()}
+    columns = ["transaction_id", "book_id", "memo", "occurred_at", "purpose"]
+    values = [transaction_id, "book_default", memo, "2026-05-16T12:30:00+08:00", purpose]
+    if "category_id" in existing_columns:
+        columns.append("category_id")
+        values.append(category_id)
+    columns.extend(["reversed_by", "version"])
+    values.extend([None, 1])
+    placeholders = ", ".join("?" for _ in columns)
     sqlite_connection.execute(
-        """
-        insert into transactions (
-            transaction_id, book_id, memo, occurred_at, purpose, category_id, reversed_by, version
-        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+        f"""
+        insert into transactions ({", ".join(columns)})
+        values ({placeholders})
         """,
-        (transaction_id, "book_default", memo, "2026-05-16T12:30:00+08:00", purpose, category_id, None, 1),
+        values,
     )
 
 
@@ -259,6 +577,18 @@ def _insert_posting(sqlite_connection, transaction_id: str, position: int, accou
         values (?, ?, ?, ?, ?)
         """,
         (transaction_id, position, account_id, amount, "CNY"),
+    )
+
+
+def _insert_draft(sqlite_connection, draft_id: str) -> None:
+    sqlite_connection.execute(
+        """
+        insert into drafts (
+            draft_id, book_id, memo, state, missing_fields, source, confidence,
+            version, attachment_id, category_id, metadata
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (draft_id, "book_default", "", "pending", "[]", "agent", 1.0, 1, None, None, "{}"),
     )
 
 

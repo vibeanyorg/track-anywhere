@@ -6,12 +6,20 @@ from typing import Any, Iterable
 
 from sqlalchemy import delete, select
 
+from ..accounting import (
+    PostingSide,
+    debit_credit_balanced,
+    legacy_signed_amount_to_debit_credit,
+    STORAGE_POSTING_AMOUNT_SEMANTICS_MISSING,
+    storage_posting_amount_semantics,
+    validate_posting_semantic_shape,
+)
 from ..drafts import DraftTransaction
-from ..errors import NotFound
+from ..errors import NotFound, ValidationError
 from ..ledger import Posting
 from ..recurring import Recurrence, RecurringItem
 from ..storage_json import to_jsonable
-from ..storage_models import AttachmentRecord, DraftPostingRecord, DraftRecord, RecurringItemRecord
+from ..storage_models import AccountRecord, AttachmentRecord, DraftPostingRecord, DraftRecord, RecurringItemRecord
 
 
 class DraftRepository:
@@ -23,7 +31,15 @@ class DraftRepository:
         if row is None:
             return None
         postings = [
-            Posting(posting.account_id, Decimal(posting.amount), posting.currency)
+            Posting(
+                posting.account_id,
+                Decimal(posting.amount),
+                posting.currency,
+                side=getattr(posting, "side", None),
+                amount_semantics=storage_posting_amount_semantics(
+                    getattr(posting, "amount_semantics", STORAGE_POSTING_AMOUNT_SEMANTICS_MISSING)
+                ),
+            )
             for posting in self.session.scalars(
                 select(DraftPostingRecord)
                 .where(DraftPostingRecord.draft_id == draft_id)
@@ -32,7 +48,7 @@ class DraftRepository:
         ]
         return draft_from_record(row, postings)
 
-    def save(self, drafts: Iterable[Any]) -> None:
+    def save(self, drafts: Iterable[Any], *, allow_legacy_signed: bool = False) -> None:
         for draft in drafts:
             self.session.merge(
                 DraftRecord(
@@ -49,9 +65,10 @@ class DraftRepository:
                     metadata_json=to_jsonable(draft.metadata or {}),
                 )
             )
-            self._replace_draft_postings(draft)
+            self._replace_draft_postings(draft, allow_legacy_signed=allow_legacy_signed)
 
-    def _replace_draft_postings(self, draft) -> None:
+    def _replace_draft_postings(self, draft, *, allow_legacy_signed: bool = False) -> None:
+        _validate_new_draft_postings(draft.proposed_postings, allow_legacy_signed=allow_legacy_signed)
         self.session.execute(delete(DraftPostingRecord).where(DraftPostingRecord.draft_id == draft.draft_id))
         for index, posting in enumerate(draft.proposed_postings):
             self.session.add(
@@ -59,10 +76,37 @@ class DraftRepository:
                     draft_id=draft.draft_id,
                     position=index,
                     account_id=posting.account_id,
+                    side=_storage_side_for_posting(self.session, posting),
+                    amount_semantics=posting.amount_semantics,
                     amount=str(posting.amount),
                     currency=posting.currency,
                 )
             )
+
+
+def _validate_new_draft_postings(postings: Iterable[Posting], *, allow_legacy_signed: bool) -> None:
+        semantics: set[str] = set()
+        legacy_totals: dict[str, Decimal] = {}
+        debit_credit_totals: dict[str, dict[PostingSide, Decimal]] = {}
+        for posting in postings:
+            _validate_new_draft_posting(posting, allow_legacy_signed=allow_legacy_signed)
+            semantics.add(posting.amount_semantics)
+            if posting.amount_semantics == "debit_credit":
+                if posting.side is None:
+                    raise ValidationError("debit/credit posting requires side")
+                side_totals = debit_credit_totals.setdefault(
+                    posting.currency,
+                    {"debit": Decimal("0"), "credit": Decimal("0")},
+                )
+                side_totals[posting.side] += posting.amount
+            if posting.amount_semantics == "legacy_signed":
+                legacy_totals[posting.currency] = legacy_totals.get(posting.currency, Decimal("0")) + posting.amount
+        if len(semantics) > 1:
+            raise ValidationError("draft postings must not mix legacy signed and debit/credit semantics")
+        if any(total != Decimal("0") for total in legacy_totals.values()):
+            raise ValidationError("legacy signed draft postings must balance by currency")
+        if debit_credit_balanced(debit_credit_totals):
+            raise ValidationError("draft postings must balance by currency under debit_credit semantics")
 
 
 def draft_from_record(row: DraftRecord, postings: list[Posting]) -> DraftTransaction:
@@ -80,6 +124,30 @@ def draft_from_record(row: DraftRecord, postings: list[Posting]) -> DraftTransac
         category_id=row.category_id,
         metadata=dict(row.metadata_json or {}),
     )
+
+
+def _validate_new_draft_posting(posting: Posting, *, allow_legacy_signed: bool) -> None:
+    validate_posting_semantic_shape(
+        side=posting.side,
+        amount=posting.amount,
+        amount_semantics=posting.amount_semantics,
+    )
+    if posting.amount_semantics == "legacy_signed" and not allow_legacy_signed:
+        raise ValidationError("new draft postings must use debit_credit semantics")
+
+
+def _legacy_side_for_posting(session, posting: Posting) -> str | None:
+    account_type = session.scalar(select(AccountRecord.type).where(AccountRecord.account_id == posting.account_id))
+    if account_type is None:
+        return None
+    side, _amount = legacy_signed_amount_to_debit_credit(account_type, posting.amount)
+    return side
+
+
+def _storage_side_for_posting(session, posting: Posting) -> str | None:
+    if posting.side is not None or posting.amount_semantics != "legacy_signed":
+        return posting.side
+    return _legacy_side_for_posting(session, posting)
 
 
 class RecurringRepository:

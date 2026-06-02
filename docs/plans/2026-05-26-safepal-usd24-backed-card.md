@@ -257,12 +257,12 @@ Use existing system category and FX clearing helpers. For amount `A`:
 
 ```python
 postings = [
-    Posting(instrument_account_id, -A, "USD"),
-    Posting(expense_account_id, A, "USD"),
-    Posting(backing_account_id, -A, "USD24"),
-    Posting(fx_clearing_usd24, A, "USD24"),
-    Posting(instrument_account_id, A, "USD"),
-    Posting(fx_clearing_usd, -A, "USD"),
+    credit_posting(instrument_account_id, A, "USD"),
+    debit_posting(expense_account_id, A, "USD"),
+    credit_posting(backing_account_id, A, "USD24"),
+    debit_posting(fx_clearing_usd24, A, "USD24"),
+    debit_posting(instrument_account_id, A, "USD"),
+    credit_posting(fx_clearing_usd, A, "USD"),
 ]
 ```
 

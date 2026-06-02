@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Any
-from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Index, Integer, JSON, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 ASSET_CODE_LENGTH = 16
@@ -94,6 +94,16 @@ class PostingRecord(Base):
     __table_args__ = (
         UniqueConstraint("transaction_id", "position", name="uq_postings_transaction_position"),
         Index("ix_postings_account_transaction", "account_id", "transaction_id"),
+        CheckConstraint("amount_semantics in ('legacy_signed', 'debit_credit')", name="ck_postings_amount_semantics"),
+        CheckConstraint("side is null or side in ('debit', 'credit')", name="ck_postings_side"),
+        CheckConstraint(
+            "amount_semantics != 'debit_credit' or (side in ('debit', 'credit') and cast(amount as numeric) > 0)",
+            name="ck_postings_debit_credit_shape",
+        ),
+        CheckConstraint(
+            "amount_semantics != 'legacy_signed' or cast(amount as numeric) != 0",
+            name="ck_postings_legacy_nonzero",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -101,6 +111,13 @@ class PostingRecord(Base):
     book_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
     position: Mapped[int] = mapped_column(Integer)
     account_id: Mapped[str] = mapped_column(String(80))
+    side: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    amount_semantics: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="debit_credit",
+        server_default="debit_credit",
+    )
     amount: Mapped[str] = mapped_column(String(80))
     currency: Mapped[str] = mapped_column(String(ASSET_CODE_LENGTH))
 
@@ -123,11 +140,30 @@ class DraftRecord(Base):
 
 class DraftPostingRecord(Base):
     __tablename__ = "draft_postings"
+    __table_args__ = (
+        CheckConstraint("amount_semantics in ('legacy_signed', 'debit_credit')", name="ck_draft_postings_amount_semantics"),
+        CheckConstraint("side is null or side in ('debit', 'credit')", name="ck_draft_postings_side"),
+        CheckConstraint(
+            "amount_semantics != 'debit_credit' or (side in ('debit', 'credit') and cast(amount as numeric) > 0)",
+            name="ck_draft_postings_debit_credit_shape",
+        ),
+        CheckConstraint(
+            "amount_semantics != 'legacy_signed' or cast(amount as numeric) != 0",
+            name="ck_draft_postings_legacy_nonzero",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     draft_id: Mapped[str] = mapped_column(ForeignKey("drafts.draft_id"))
     position: Mapped[int] = mapped_column(Integer)
     account_id: Mapped[str] = mapped_column(String(80))
+    side: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    amount_semantics: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="debit_credit",
+        server_default="debit_credit",
+    )
     amount: Mapped[str] = mapped_column(String(80))
     currency: Mapped[str] = mapped_column(String(ASSET_CODE_LENGTH))
 

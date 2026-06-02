@@ -4,7 +4,7 @@ from typing import Any
 
 from . import commands
 from .errors import NotFound, ValidationError
-from .ledger import Posting
+from .ledger import credit_posting, debit_posting
 from .transaction_builder import build_transaction
 
 
@@ -30,8 +30,8 @@ class FundFlowUseCases:
                 memo=command.memo,
                 purpose="fund_allocation",
                 postings=[
-                    Posting(command.source_account_id, -command.amount, command.currency),
-                    Posting(current_fund.account_id, command.amount, command.currency),
+                    credit_posting(command.source_account_id, command.amount, command.currency),
+                    debit_posting(current_fund.account_id, command.amount, command.currency),
                 ],
                 accounts=[source, fund_account],
                 book_id=fund.book_id,
@@ -88,8 +88,8 @@ class FundFlowUseCases:
                 memo=command.memo,
                 purpose="fund_spend",
                 postings=[
-                    Posting(current_fund.account_id, -command.amount, command.currency),
-                    Posting(command.expense_account_id, command.amount, command.currency),
+                    credit_posting(current_fund.account_id, command.amount, command.currency),
+                    debit_posting(command.expense_account_id, command.amount, command.currency),
                 ],
                 accounts=[fund_account, expense],
                 book_id=fund.book_id,

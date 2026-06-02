@@ -10,6 +10,8 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 from track_anywhere.api import app, service
+from track_anywhere.balance_semantics import ACCOUNT_TYPE_BALANCE_SEMANTICS
+from track_anywhere.posting_semantics import canonical_posting_semantics_metadata
 
 
 def test_api_ready_checks_database_and_migrations():
@@ -170,18 +172,41 @@ def test_api_account_and_transaction_read_side():
     account_list = client.get("/api/v1/accounts?name=read%20side&currency=USD", headers=headers)
     assert account_list.status_code == 200
     assert {account["account_id"] for account in account_list.json()["accounts"]} >= {cash_id, expense_id}
+    accounts_by_id = {account["account_id"]: account for account in account_list.json()["accounts"]}
+    assert accounts_by_id[cash_id]["balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["asset"]
+    assert accounts_by_id[expense_id]["balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["expense"]
 
     account_get = client.get(f"/api/v1/accounts/{cash_id}", headers=headers)
     assert account_get.status_code == 200
     assert account_get.json()["account"]["name"] == "Read Side Cash"
+    assert account_get.json()["account"]["balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["asset"]
 
     tx_list = client.get(f"/api/v1/ledger/transactions?account_id={cash_id}&limit=5", headers=headers)
     assert tx_list.status_code == 200
     assert any(transaction["transaction_id"] == transaction_id for transaction in tx_list.json()["transactions"])
+    listed_transaction = next(
+        transaction for transaction in tx_list.json()["transactions"] if transaction["transaction_id"] == transaction_id
+    )
+    assert listed_transaction["posting_semantics"]["canonical_model"] == canonical_posting_semantics_metadata()["canonical_model"]
+    assert listed_transaction["posting_semantics"]["row_model"] == "debit_credit"
+    assert listed_transaction["posting_semantics"]["debit_credit_amount_rule"] == canonical_posting_semantics_metadata()["debit_credit_amount_rule"]
 
     tx_get = client.get(f"/api/v1/ledger/transactions/{transaction_id}", headers=headers)
     assert tx_get.status_code == 200
-    assert tx_get.json()["transaction"]["postings"][0]["account_id"] == cash_id
+    transaction_payload = tx_get.json()["transaction"]
+    assert transaction_payload["posting_semantics"] == {
+        **canonical_posting_semantics_metadata(),
+        "row_model": "debit_credit",
+        "amount_semantics": ["debit_credit"],
+    }
+    postings = transaction_payload["postings"]
+    postings_by_account = {posting["account_id"]: posting for posting in postings}
+    assert postings_by_account[cash_id]["side"] == "credit"
+    assert postings_by_account[cash_id]["amount"] == "1.72"
+    assert postings_by_account[cash_id]["amount_semantics"] == "debit_credit"
+    assert postings_by_account[expense_id]["side"] == "debit"
+    assert postings_by_account[expense_id]["amount"] == "1.72"
+    assert postings_by_account[expense_id]["amount_semantics"] == "debit_credit"
 
 
 def test_api_root_category_update_flow():

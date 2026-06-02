@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from .posting_semantics import (
+    posting_semantics_review_decision_schema_extra,
+    public_write_posting_semantics_schema_extra,
+)
 
 
 ASSET_CODE_PATTERN = r"^[A-Z][A-Z0-9]{1,15}$"
@@ -13,7 +18,7 @@ CATEGORY_KINDS = Literal["income", "expense"]
 
 
 class StrictCommand(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", json_schema_extra=public_write_posting_semantics_schema_extra())
     schema_version: Literal["v1"] = "v1"
 
 
@@ -34,7 +39,13 @@ class CreateAccountCommand(StrictCommand):
     name: str = Field(min_length=1, max_length=120)
     type: Literal["asset", "liability", "income", "expense", "equity", "fund", "system"]
     currency: str = Field(pattern=ASSET_CODE_PATTERN)
-    opening_balance: Decimal = Decimal("0")
+    opening_balance: Decimal = Field(
+        default=Decimal("0"),
+        description=(
+            "Signed natural opening balance. For liability accounts, positive means initial debt "
+            "and negative means initial overpayment; persisted postings still use debit/credit."
+        ),
+    )
     book_id: str | None = None
     institution_type: INSTITUTION_TYPES | None = None
     subtype: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
@@ -74,7 +85,14 @@ class CreateUserCommand(StrictCommand):
 
 class CaptureDraftCommand(StrictCommand):
     memo: str = Field(min_length=1, max_length=256)
-    amount: Decimal | None = Field(default=None, gt=0)
+    amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Positive draft business amount when known. Do not pass signed posting amounts; "
+            "confirmed postings use positive debit/credit rows."
+        ),
+    )
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
     source_account_id: str | None = None
     expense_account_id: str | None = None
@@ -93,10 +111,26 @@ class CaptureDraftCommand(StrictCommand):
 
 class RecordTransactionCommand(StrictCommand):
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(
+        gt=0,
+        description=(
+            "Positive business transfer amount. Do not pass signed posting amounts; "
+            "persisted postings use positive debit/credit rows."
+        ),
+    )
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
-    from_account_id: str
-    to_account_id: str
+    from_account_id: str = Field(
+        description=(
+            "Source account for the transfer. The source is credited; if it is a liability, "
+            "that increases the liability balance."
+        )
+    )
+    to_account_id: str = Field(
+        description=(
+            "Target account for the transfer. The target is debited; asset-to-credit-card-liability "
+            "transfers are repayments that decrease outstanding debt."
+        )
+    )
     purpose: str = Field(min_length=1, max_length=256)
     memo: str = Field(default="", max_length=256)
     category_id: str | None = None
@@ -123,7 +157,14 @@ class CreateRecurringItemCommand(StrictCommand):
     name: str = Field(min_length=1, max_length=120)
     kind: Literal["paid", "reminder_only"]
     book_id: str | None = None
-    amount: Decimal | None = Field(default=None, gt=0)
+    amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Positive recurring item amount. Do not pass signed posting amounts; "
+            "generated postings use positive debit/credit rows."
+        ),
+    )
     currency: str | None = Field(default=None, pattern=ASSET_CODE_PATTERN)
     provider: str | None = Field(default=None, min_length=1, max_length=120)
     reference: str | None = Field(default=None, min_length=1, max_length=120)
@@ -145,7 +186,14 @@ class CreateRecurringItemCommand(StrictCommand):
 
 class UpdateRecurringItemCommand(StrictCommand):
     status: Literal["active", "paused", "cancelled"] | None = None
-    amount: Decimal | None = Field(default=None, gt=0)
+    amount: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Positive recurring item amount. Do not pass signed posting amounts; "
+            "generated postings use positive debit/credit rows."
+        ),
+    )
     currency: str | None = Field(default=None, pattern=ASSET_CODE_PATTERN)
     provider: str | None = Field(default=None, min_length=1, max_length=120)
     reference: str | None = Field(default=None, min_length=1, max_length=120)
@@ -178,9 +226,20 @@ class GenerateRecurringDraftsCommand(StrictCommand):
 
 class RecordExpenseCommand(StrictCommand):
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(
+        gt=0,
+        description=(
+            "Positive expense amount. Do not pass signed posting amounts; persisted postings use "
+            "positive debit/credit rows."
+        ),
+    )
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
-    from_account_id: str
+    from_account_id: str = Field(
+        description=(
+            "Funding account for the expense. If this is a credit-card liability account, the "
+            "positive expense credits the liability and increases outstanding debt."
+        )
+    )
     category_id: str
     purpose: str = Field(min_length=1, max_length=256)
     memo: str = Field(default="", max_length=256)
@@ -189,7 +248,13 @@ class RecordExpenseCommand(StrictCommand):
 
 class RecordIncomeCommand(StrictCommand):
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(
+        gt=0,
+        description=(
+            "Positive income amount. Do not pass signed posting amounts; persisted postings use "
+            "positive debit/credit rows."
+        ),
+    )
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
     to_account_id: str
     category_id: str
@@ -199,16 +264,36 @@ class RecordIncomeCommand(StrictCommand):
 
 
 class UpdateCreditCardProfileCommand(StrictCommand):
-    credit_limit: Decimal | None = Field(default=None, ge=0)
-    available_credit: Decimal | None = Field(default=None, ge=0)
+    credit_limit: Decimal | None = Field(
+        default=None,
+        ge=0,
+        description="Non-negative profile credit limit. This is not a ledger posting amount.",
+    )
+    available_credit: Decimal | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Optional provider-reported available credit metadata. This is not a ledger posting amount "
+            "or natural liability balance; read derived_available_credit for ledger-derived availability."
+        ),
+    )
     statement_day: int | None = Field(default=None, ge=1, le=31)
     due_day: int | None = Field(default=None, ge=1, le=31)
-    annual_fee: Decimal | None = Field(default=None, ge=0)
+    annual_fee: Decimal | None = Field(
+        default=None,
+        ge=0,
+        description="Non-negative profile annual fee metadata. This is not automatically posted as a ledger expense.",
+    )
 
 
 class BalanceAdjustmentCommand(StrictCommand):
     account_id: str
-    amount: Decimal
+    amount: Decimal = Field(
+        description=(
+            "Signed natural balance delta. For liability accounts, positive increases debt "
+            "and negative decreases debt or creates overpayment; persisted postings still use debit/credit."
+        )
+    )
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     purpose: str = Field(min_length=1, max_length=256)
@@ -225,12 +310,26 @@ class BalanceAdjustmentCommand(StrictCommand):
 class RecordInvestmentEventCommand(StrictCommand):
     account_id: str
     event_type: Literal["buy", "add", "sell", "income"]
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(
+        gt=0,
+        description=(
+            "Positive investment event amount. Do not pass signed posting amounts; "
+            "persisted postings use positive debit/credit rows."
+        ),
+    )
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     memo: str = Field(default="", max_length=256)
-    units: Decimal | None = Field(default=None, gt=0)
-    nav: Decimal | None = Field(default=None, gt=0)
+    units: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description="Optional positive investment units quantity. This is not a ledger posting amount.",
+    )
+    nav: Decimal | None = Field(
+        default=None,
+        gt=0,
+        description="Optional positive net asset value per unit. This is not a ledger posting amount.",
+    )
     transaction_id: str | None = None
     cash_account_id: str | None = None
 
@@ -260,7 +359,13 @@ class CreateFundCommand(StrictCommand):
 class FundAllocationCommand(StrictCommand):
     fund_id: str
     source_account_id: str
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(
+        gt=0,
+        description=(
+            "Positive fund allocation amount. Do not pass signed posting amounts; "
+            "persisted postings use positive debit/credit rows."
+        ),
+    )
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
     expected_version: int = Field(ge=1)
     memo: str = Field(default="", max_length=256)
@@ -269,7 +374,13 @@ class FundAllocationCommand(StrictCommand):
 class FundSpendCommand(StrictCommand):
     fund_id: str
     expense_account_id: str
-    amount: Decimal = Field(gt=0)
+    amount: Decimal = Field(
+        gt=0,
+        description=(
+            "Positive fund spend amount. Do not pass signed posting amounts; "
+            "persisted postings use positive debit/credit rows."
+        ),
+    )
     currency: str = Field(default="CNY", pattern=ASSET_CODE_PATTERN)
     expected_version: int = Field(ge=1)
     memo: str = Field(default="", max_length=256)
@@ -285,6 +396,52 @@ class ReclassifyTransactionCommand(StrictCommand):
     category_id: str
     line_id: str | None = None
     memo: str = Field(default="", max_length=256)
+
+
+class PostingSemanticsRewriteCommand(StrictCommand):
+    pass
+
+
+class PostingSemanticsReviewDecisionCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra=posting_semantics_review_decision_schema_extra())
+
+    record_ref: str | None = Field(default=None, min_length=1)
+    transaction_id: str | None = Field(default=None, min_length=1)
+    position: int = Field(ge=0)
+    account_id: str = Field(min_length=1)
+    currency: str = Field(pattern=ASSET_CODE_PATTERN)
+    legacy_amount: str = Field(min_length=1)
+    action: Literal["confirm_as_outstanding_liability", "confirm_as_liability_reduction_or_overpayment"]
+
+    @field_validator("position", mode="before")
+    @classmethod
+    def validate_position(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("position must be a non-negative integer")
+        return value
+
+    @field_validator("legacy_amount")
+    @classmethod
+    def validate_legacy_amount(cls, value: str) -> str:
+        try:
+            amount = Decimal(value)
+        except (InvalidOperation, ValueError) as exc:
+            raise ValueError("legacy_amount must be a decimal string") from exc
+        if amount == Decimal("0"):
+            raise ValueError("legacy_amount must not be zero")
+        return value
+
+    @model_validator(mode="after")
+    def require_record_reference(self):
+        if not self.record_ref and not self.transaction_id:
+            raise ValueError("record_ref or transaction_id is required")
+        if self.record_ref and self.transaction_id and self.record_ref != self.transaction_id:
+            raise ValueError("record_ref and transaction_id must match when both are provided")
+        return self
+
+
+class PostingSemanticsReviewResolutionsCommand(StrictCommand):
+    decisions: list[PostingSemanticsReviewDecisionCommand] = Field(min_length=1)
 
 
 from .credential_commands import IssueCredentialCommand, RevokeCredentialByIdCommand, RevokeCredentialCommand

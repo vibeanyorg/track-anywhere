@@ -5,7 +5,7 @@ from typing import Any
 from .books import DEFAULT_BOOK_ID
 from .commands import GenerateRecurringDraftsCommand
 from .errors import PolicyDenied, ValidationError
-from .ledger import Posting
+from .ledger import credit_posting, debit_posting
 from .recurring import RecurringItem, last_renewal_date
 
 
@@ -77,8 +77,8 @@ class RecurringDraftUseCases:
         draft = self.drafts.create(
             memo=f"Recurring renewal: {item.name} ({renewal_date.isoformat()})",
             proposed_postings=[
-                Posting(item.source_account_id, -item.amount, item.currency),
-                Posting(expense_account.account_id, item.amount, item.currency),
+                credit_posting(item.source_account_id, item.amount, item.currency),
+                debit_posting(expense_account.account_id, item.amount, item.currency),
             ],
             missing_fields=[],
             source="recurring",

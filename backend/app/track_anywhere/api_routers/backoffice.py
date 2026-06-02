@@ -10,6 +10,7 @@ from ..api_ports.backoffice import BackofficeService
 from ..api_serialization import serialize
 from ..errors import TrackAnywhereError
 from ..service_auth import ROLE_SCOPES
+from ..balance_semantics import balance_semantics_for_account_type
 from .common import protected
 
 
@@ -100,7 +101,7 @@ def list_accounts(
             institution_type=institution_type,
             subtype=subtype,
         )
-        items = serialize(accounts)
+        items = [_serialize_backoffice_account(account) for account in accounts]
         return _filter_rows(
             items,
             exact={},
@@ -270,6 +271,12 @@ def list_audit_events(
 
 def _require_backoffice(token: AuthToken, service: BackofficeService) -> None:
     service.require_backoffice(token)
+
+
+def _serialize_backoffice_account(account) -> dict[str, object]:
+    payload = serialize(account)
+    payload["balance_semantics"] = balance_semantics_for_account_type(account.type)
+    return payload
 
 
 def _filter_rows(

@@ -4,7 +4,7 @@ from typing import Any
 
 from .commands import RecordExpenseCommand, RecordIncomeCommand
 from .errors import ValidationError
-from .ledger import Posting
+from .ledger import credit_posting, debit_posting
 from .transaction_builder import build_transaction
 
 
@@ -38,8 +38,8 @@ class LedgerRecordUseCases:
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
                 postings=[
-                    Posting(command.from_account_id, -command.amount, command.currency),
-                    Posting(expense_account_id, command.amount, command.currency),
+                    credit_posting(command.from_account_id, command.amount, command.currency),
+                    debit_posting(expense_account_id, command.amount, command.currency),
                 ],
                 accounts=[source, expense_account],
                 scale_lookup=self.assets.scale_for,
@@ -97,8 +97,8 @@ class LedgerRecordUseCases:
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
                 postings=[
-                    Posting(income_account_id, -command.amount, command.currency),
-                    Posting(command.to_account_id, command.amount, command.currency),
+                    credit_posting(income_account_id, command.amount, command.currency),
+                    debit_posting(command.to_account_id, command.amount, command.currency),
                 ],
                 accounts=[income_account, target],
                 scale_lookup=self.assets.scale_for,

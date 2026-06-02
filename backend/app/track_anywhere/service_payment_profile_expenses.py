@@ -7,7 +7,7 @@ from typing import Any
 from .category_models import Category
 from .domain_commands import RecordPaymentProfileExpenseCommand
 from .errors import ValidationError
-from .ledger import Account, Posting, Transaction
+from .ledger import Account, Transaction, credit_posting, debit_posting
 from .payment_profiles import PaymentProfile
 from .transaction_builder import add_transaction_line, build_transaction
 
@@ -157,12 +157,12 @@ class PaymentProfileExpenseUseCases:
             occurred_at=command.occurred_at,
             purpose=command.purpose,
             postings=[
-                Posting(profile.instrument_account_id, -command.amount, profile.instrument_currency),
-                Posting(expense_account.account_id, command.amount, profile.instrument_currency),
-                Posting(profile.backing_account_id, -context.backing_amount, profile.backing_currency),
-                Posting(fx_backing_account.account_id, context.backing_amount, profile.backing_currency),
-                Posting(profile.instrument_account_id, command.amount, profile.instrument_currency),
-                Posting(fx_instrument_account.account_id, -command.amount, profile.instrument_currency),
+                credit_posting(profile.instrument_account_id, command.amount, profile.instrument_currency),
+                debit_posting(expense_account.account_id, command.amount, profile.instrument_currency),
+                credit_posting(profile.backing_account_id, context.backing_amount, profile.backing_currency),
+                debit_posting(fx_backing_account.account_id, context.backing_amount, profile.backing_currency),
+                debit_posting(profile.instrument_account_id, command.amount, profile.instrument_currency),
+                credit_posting(fx_instrument_account.account_id, command.amount, profile.instrument_currency),
             ],
             book_id=profile.book_id,
             accounts=[context.instrument_account, expense_account, context.backing_account, fx_backing_account, fx_instrument_account],

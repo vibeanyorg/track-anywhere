@@ -7,7 +7,7 @@ from .books import DEFAULT_BOOK_ID
 from .commands import RecordInvestmentEventCommand
 from .errors import NotFound, ValidationError
 from .investments import InvestmentEvent
-from .ledger import Account, Posting, Transaction
+from .ledger import Account, Transaction, credit_posting, debit_posting
 from .transaction_builder import add_transaction_line, build_transaction
 
 
@@ -114,23 +114,23 @@ class InvestmentEventUseCases:
     ) -> Transaction:
         if command.event_type in {"buy", "add"}:
             postings = [
-                Posting(cash_account.account_id, -command.amount, command.currency),
-                Posting(investment_account.account_id, command.amount, command.currency),
+                credit_posting(cash_account.account_id, command.amount, command.currency),
+                debit_posting(investment_account.account_id, command.amount, command.currency),
             ]
             accounts = [cash_account, investment_account]
             line_type = "investment_buy"
         elif command.event_type == "sell":
             postings = [
-                Posting(investment_account.account_id, -command.amount, command.currency),
-                Posting(cash_account.account_id, command.amount, command.currency),
+                credit_posting(investment_account.account_id, command.amount, command.currency),
+                debit_posting(cash_account.account_id, command.amount, command.currency),
             ]
             accounts = [investment_account, cash_account]
             line_type = "investment_sell"
         elif command.event_type == "income":
             income_account = self._system_category_account("income", command.currency, book_id=investment_account.book_id, created_accounts=created_accounts)
             postings = [
-                Posting(income_account.account_id, -command.amount, command.currency),
-                Posting(cash_account.account_id, command.amount, command.currency),
+                credit_posting(income_account.account_id, command.amount, command.currency),
+                debit_posting(cash_account.account_id, command.amount, command.currency),
             ]
             accounts = [income_account, cash_account]
             line_type = "dividend"

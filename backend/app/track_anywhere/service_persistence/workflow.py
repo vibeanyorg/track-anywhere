@@ -10,9 +10,19 @@ from ..storage_changes import (
 
 
 class ServiceWorkflowPersistence:
-    def _commit_draft_change(self, *drafts, transactions=()) -> None:
+    def _commit_draft_change(
+        self,
+        *drafts,
+        transactions=(),
+        allow_legacy_signed_postings: bool = False,
+    ) -> None:
         metadata = self._write_metadata()
-        changes = DraftChanges(drafts=tuple(drafts), transactions=tuple(transactions), metadata=metadata)
+        changes = DraftChanges(
+            drafts=tuple(drafts),
+            transactions=tuple(transactions),
+            allow_legacy_signed_postings=allow_legacy_signed_postings,
+            metadata=metadata,
+        )
         self.storage.save_draft_change(changes)
         self._mark_metadata_committed(metadata)
 

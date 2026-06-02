@@ -1,10 +1,26 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
+from track_anywhere.ledger import Posting, Transaction
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BACKEND = REPO_ROOT / "backend/app/track_anywhere"
+
+
+def test_sql_balance_reads_reuse_accounting_normal_side_contract():
+    source = (BACKEND / "storage_ledger_reads.py").read_text()
+
+    assert "DEBIT_NORMAL_ACCOUNT_TYPES" in source
+    assert "CREDIT_NORMAL_ACCOUNT_TYPES" in source
+    assert '("asset", "expense", "fund", "system")' not in source
+    assert '("liability", "income", "equity")' not in source
 
 
 def test_confirmed_ledger_reads_use_database_source_of_truth(tmp_path):
@@ -41,6 +57,38 @@ def test_confirmed_ledger_reads_use_database_source_of_truth(tmp_path):
     assert summary["groups"][0]["amount"] == "100"
 
 
+def test_cached_balance_reads_do_not_treat_invalid_semantics_as_signed_amount():
+    service = FinanceService(DeploymentSecurityConfig(), database_url="sqlite:///:memory:")
+    account, _ = service.create_account(
+        service.owner_token,
+        {"name": "Cached Dirty Cash", "type": "asset", "currency": "USD"},
+        idempotency_key="cached-dirty-cash",
+    )
+    dirty_transaction = Transaction(
+        transaction_id="txn_cached_dirty",
+        memo="dirty cache",
+        occurred_at=datetime.now(timezone.utc),
+        purpose="dirty cache",
+        postings=[
+            Posting(
+                account.account_id,
+                Decimal("25"),
+                "USD",
+                side="debit",
+                amount_semantics="unknown",  # type: ignore[arg-type]
+            )
+        ],
+    )
+    service.storage._read_transactions = {dirty_transaction.transaction_id: dirty_transaction}
+    service.storage._read_accounts = {account.account_id: account}
+
+    assert service.account_balance(service.owner_token, account.account_id)["official_balance"]["amount"] == "0"
+
+    service.storage._read_accounts = {}
+
+    assert service.account_balance(service.owner_token, account.account_id)["official_balance"]["amount"] == "0"
+
+
 def test_startup_preserves_legacy_confirmed_amount_precision(tmp_path):
     database_path = tmp_path / "track-anywhere.sqlite3"
     database_url = f"sqlite:///{database_path}"
@@ -69,17 +117,21 @@ def test_startup_preserves_legacy_confirmed_amount_precision(tmp_path):
         )
         connection.execute(
             """
-            insert into postings (transaction_id, book_id, position, account_id, amount, currency)
-            values (?, ?, ?, ?, ?, ?)
+            insert into postings (
+                transaction_id, book_id, position, account_id, side, amount_semantics, amount, currency
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (transaction_id, "book_default", 0, wallet.account_id, "0.12345678", "USDT"),
+            (transaction_id, "book_default", 0, wallet.account_id, "debit", "legacy_signed", "0.12345678", "USDT"),
         )
         connection.execute(
             """
-            insert into postings (transaction_id, book_id, position, account_id, amount, currency)
-            values (?, ?, ?, ?, ?, ?)
+            insert into postings (
+                transaction_id, book_id, position, account_id, side, amount_semantics, amount, currency
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (transaction_id, "book_default", 1, equity.account_id, "-0.12345678", "USDT"),
+            (transaction_id, "book_default", 1, equity.account_id, "credit", "legacy_signed", "-0.12345678", "USDT"),
         )
 
     restarted = FinanceService(DeploymentSecurityConfig(), database_url=database_url)

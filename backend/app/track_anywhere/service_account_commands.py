@@ -5,8 +5,14 @@ from typing import Any
 from .books import DEFAULT_BOOK_ID
 from .commands import CreateAccountCommand, UpdateAccountMetadataCommand
 from .errors import ValidationError
-from .ledger import Account, Posting
+from .ledger import Account, debit_credit_posting_for_balance_delta, opposite_side_posting
 from .transaction_builder import build_transaction
+
+
+def _opening_balance_postings(account: Account, equity: Account, amount, currency: str):
+    account_posting = debit_credit_posting_for_balance_delta(account.account_id, account.type, amount, currency)
+    equity_posting = opposite_side_posting(equity.account_id, account_posting.side, abs(amount), currency)
+    return [account_posting, equity_posting]
 
 
 class AccountCommandUseCases:
@@ -45,10 +51,7 @@ class AccountCommandUseCases:
                 transaction = build_transaction(
                     memo=f"Opening balance: {command.name}",
                     purpose="opening_balance",
-                    postings=[
-                        Posting(account.account_id, command.opening_balance, command.currency),
-                        Posting(equity.account_id, -command.opening_balance, command.currency),
-                    ],
+                    postings=_opening_balance_postings(account, equity, command.opening_balance, command.currency),
                     accounts=[account, equity],
                     book_id=book_id,
                     scale_lookup=self.assets.scale_for,

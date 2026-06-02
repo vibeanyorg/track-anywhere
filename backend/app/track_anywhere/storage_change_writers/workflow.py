@@ -6,7 +6,10 @@ from ..storage_changes import DraftChanges, RecurringChanges
 class WorkflowChangeStorageWriters:
     def save_draft_change(self, changes: DraftChanges) -> None:
         with self.unit_of_work() as uow:
-            uow.drafts.save(changes.drafts)
+            uow.drafts.save(
+                changes.drafts,
+                allow_legacy_signed=changes.allow_legacy_signed_postings,
+            )
             uow.transactions.save(changes.transactions)
             self._save_write_metadata(uow, changes.metadata)
         self.update_read_cache(transactions=changes.transactions, drafts=changes.drafts)

@@ -120,6 +120,16 @@ uv run ta account adjust <account_id> \
 uv run ta account balance <account_id> --json
 ```
 
+`account adjust --amount` is a signed natural balance delta. For liabilities and
+credit cards, positive increases amount owed and negative decreases debt or
+creates overpayment; storage still writes positive debit/credit postings.
+`account balance` returns natural balances, not raw posting signs. Always read
+`balance_semantics` and `official_balance.amount_semantics` together with
+`official_balance.amount`: `asset`, `fund`, `system`, `expense`, `income`,
+`equity`, and `liability` each have explicit natural balance semantics. For
+liabilities, use `liability_balance.outstanding_amount` and
+`liability_balance.overpayment_amount` instead of inferring debt from the sign.
+
 ## Data safety
 
 Treat local data as real financial data. The default SQLite database lives at:
@@ -137,6 +147,8 @@ uv run ta data backup --label before-change --json
 ```
 
 Backups are written to `.local/backups/`, also ignored by git. See [Data Backup](docs/operations/data-backup.md).
+For debit/credit posting migration work, follow the
+[Posting Semantics Cutover Runbook](docs/operations/posting-semantics-cutover.md).
 
 ## Browser, OAuth, and RBAC auth
 
@@ -191,11 +203,19 @@ uv run ta expense record --amount <amount> --currency CNY --from-account-id <sou
 uv run ta expense record --payment <payment_slug> --amount <amount> --currency USD --category-id <category_id> --purpose "<why>" --idempotency-key <key> --json
 uv run ta income record --amount <amount> --currency CNY --to-account-id <target> --category-id <category_id> --purpose "<why>" --idempotency-key <key> --json
 uv run ta credit-card update <credit_card_account_id> --credit-limit <limit> --statement-day <day> --due-day <day> --idempotency-key <key> --json
-uv run ta account adjust <account_id> --amount <delta> --currency CNY --purpose "<why>" --idempotency-key <key> --json
+uv run ta account adjust <account_id> --amount <signed-natural-delta> --currency CNY --purpose "<why>" --idempotency-key <key> --json
 uv run ta tx record --amount <amount> --currency CNY --from-account-id <source> --to-account-id <target> --purpose "<why>" --idempotency-key <key> --json
 uv run ta investment event <investment_account_id> --type buy --amount <principal> --occurred-at <iso-date> --idempotency-key <key> --json
 uv run ta capture "spent 38 on lunch" --dry-run --json
 ```
+
+Use positive amounts for both credit-card spending and repayment. A credit-card
+purchase should be recorded as `expense record --from-account-id <credit_card>`;
+that credits the liability and increases `outstanding_balance`. A credit-card
+repayment should be recorded as `tx record --from-account-id <source_asset>
+--to-account-id <credit_card>`; that debits the liability and decreases
+`outstanding_balance`. Do not use negative amounts or raw posting fields to
+force either direction.
 
 Agent workflows: pass `--json`, supply a stable `--idempotency-key`, back up before writes, and re-read affected records after every write.
 
@@ -206,11 +226,19 @@ Agent workflows: pass `--json`, supply a stable `--idempotency-key`, back up bef
 - `subtype`: product shape, such as `debit_card`, `credit_card`, `money_market`, `fund`, `multicurrency_wallet`, or `crypto_token`
 - `institution`: human provider name
 
-Liabilities are stored as positive amounts owed. Summary rows expose `asset_amount`, `liability_amount`, and `net_amount` so reports do not confuse gross totals with net worth.
+Liability balances use natural debit/credit semantics: positive means amount
+owed, and negative means overpayment or credit balance. Summary rows expose
+`asset_amount`, `fund_amount`, `liability_outstanding_amount`,
+`liability_overpayment_amount`, and `net_amount`; use `net_amount` for
+net-worth-style reporting instead of inferring meaning from a bare `amount`
+sign.
 
 ## Credit card profiles
 
-Credit-card liability account balances represent the current amount owed. Credit limits and billing metadata live in a separate profile, so changing a limit never mutates ledger balance.
+Credit-card liability account balances use the same natural liability semantics:
+positive balance means current amount owed, and negative balance means
+overpayment. Credit limits and billing metadata live in a separate profile, so
+changing a limit never mutates ledger balance.
 
 ```bash
 uv run ta credit-card update <credit_card_account_id> \
@@ -226,7 +254,14 @@ uv run ta credit-card show <credit_card_account_id> --json
 uv run ta credit-card list --json
 ```
 
-The overview returns the current liability balance, recorded limit, recorded available credit, derived available credit (`credit_limit - current_balance`), and utilization rate when a limit exists.
+The overview returns `natural_balance` with
+`natural_balance_semantics = natural_liability_balance`. It also returns
+`current_balance` as a compatibility alias plus explicit `outstanding_balance`
+and `overpayment_balance`, each with `outstanding_balance_semantics` and
+`overpayment_balance_semantics`. Prefer the explicit fields for display and
+agent logic. Derived available credit is
+`credit_limit - outstanding_balance + overpayment_balance`, so an overpayment
+can increase derived available credit above the nominal limit.
 
 ## Token-backed payment profiles
 
@@ -369,7 +404,9 @@ The public API surface is covered by snapshot tests under `backend/tests/snapsho
 
 - [Architecture Overview](docs/architecture/overview.md)
 - [Data Backup](docs/operations/data-backup.md)
+- [Posting Semantics Cutover Runbook](docs/operations/posting-semantics-cutover.md)
 - [ADR 0001: Draft-First Capture With Strict Confirmed Ledger](docs/adr/0001-draft-first-strict-ledger.md)
+- [ADR 0002: Debit/Credit Posting Model](docs/adr/0002-debit-credit-posting-model.md)
 - [Hermes/OpenClaw Agent Guide](docs/agents/hermes-openclaw.md)
 
 ## Not yet implemented

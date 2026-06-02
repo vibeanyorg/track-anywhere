@@ -144,7 +144,11 @@ ta credit-card show <credit_card_account_id> --json
 ta credit-card list --json
 ```
 
-Profile updates do not change balances. The overview reports current liability balance, recorded limit, recorded available credit, derived available credit, and utilization rate.
+Profile updates do not change balances. The overview reports the natural
+liability balance, explicit outstanding and overpayment balances, recorded
+limit, recorded available credit, derived available credit, and utilization
+rate. Positive liability balance means amount owed; negative liability balance
+means overpayment.
 
 ## Balance Snapshot
 
@@ -155,6 +159,11 @@ Use this when a screenshot only gives the current balance or the user says not t
 ```text
 delta = screenshot_balance - current_official_balance
 ```
+
+For liability and credit-card screenshots, convert the provider display into
+natural liability balance before computing the delta. Amount owed is positive.
+Overpayment or credit balance is negative. Do not use provider signs or legacy
+posting signs directly.
 
 Then write the adjustment:
 
@@ -221,6 +230,13 @@ ta expense record \
   --json
 ```
 
+Credit-card purchases also use `expense record` with a positive amount. If
+`--from-account-id` is a credit-card liability account, the ledger credits the
+liability and increases outstanding debt. Credit-card repayment is a transfer:
+`ta tx record --from-account-id <source_asset> --to-account-id
+<credit_card_liability>` debits the liability and decreases outstanding debt.
+Do not use negative amounts or raw posting fields to force either direction.
+
 For income:
 
 ```bash
@@ -246,17 +262,25 @@ If the category is unknown, do not invent it. Ask the user or record a draft/sna
 
 ## Credit Card Repayment With Fee
 
-Liabilities are positive amounts owed, so a normal asset-to-liability transfer would increase the debt. Repay with three separate writes:
+Liabilities use natural balance semantics: a positive credit-card balance means
+amount owed, and a negative balance means overpayment. A normal
+asset-to-liability transfer is the repayment flow: it credits the source asset
+and debits the credit-card liability, so the debt goes down.
+
+Repay with two writes when the fee is paid by the source asset:
 
 1. Record the explicit fee as source asset -> fee expense.
-2. Decrease the source asset by the repayment principal with `account adjust`.
-3. Decrease the credit-card liability by the same repayment principal with `account adjust`.
+2. Record the repayment principal with `ta tx record --from-account-id <source_asset> --to-account-id <credit_card_liability>`.
 
-After all three writes, verify:
+After both writes, verify:
 
 - Source asset decreased by `principal + fee`.
 - Credit-card liability decreased by `principal`.
 - Fee expense increased by `fee`.
+
+Do not use negative signs to force credit-card direction. Use the account types:
+payment to a liability reduces the liability; purchase from a liability
+increases the liability.
 
 ## Summaries
 

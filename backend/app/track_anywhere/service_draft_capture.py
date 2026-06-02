@@ -4,7 +4,7 @@ from typing import Any
 
 from .commands import CaptureDraftCommand
 from .errors import ValidationError
-from .ledger import Posting
+from .ledger import Posting, credit_posting, debit_posting
 from .security import Actor
 
 
@@ -59,8 +59,8 @@ class DraftCaptureUseCases:
             book_id = source.book_id
             proposed.extend(
                 [
-                    Posting(source_account_id, -amount, command.currency),
-                    Posting(expense_account_id, amount, command.currency),
+                    credit_posting(source_account_id, amount, command.currency),
+                    debit_posting(expense_account_id, amount, command.currency),
                 ]
             )
         return self.drafts.create(

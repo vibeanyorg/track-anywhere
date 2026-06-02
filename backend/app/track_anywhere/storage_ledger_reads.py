@@ -6,8 +6,10 @@ from decimal import Decimal
 
 from sqlalchemy import Numeric, case, cast, func, select
 
+from .accounting import CREDIT_NORMAL_ACCOUNT_TYPES, DEBIT_NORMAL_ACCOUNT_TYPES, posting_balance_delta
+from .errors import ValidationError
 from .ledger import Transaction
-from .storage_models import PostingRecord, TransactionRecord
+from .storage_models import AccountRecord, PostingRecord, TransactionRecord
 
 
 class LedgerReadStorage:
@@ -26,23 +28,38 @@ class LedgerReadStorage:
         cached_transactions = getattr(self, "_read_transactions", None)
         if cached_transactions is not None:
             totals: dict[tuple[str, str], Decimal] = {}
+            accounts = getattr(self, "_read_accounts", {})
             for transaction in cached_transactions.values():
                 for posting in transaction.postings:
                     if posting.account_id not in ids:
                         continue
+                    account = accounts.get(posting.account_id)
+                    if account is None:
+                        continue
+                    try:
+                        amount = posting_balance_delta(
+                            account.type,
+                            side=posting.side,
+                            amount=posting.amount,
+                            amount_semantics=posting.amount_semantics,
+                        )
+                    except ValidationError:
+                        continue
                     key = (posting.account_id, posting.currency)
-                    totals[key] = totals.get(key, Decimal("0")) + posting.amount
+                    totals[key] = totals.get(key, Decimal("0")) + amount
             return totals
         totals: dict[tuple[str, str], Decimal] = {}
         with self.session_factory() as session:
             max_scale = _amount_scale_expression(session, PostingRecord.amount)
+            effective_amount = _effective_posting_amount_expression(session)
             rows = session.execute(
                 select(
                     PostingRecord.account_id,
                     PostingRecord.currency,
-                    func.sum(cast(PostingRecord.amount, Numeric)).label("amount"),
+                    func.sum(effective_amount).label("amount"),
                     max_scale.label("scale"),
                 )
+                .join(AccountRecord, AccountRecord.account_id == PostingRecord.account_id)
                 .where(PostingRecord.account_id.in_(ids))
                 .group_by(PostingRecord.account_id, PostingRecord.currency)
             )
@@ -136,4 +153,23 @@ def _amount_scale_expression(session, amount_column):
             (func.instr(amount_column, ".") > 0, func.length(amount_column) - func.instr(amount_column, ".")),
             else_=0,
         )
+    )
+
+
+def _effective_posting_amount_expression(session):
+    amount = cast(PostingRecord.amount, Numeric)
+    legacy_signed = PostingRecord.amount_semantics == "legacy_signed"
+    debit_credit = PostingRecord.amount_semantics == "debit_credit"
+    valid_debit_credit = debit_credit & (amount > 0)
+    debit_normal = AccountRecord.type.in_(tuple(DEBIT_NORMAL_ACCOUNT_TYPES))
+    credit_normal = AccountRecord.type.in_(tuple(CREDIT_NORMAL_ACCOUNT_TYPES))
+    debit_side = PostingRecord.side == "debit"
+    credit_side = PostingRecord.side == "credit"
+    return case(
+        (valid_debit_credit & debit_normal & debit_side, amount),
+        (valid_debit_credit & debit_normal & credit_side, -amount),
+        (valid_debit_credit & credit_normal & credit_side, amount),
+        (valid_debit_credit & credit_normal & debit_side, -amount),
+        (legacy_signed, amount),
+        else_=0,
     )

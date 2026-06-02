@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from track_anywhere.balance_semantics import ACCOUNT_TYPE_BALANCE_SEMANTICS
 import track_anywhere_cli.main as cli_main
 from track_anywhere_cli.main import main
 
@@ -230,6 +231,7 @@ def test_account_list_human_output_is_rich_table(monkeypatch, capsys):
                     "name": "Visa",
                     "type": "asset",
                     "currency": "USD",
+                    "balance_semantics": ACCOUNT_TYPE_BALANCE_SEMANTICS["asset"],
                     "balance": "100",
                 }
             ]
@@ -258,6 +260,8 @@ def test_account_list_human_output_is_rich_table(monkeypatch, capsys):
     assert "Accounts" in output
     assert "Visa" in output
     assert "USD" in output
+    assert "Natural balance" in output
+    assert ACCOUNT_TYPE_BALANCE_SEMANTICS["asset"] in output
     assert "100" in output
 
 

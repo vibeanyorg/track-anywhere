@@ -4,7 +4,7 @@ from typing import Any
 
 from .commands import ReverseTransactionCommand
 from .errors import NotFound, ValidationError
-from .ledger import Posting
+from .ledger import Account, Posting, reverse_posting_for_account
 from .transaction_builder import build_transaction
 
 
@@ -22,16 +22,20 @@ class LedgerReversalUseCases:
         request_hash = self._hash_command(command)
 
         def run():
+            accounts_by_id = {
+                posting.account_id: self._transaction_account(posting.account_id)
+                for posting in transaction.postings
+            }
             reversal = build_transaction(
                 memo=command.memo,
                 purpose="reversal",
                 postings=[
-                    Posting(account_id=posting.account_id, amount=-posting.amount, currency=posting.currency)
+                    _reverse_posting(posting, accounts_by_id[posting.account_id])
                     for posting in transaction.postings
                 ],
                 book_id=transaction.book_id,
                 reverses_transaction_id=transaction.transaction_id,
-                accounts=[self._transaction_account(posting.account_id) for posting in transaction.postings],
+                accounts=list(accounts_by_id.values()),
                 scale_lookup=self.assets.scale_for,
             )
             transaction.reversed_by = reversal.transaction_id
@@ -50,5 +54,15 @@ class LedgerReversalUseCases:
             request_hash=request_hash,
             fn=run,
         )
-        self._commit_replay_or(replay, lambda: self._commit_ledger_change(transaction, reversal))
+        self._commit_replay_or(
+            replay,
+            lambda: self._commit_ledger_change(
+                transaction,
+                reversal,
+            ),
+        )
         return reversal, replay
+
+
+def _reverse_posting(posting: Posting, account: Account) -> Posting:
+    return reverse_posting_for_account(posting, account.type)

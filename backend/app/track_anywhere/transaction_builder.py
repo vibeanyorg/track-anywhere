@@ -9,6 +9,13 @@ from .assets import default_asset_definition, validate_asset_amount
 from .books import DEFAULT_BOOK_ID
 from .errors import NotFound, ValidationError
 from .ledger import Account, Posting, Transaction, TransactionLine
+from .accounting import (
+    PostingSide,
+    debit_credit_balanced,
+    validate_positive_posting_amount,
+    validate_posting_amount_semantics,
+    validate_posting_side,
+)
 
 
 VALID_LINE_TYPES = {
@@ -40,6 +47,7 @@ def build_transaction(
     book_id: str | None = None,
     reverses_transaction_id: str | None = None,
     scale_lookup: Callable[[str], int] | None = None,
+    allow_legacy_signed: bool = False,
 ) -> Transaction:
     account_by_id = {account.account_id: account for account in accounts}
     posting_book_id = validate_transaction_postings(
@@ -47,6 +55,7 @@ def build_transaction(
         accounts=account_by_id,
         book_id=book_id,
         scale_lookup=scale_lookup,
+        allow_legacy_signed=allow_legacy_signed,
     )
     return Transaction(
         transaction_id=f"txn_{uuid4().hex}",
@@ -66,16 +75,30 @@ def validate_transaction_postings(
     accounts: dict[str, Account],
     book_id: str | None = None,
     scale_lookup: Callable[[str], int] | None = None,
+    allow_legacy_signed: bool = False,
 ) -> str:
     scale_lookup = scale_lookup or (lambda code: default_asset_definition(code).scale)
     if len(postings) < 2:
         raise ValidationError("confirmed transaction requires at least two postings")
-    totals: dict[str, Decimal] = {}
+    semantics = {posting.amount_semantics for posting in postings}
+    if len(semantics) != 1:
+        raise ValidationError("transaction postings must not mix legacy signed and debit/credit semantics")
+    amount_semantics = validate_posting_amount_semantics(next(iter(semantics)))
+    if amount_semantics == "legacy_signed" and not allow_legacy_signed:
+        raise ValidationError("new confirmed transactions must use debit_credit semantics")
+    legacy_totals: dict[str, Decimal] = {}
+    debit_credit_totals: dict[str, dict[PostingSide, Decimal]] = {}
     posting_book_id: str | None = book_id
     system_adjustment_posting_count = 0
     for posting in postings:
-        if posting.amount == Decimal("0"):
-            raise ValidationError("posting amount must not be zero")
+        if amount_semantics == "legacy_signed":
+            if posting.amount == Decimal("0"):
+                raise ValidationError("posting amount must not be zero")
+        else:
+            validate_positive_posting_amount(posting.amount)
+            if posting.side is None:
+                raise ValidationError("debit/credit posting requires side")
+            validate_posting_side(posting.side)
         validate_asset_amount(
             posting.amount,
             posting.currency,
@@ -96,8 +119,17 @@ def validate_transaction_postings(
             raise ValidationError("transaction postings must belong to one book")
         if _is_system_adjustment_account(account):
             system_adjustment_posting_count += 1
-        totals[posting.currency] = totals.get(posting.currency, Decimal("0")) + posting.amount
-    unbalanced = {currency: total for currency, total in totals.items() if total != Decimal("0")}
+        if amount_semantics == "legacy_signed":
+            legacy_totals[posting.currency] = legacy_totals.get(posting.currency, Decimal("0")) + posting.amount
+        else:
+            side = validate_posting_side(posting.side)
+            side_totals = debit_credit_totals.setdefault(posting.currency, {"debit": Decimal("0"), "credit": Decimal("0")})
+            side_totals[side] = side_totals.get(side, Decimal("0")) + posting.amount
+    unbalanced = (
+        {currency: total for currency, total in legacy_totals.items() if total != Decimal("0")}
+        if amount_semantics == "legacy_signed"
+        else debit_credit_balanced(debit_credit_totals)
+    )
     if unbalanced:
         raise ValidationError(f"postings must balance by currency: {unbalanced}")
     if system_adjustment_posting_count and (len(postings) != 2 or system_adjustment_posting_count != 1):

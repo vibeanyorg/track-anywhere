@@ -97,7 +97,7 @@ def test_draft_projection_and_confirmation_use_database_source_of_truth(tmp_path
     stale = service.drafts.drafts[draft.draft_id]
     stale.state = "rejected"
     stale.version += 10
-    stale.proposed_postings[0].amount = Decimal("-999")
+    stale.proposed_postings[0].amount = Decimal("999")
 
     projected = service.account_balance(token, cash.account_id, include_drafts=True)
     assert projected["projected_balance"]["pending_impact"] == "-38"
@@ -109,4 +109,49 @@ def test_draft_projection_and_confirmation_use_database_source_of_truth(tmp_path
         idempotency_key="draft-truth-confirm",
     )
     assert replay is False
-    assert transaction.postings[0].amount == Decimal("-38")
+    assert transaction.postings[0].amount == Decimal("38")
+    assert transaction.postings[0].side == "credit"
+    assert transaction.postings[0].amount_semantics == "debit_credit"
+
+
+def test_draft_projection_skips_invalid_semantics_and_missing_account_type(tmp_path):
+    database_path = tmp_path / "draft-projection-invalid-semantics.sqlite3"
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{database_path}")
+    token = service.owner_token
+    cash, _ = service.create_account(
+        token,
+        {"name": "Projection Dirty Cash", "type": "asset", "currency": "USD", "opening_balance": "100"},
+        idempotency_key="projection-dirty-cash",
+    )
+    expense, _ = service.create_account(
+        token,
+        {"name": "Projection Dirty Expense", "type": "expense", "currency": "USD"},
+        idempotency_key="projection-dirty-expense",
+    )
+    draft, _ = service.capture_draft(
+        token,
+        {
+            "memo": "dirty draft",
+            "amount": "10",
+            "currency": "USD",
+            "source_account_id": cash.account_id,
+            "expense_account_id": expense.account_id,
+        },
+        idempotency_key="projection-dirty-draft",
+    )
+    draft.proposed_postings[0].amount_semantics = "unknown"  # type: ignore[assignment]
+    service.storage._read_drafts = {draft.draft_id: draft}
+    service.storage._read_accounts = {cash.account_id: cash, expense.account_id: expense}
+
+    projected = service.account_balance(token, cash.account_id, include_drafts=True)
+
+    assert projected["projected_balance"]["pending_impact"] == "0"
+    assert projected["projected_balance"]["included_draft_ids"] == []
+
+    draft.proposed_postings[0].account_id = "acc_missing"
+    service.storage._read_accounts = {}
+    totals, included_draft_ids, draft_count = service.storage.draft_projection_for_account("acc_missing")
+
+    assert totals == {}
+    assert included_draft_ids == []
+    assert draft_count == 1

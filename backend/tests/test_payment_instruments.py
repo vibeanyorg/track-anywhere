@@ -54,6 +54,7 @@ def test_payment_instruments_attach_to_one_shared_credit_account(tmp_path):
     assert replay is False
     assert physical.account_id == card.account_id
     assert virtual.account_id == card.account_id
+    assert overview["natural_balance"] == Decimal("200")
     assert overview["current_balance"] == Decimal("200")
     assert [item.slug for item in overview["instruments"]] == ["bocom-2862", "bocom-2863"]
     assert service.resolve_payment_instrument(token, "bocom-2863").account_id == card.account_id

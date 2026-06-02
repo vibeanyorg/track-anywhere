@@ -4,6 +4,13 @@ from decimal import Decimal
 
 import pytest
 
+from track_anywhere.balance_semantics import (
+    ACCOUNT_TYPE_BALANCE_SEMANTICS,
+    CREDIT_CARD_CURRENT_BALANCE_COMPATIBILITY_ALIAS,
+    CREDIT_CARD_DERIVED_AVAILABLE_CREDIT_SEMANTICS,
+    LIABILITY_OUTSTANDING_AMOUNT_SEMANTICS,
+    LIABILITY_OVERPAYMENT_AMOUNT_SEMANTICS,
+)
 from track_anywhere.errors import ValidationError
 from track_anywhere.security import DeploymentSecurityConfig
 from track_anywhere.service import FinanceService
@@ -40,11 +47,57 @@ def test_credit_card_profile_update_and_overview(tmp_path):
 
     assert replay is False
     assert overview["profile"].credit_limit == Decimal("10000")
+    assert overview["natural_balance"] == Decimal("250")
+    assert overview["natural_balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
     assert overview["current_balance"] == Decimal("250")
+    assert overview["current_balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
+    assert overview["balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
+    assert overview["outstanding_balance"] == Decimal("250")
+    assert overview["outstanding_balance_semantics"] == LIABILITY_OUTSTANDING_AMOUNT_SEMANTICS
+    assert overview["overpayment_balance"] == Decimal("0")
+    assert overview["overpayment_balance_semantics"] == LIABILITY_OVERPAYMENT_AMOUNT_SEMANTICS
     assert overview["derived_available_credit"] == Decimal("9750")
+    assert overview["derived_available_credit_semantics"] == CREDIT_CARD_DERIVED_AVAILABLE_CREDIT_SEMANTICS
     assert overview["utilization_rate"] == Decimal("0.025")
     assert overview["profile"].statement_day == 10
     assert service.list_credit_cards(service.owner_token)[0]["profile"].account_id == card.account_id
+
+
+def test_overpaid_credit_card_profile_exposes_overpayment_not_negative_debt(tmp_path):
+    service = FinanceService(DeploymentSecurityConfig(), database_url=f"sqlite:///{tmp_path / 'track-anywhere.sqlite3'}")
+    card, _ = service.create_account(
+        service.owner_token,
+        {
+            "name": "Overpaid Visa",
+            "type": "liability",
+            "currency": "CNY",
+            "opening_balance": "-50",
+            "institution_type": "bank",
+            "subtype": "credit_card",
+            "institution": "Test Bank",
+        },
+        idempotency_key="overpaid-credit-card-account",
+    )
+
+    overview, replay = service.update_credit_card_profile(
+        service.owner_token,
+        card.account_id,
+        {"credit_limit": "1000"},
+        idempotency_key="overpaid-credit-card-profile",
+    )
+
+    assert replay is False
+    assert overview["natural_balance"] == Decimal("-50")
+    assert overview["natural_balance_semantics"] == ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"]
+    assert overview["current_balance"] == Decimal("-50")
+    assert overview["compatibility_aliases"]["current_balance"] == CREDIT_CARD_CURRENT_BALANCE_COMPATIBILITY_ALIAS
+    assert overview["outstanding_balance"] == Decimal("0")
+    assert overview["outstanding_balance_semantics"] == LIABILITY_OUTSTANDING_AMOUNT_SEMANTICS
+    assert overview["overpayment_balance"] == Decimal("50")
+    assert overview["overpayment_balance_semantics"] == LIABILITY_OVERPAYMENT_AMOUNT_SEMANTICS
+    assert overview["derived_available_credit"] == Decimal("1050")
+    assert overview["derived_available_credit_semantics"] == CREDIT_CARD_DERIVED_AVAILABLE_CREDIT_SEMANTICS
+    assert overview["utilization_rate"] == Decimal("0")
 
 
 def test_credit_card_profile_requires_credit_card_account(tmp_path):

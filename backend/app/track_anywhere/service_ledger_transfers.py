@@ -4,7 +4,7 @@ from typing import Any
 
 from .commands import RecordTransactionCommand
 from .errors import ValidationError
-from .ledger import Posting
+from .ledger import credit_posting, debit_posting
 from .transaction_builder import build_transaction
 
 
@@ -40,8 +40,8 @@ class LedgerTransferUseCases:
                 occurred_at=command.occurred_at,
                 purpose=command.purpose,
                 postings=[
-                    Posting(command.from_account_id, -command.amount, command.currency),
-                    Posting(command.to_account_id, command.amount, command.currency),
+                    credit_posting(command.from_account_id, command.amount, command.currency),
+                    debit_posting(command.to_account_id, command.amount, command.currency),
                 ],
                 accounts=[from_account, to_account],
                 scale_lookup=self.assets.scale_for,

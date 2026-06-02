@@ -319,6 +319,18 @@
     "/api/v1/system/status": [
       "get"
     ],
+    "/api/v1/system/posting-semantics-audit": [
+      "get"
+    ],
+    "/api/v1/system/posting-semantics-cutover-plan": [
+      "get"
+    ],
+    "/api/v1/system/posting-semantics-rewrite": [
+      "post"
+    ],
+    "/api/v1/system/posting-semantics-review-resolutions": [
+      "post"
+    ],
     "/api/v1/users": [
       "get",
       "post"

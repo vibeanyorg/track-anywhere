@@ -17,7 +17,8 @@ def account_list(data: Any) -> Table | Panel:
     table.add_column("Name")
     table.add_column("Type")
     table.add_column("Currency")
-    table.add_column("Balance", justify="right")
+    table.add_column("Balance semantics")
+    table.add_column("Natural balance", justify="right")
     for account in accounts:
         if not isinstance(account, dict):
             continue
@@ -26,6 +27,7 @@ def account_list(data: Any) -> Table | Panel:
             _stringify(account.get("name")),
             _stringify(account.get("type")),
             _stringify(account.get("currency")),
+            _stringify(account.get("balance_semantics")),
             _stringify(account.get("balance", account.get("current_balance"))),
         )
     return table
@@ -39,7 +41,9 @@ def summary_accounts(data: Any) -> Table | Panel:
     table.add_column("Group")
     table.add_column("Currency")
     table.add_column("Assets", justify="right")
-    table.add_column("Liabilities", justify="right")
+    table.add_column("Funds", justify="right")
+    table.add_column("Liabilities owed", justify="right")
+    table.add_column("Liability overpaid", justify="right")
     table.add_column("Net", justify="right")
     for row in groups:
         if not isinstance(row, dict):
@@ -48,7 +52,9 @@ def summary_accounts(data: Any) -> Table | Panel:
             _stringify(row.get("group", row.get("key"))),
             _stringify(row.get("currency")),
             _stringify(row.get("asset_amount", row.get("amount", ""))),
-            _stringify(row.get("liability_amount", "")),
+            _stringify(row.get("fund_amount", "")),
+            _stringify(row.get("liability_outstanding_amount", row.get("liability_amount", ""))),
+            _stringify(row.get("liability_overpayment_amount", "")),
             _stringify(row.get("net_amount", row.get("amount", ""))),
         )
     return table
@@ -157,7 +163,8 @@ def credit_card_list(data: Any) -> Table | Panel:
     table.add_column("Account ID")
     table.add_column("Name")
     table.add_column("Currency")
-    table.add_column("Balance")
+    table.add_column("Outstanding")
+    table.add_column("Overpayment")
     table.add_column("Credit limit")
     table.add_column("Available credit")
     table.add_column("Utilization")
@@ -169,7 +176,8 @@ def credit_card_list(data: Any) -> Table | Panel:
             _stringify(account.get("account_id")),
             _stringify(account.get("name")),
             _stringify(account.get("currency")),
-            _stringify(card.get("current_balance")),
+            _stringify(card.get("outstanding_balance", card.get("current_balance"))),
+            _stringify(card.get("overpayment_balance", "")),
             _stringify(card.get("credit_limit")),
             _stringify(card.get("available_credit")),
             _stringify(card.get("utilization_rate")),
@@ -187,10 +195,17 @@ def credit_card_summary(data: Any) -> Table:
             ("Name", account.get("name")),
             ("Type", account.get("type")),
             ("Currency", account.get("currency")),
-            ("Balance", card.get("current_balance")),
+            ("Natural liability balance", card.get("natural_balance", card.get("current_balance"))),
+            ("Natural balance semantics", card.get("natural_balance_semantics")),
+            ("Balance semantics", card.get("balance_semantics")),
+            ("Outstanding balance", card.get("outstanding_balance")),
+            ("Outstanding balance semantics", card.get("outstanding_balance_semantics")),
+            ("Overpayment balance", card.get("overpayment_balance")),
+            ("Overpayment balance semantics", card.get("overpayment_balance_semantics")),
             ("Credit limit", card.get("credit_limit")),
             ("Available credit", card.get("available_credit")),
             ("Derived available credit", card.get("derived_available_credit")),
+            ("Derived available credit semantics", card.get("derived_available_credit_semantics")),
             ("Utilization", card.get("utilization_rate")),
         ],
     )
@@ -217,21 +232,53 @@ def account_balance_summary(data: Any) -> Table:
     payload = _as_dict(data)
     official = _as_dict(payload.get("official_balance"))
     projected = _as_dict(payload.get("projected_balance"))
+    liability = _as_dict(payload.get("liability_balance"))
+    projected_liability = _as_dict(payload.get("projected_liability_balance"))
     provenance = _as_dict(payload.get("provenance"))
     fields = [
         ("Account ID", payload.get("account_id")),
+        ("Account type", payload.get("account_type")),
         ("Currency", payload.get("currency")),
+        ("Balance semantics", payload.get("balance_semantics")),
         ("Official balance", official.get("amount")),
+        ("Official amount semantics", official.get("amount_semantics")),
         ("Balance source", official.get("source")),
         ("As-of ledger version", official.get("as_of_ledger_version")),
     ]
+    if liability:
+        fields.extend(
+            [
+                ("Liability semantics", liability.get("semantics")),
+                ("Outstanding amount", liability.get("outstanding_amount")),
+                ("Outstanding amount semantics", liability.get("outstanding_amount_semantics")),
+                ("Overpayment amount", liability.get("overpayment_amount")),
+                ("Overpayment amount semantics", liability.get("overpayment_amount_semantics")),
+            ]
+        )
     if projected:
         fields.extend(
             [
                 ("Projected balance", projected.get("amount")),
+                ("Projected amount semantics", projected.get("amount_semantics")),
                 ("Pending impact", projected.get("pending_impact")),
+                ("Pending impact semantics", projected.get("pending_impact_semantics")),
                 ("Projection version", projected.get("projection_version")),
                 ("Included draft ids", projected.get("included_draft_ids")),
+            ]
+        )
+    if projected_liability:
+        fields.extend(
+            [
+                ("Projected outstanding amount", projected_liability.get("outstanding_amount")),
+                (
+                    "Projected outstanding amount semantics",
+                    projected_liability.get("outstanding_amount_semantics"),
+                ),
+                ("Projected overpayment amount", projected_liability.get("overpayment_amount")),
+                (
+                    "Projected overpayment amount semantics",
+                    projected_liability.get("overpayment_amount_semantics"),
+                ),
             ]
         )
     if provenance:
@@ -242,6 +289,73 @@ def account_balance_summary(data: Any) -> Table:
             ]
         )
     return object_summary("Account balance", fields)
+
+
+def posting_semantics_audit_summary(data: Any) -> Table:
+    payload = _as_dict(data)
+    counts = _as_dict(payload.get("counts"))
+    fields = [
+        ("Cutover ready", payload.get("cutover_ready")),
+        ("Auto rewrite ready", payload.get("auto_rewrite_ready")),
+        ("Issue count", _count(payload.get("issues"))),
+        ("Manual review blockers", _count(payload.get("manual_review_blockers"))),
+        ("Auto rewrite candidates", _count(payload.get("auto_rewrite_candidates"))),
+        ("Manual review recommendations", _count(payload.get("manual_review_recommendations"))),
+    ]
+    for key, value in counts.items():
+        fields.append((key.replace("_", " ").title(), value))
+    return object_summary("Posting semantics audit", fields)
+
+
+def posting_semantics_cutover_plan_summary(data: Any) -> Table:
+    payload = _as_dict(data)
+    fields = [
+        ("Cutover ready", payload.get("cutover_ready")),
+        ("Auto rewrite ready", payload.get("auto_rewrite_ready")),
+        ("Blocking issue count", _count(payload.get("blocking_issues", payload.get("manual_review_blockers")))),
+        ("Auto rewrite candidate count", _count(payload.get("auto_rewrite_candidates"))),
+        ("Manual review recommendation count", _count(payload.get("manual_review_recommendations"))),
+    ]
+    counts = _as_dict(payload.get("counts"))
+    for key, value in counts.items():
+        fields.append((key.replace("_", " ").title(), value))
+    return object_summary("Posting semantics cutover plan", fields)
+
+
+def posting_semantics_write_summary(data: Any) -> Table:
+    payload = _as_dict(data)
+    fields = []
+    for key in (
+        "status",
+        "book_id",
+        "cutover_ready",
+        "confirmed_postings_rewritten",
+        "draft_postings_rewritten",
+        "confirmed_liability_postings_rewritten",
+        "draft_liability_postings_rewritten",
+        "rewritten_postings",
+        "rewritten_draft_postings",
+        "resolved_postings",
+        "resolved_draft_postings",
+        "idempotent_replay",
+    ):
+        if key in payload:
+            fields.append((key.replace("_", " ").title(), payload.get(key)))
+    for key, value in _as_dict(payload.get("result")).items():
+        fields.append((key.replace("_", " ").title(), value))
+    posting_semantics = _as_dict(payload.get("posting_semantics"))
+    if posting_semantics:
+        fields.extend(
+            [
+                ("Canonical model", posting_semantics.get("canonical_model")),
+                ("Amount rule", posting_semantics.get("debit_credit_amount_rule")),
+                ("Side rule", posting_semantics.get("debit_credit_side_rule")),
+                ("Legacy signed scope", posting_semantics.get("legacy_signed_scope")),
+            ]
+        )
+    if not fields:
+        fields = [("Response", payload)]
+    return object_summary("Posting semantics write", fields)
 
 
 def account_adjust_summary(data: Any) -> Table:
@@ -259,3 +373,11 @@ def account_adjust_summary(data: Any) -> Table:
     if isinstance(data, dict) and "idempotent_replay" in data:
         fields.append(("Idempotent replay", data.get("idempotent_replay")))
     return object_summary("Account adjustment", fields)
+
+
+def _count(value: Any) -> int | str:
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value)
+    if value is None:
+        return ""
+    return str(value)

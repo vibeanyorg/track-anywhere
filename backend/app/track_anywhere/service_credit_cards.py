@@ -3,6 +3,13 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
+from .balance_semantics import (
+    ACCOUNT_TYPE_BALANCE_SEMANTICS,
+    CREDIT_CARD_CURRENT_BALANCE_COMPATIBILITY_ALIAS,
+    CREDIT_CARD_DERIVED_AVAILABLE_CREDIT_SEMANTICS,
+    liability_balance_amounts,
+    liability_split_amount_semantics,
+)
 from .commands import UpdateCreditCardProfileCommand
 from .errors import ValidationError
 from .ledger import Account
@@ -77,12 +84,16 @@ class CreditCardUseCases:
     def _credit_card_overview(self, account_id: str, *, profile=None) -> dict[str, Any]:
         account = self._require_credit_card_account(account_id)
         profile = profile if profile is not None else self._get_credit_card_profile_from_storage(account_id)
-        current_balance = self._account_balance_from_storage(account_id).get(account.currency, Decimal("0"))
+        natural_balance = self._account_balance_from_storage(account_id).get(account.currency, Decimal("0"))
+        liability_amounts = liability_balance_amounts(natural_balance)
+        liability_semantics = liability_split_amount_semantics()
+        outstanding_balance = liability_amounts["outstanding_amount"]
+        overpayment_balance = liability_amounts["overpayment_amount"]
         credit_limit = profile.credit_limit if profile is not None else None
-        derived_available_credit = credit_limit - current_balance if credit_limit is not None else None
+        derived_available_credit = credit_limit - outstanding_balance + overpayment_balance if credit_limit is not None else None
         utilization_rate = None
         if credit_limit is not None and credit_limit > Decimal("0"):
-            utilization_rate = current_balance / credit_limit
+            utilization_rate = outstanding_balance / credit_limit
         return {
             "account": account,
             "profile": profile,
@@ -91,10 +102,22 @@ class CreditCardUseCases:
                 account_id=account.account_id,
             ),
             "currency": account.currency,
-            "current_balance": current_balance,
+            "natural_balance": natural_balance,
+            "natural_balance_semantics": ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"],
+            "current_balance": natural_balance,
+            "current_balance_semantics": ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"],
+            "balance_semantics": ACCOUNT_TYPE_BALANCE_SEMANTICS["liability"],
+            "compatibility_aliases": {
+                "current_balance": CREDIT_CARD_CURRENT_BALANCE_COMPATIBILITY_ALIAS
+            },
+            "outstanding_balance": outstanding_balance,
+            "outstanding_balance_semantics": liability_semantics["outstanding_amount_semantics"],
+            "overpayment_balance": overpayment_balance,
+            "overpayment_balance_semantics": liability_semantics["overpayment_amount_semantics"],
             "credit_limit": credit_limit,
             "available_credit": profile.available_credit if profile is not None else None,
             "derived_available_credit": derived_available_credit,
+            "derived_available_credit_semantics": CREDIT_CARD_DERIVED_AVAILABLE_CREDIT_SEMANTICS,
             "utilization_rate": utilization_rate,
         }
 
