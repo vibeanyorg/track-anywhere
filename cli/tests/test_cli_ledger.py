@@ -66,6 +66,67 @@ def test_tx_record_posts_agent_friendly_payload(monkeypatch, capsys):
     assert payload["data"]["transaction"]["purpose"] == "lunch"
 
 
+def test_tx_fx_exchange_posts_dedicated_fx_payload(monkeypatch, capsys):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key, "token": config.token})
+        return 200, {"transaction": {"transaction_id": "txn_fx", "purpose": payload["purpose"]}}
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    exit_code = main(
+        [
+            "--token",
+            "token-1",
+            "tx",
+            "fx-exchange",
+            "--from",
+            "acc_eur24",
+            "--from-amount",
+            "420.04",
+            "--from-currency",
+            "EUR24",
+            "--to",
+            "acc_usd24",
+            "--to-amount",
+            "481.69",
+            "--to-currency",
+            "USD24",
+            "--purpose",
+            "SafePal EUR24 to USD24",
+            "--memo",
+            "manual exchange",
+            "--json",
+        ]
+    )
+
+    assert exit_code == 0
+    assert calls == [
+        {
+            "method": "POST",
+            "path": "/api/v1/ledger/fx-exchanges",
+            "payload": {
+                "from_account_id": "acc_eur24",
+                "from_amount": "420.04",
+                "from_currency": "EUR24",
+                "to_account_id": "acc_usd24",
+                "to_amount": "481.69",
+                "to_currency": "USD24",
+                "purpose": "SafePal EUR24 to USD24",
+                "rate_source": "manual",
+                "memo": "manual exchange",
+            },
+            "key": calls[0]["key"],
+            "token": "token-1",
+        }
+    ]
+    assert calls[0]["key"].startswith("tx-fx-exchange-")
+    payload = _json_from_output(capsys.readouterr())
+    assert payload["ok"] is True
+    assert payload["command"] == "tx.fx-exchange"
+
+
 def test_tx_show_not_found_emits_error_outcome_with_404(monkeypatch, capsys):
     def fake_request(config, method, path, payload=None, key=None):
         assert method == "GET"

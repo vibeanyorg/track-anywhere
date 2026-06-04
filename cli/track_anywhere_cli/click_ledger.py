@@ -72,6 +72,7 @@ def _transactions(root: click.Group) -> None:
         """Manage transactions."""
 
     _record_command(tx, command="tx", tx_command="record")
+    _fx_exchange_command(tx)
 
     @tx.command("list")
     @click.option("--account-id")
@@ -206,6 +207,28 @@ def _record_command(group: click.Group, name: str = "record", command: str = "tx
     def record_tx(state, json_mode, no_color, **kwargs):
         args = common_args(state, json_mode, no_color, command=command, tx_command=tx_command, **kwargs)
         return run_api(args, state=state, command_path="tx.record")
+
+
+def _fx_exchange_command(group: click.Group) -> None:
+    @group.command("fx-exchange")
+    @click.option("--from-account-id", "--from", "from_account_id", required=True)
+    @click.option("--from-amount", required=True)
+    @click.option("--from-currency", required=True)
+    @click.option("--to-account-id", "--to", "to_account_id", required=True)
+    @click.option("--to-amount", required=True)
+    @click.option("--to-currency", required=True)
+    @click.option("--purpose", default="fx_exchange")
+    @click.option("--memo", default="")
+    @click.option("--occurred-at")
+    @click.option("--rate-source", default="manual")
+    @click.option("--fee-account-id")
+    @click.option("--fee-amount")
+    @click.option("--idempotency-key")
+    @output_options
+    @pass_state
+    def fx_exchange(state, json_mode, no_color, **kwargs):
+        args = common_args(state, json_mode, no_color, command="tx", tx_command="fx-exchange", **kwargs)
+        return run_api(args, state=state, command_path="tx.fx-exchange")
 
 
 def _expense_income(root: click.Group) -> None:

@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from .commands import ASSET_CODE_PATTERN, StrictCommand
 
@@ -131,24 +131,26 @@ class RecordPaymentProfileExpenseCommand(StrictCommand):
 
 class RecordFxExchangeCommand(StrictCommand):
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    from_account_id: str
+    from_account_id: str = Field(validation_alias=AliasChoices("from_account_id", "source_account_id"))
     from_amount: Decimal = Field(
         gt=0,
+        validation_alias=AliasChoices("from_amount", "source_amount"),
         description=(
             "Positive source-currency amount. Do not pass signed posting amounts; "
             "persisted postings use positive debit/credit rows."
         ),
     )
-    from_currency: str = Field(pattern=ASSET_CODE_PATTERN)
-    to_account_id: str
+    from_currency: str = Field(pattern=ASSET_CODE_PATTERN, validation_alias=AliasChoices("from_currency", "source_currency"))
+    to_account_id: str = Field(validation_alias=AliasChoices("to_account_id", "target_account_id"))
     to_amount: Decimal = Field(
         gt=0,
+        validation_alias=AliasChoices("to_amount", "target_amount"),
         description=(
             "Positive target-currency amount. Do not pass signed posting amounts; "
             "persisted postings use positive debit/credit rows."
         ),
     )
-    to_currency: str = Field(pattern=ASSET_CODE_PATTERN)
+    to_currency: str = Field(pattern=ASSET_CODE_PATTERN, validation_alias=AliasChoices("to_currency", "target_currency"))
     purpose: str = Field(default="fx_exchange", min_length=1, max_length=256)
     memo: str = Field(default="", max_length=256)
     rate_source: str = Field(default="manual", min_length=1, max_length=80)

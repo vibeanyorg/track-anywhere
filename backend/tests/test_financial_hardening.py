@@ -221,6 +221,40 @@ def test_fx_exchange_uses_clearing_accounts_and_keeps_plain_transfers_single_ass
     assert service.spending_report(token, "book_default")["groups"] == []
 
 
+def test_fx_exchange_accepts_source_target_aliases_for_custom_assets():
+    service = FinanceService(DeploymentSecurityConfig(), database_url="sqlite:///:memory:")
+    token = service.owner_token
+    eur24, _ = service.create_account(
+        token,
+        {"name": "SafePal EUR24", "type": "asset", "currency": "EUR24", "opening_balance": "420.04"},
+        idempotency_key="fx-custom-eur24",
+    )
+    usd24, _ = service.create_account(
+        token,
+        {"name": "SafePal USD24", "type": "asset", "currency": "USD24"},
+        idempotency_key="fx-custom-usd24",
+    )
+
+    transaction, _ = service.record_fx_exchange(
+        token,
+        {
+            "source_account_id": eur24.account_id,
+            "source_amount": "420.04",
+            "source_currency": "EUR24",
+            "target_account_id": usd24.account_id,
+            "target_amount": "481.69",
+            "target_currency": "USD24",
+            "memo": "SafePal EUR24 to USD24",
+        },
+        idempotency_key="fx-custom-eur24-usd24",
+    )
+
+    assert len(transaction.postings) == 4
+    assert [line.line_type for line in transaction.lines] == ["fx_exchange"]
+    assert service.account_balance(token, eur24.account_id)["official_balance"]["amount"] == "0.00"
+    assert service.account_balance(token, usd24.account_id)["official_balance"]["amount"] == "481.69"
+
+
 def test_fx_exchange_to_credit_card_liability_reduces_outstanding_balance():
     service = FinanceService(DeploymentSecurityConfig(), database_url="sqlite:///:memory:")
     token = service.owner_token

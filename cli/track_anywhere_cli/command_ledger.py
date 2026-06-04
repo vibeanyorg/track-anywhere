@@ -37,6 +37,8 @@ def infer_ledger_command_path(args: Namespace) -> str | None:
         tx_command = getattr(args, "tx_command", None)
         if tx_command in {"record", "list", "show", "snapshot", "reverse", "reclassify"}:
             return f"tx.{tx_command}"
+        if tx_command == "fx-exchange":
+            return "tx.fx-exchange"
     if command == "expense" and getattr(args, "expense_command", None) == "record":
         return "expense.record"
     if command == "income" and getattr(args, "income_command", None) == "record":
@@ -75,6 +77,10 @@ def request_confirm_draft(args: Namespace, config: CliConfig, requester: Request
 
 def request_record_transaction(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
     return requester(config, "POST", "/api/v1/ledger/transactions", _transaction_payload(args), key=command_idempotency_key(args, "tx-record"))
+
+
+def request_record_fx_exchange(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
+    return requester(config, "POST", "/api/v1/ledger/fx-exchanges", _fx_exchange_payload(args), key=command_idempotency_key(args, "tx-fx-exchange"))
 
 
 def request_record_expense(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
@@ -179,6 +185,25 @@ def _transaction_payload(args: Namespace) -> dict[str, Any]:
     return transaction_payload
 
 
+def _fx_exchange_payload(args: Namespace) -> dict[str, Any]:
+    fx_payload = {
+        "from_account_id": args.from_account_id,
+        "from_amount": args.from_amount,
+        "from_currency": args.from_currency,
+        "to_account_id": args.to_account_id,
+        "to_amount": args.to_amount,
+        "to_currency": args.to_currency,
+        "purpose": args.purpose,
+        "rate_source": args.rate_source,
+    }
+    _add_optional_ledger_fields(fx_payload, args)
+    if args.fee_account_id:
+        fx_payload["fee_account_id"] = args.fee_account_id
+    if args.fee_amount:
+        fx_payload["fee_amount"] = args.fee_amount
+    return fx_payload
+
+
 def _category_money_payload(args: Namespace) -> dict[str, Any]:
     money_payload = {"amount": args.amount, "currency": args.currency, "category_id": args.category_id, "purpose": args.purpose}
     _add_optional_ledger_fields(money_payload, args)
@@ -240,6 +265,7 @@ LEDGER_COMMAND_HANDLERS: dict[str, CommandHandler] = {
     "capture": request_capture_draft,
     "draft.confirm": request_confirm_draft,
     "tx.record": request_record_transaction,
+    "tx.fx-exchange": request_record_fx_exchange,
     "tx.list": request_list_transactions,
     "tx.show": request_show_transaction,
     "tx.snapshot": request_transaction_snapshot,
