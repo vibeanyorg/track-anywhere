@@ -10,6 +10,7 @@ def register(root: click.Group) -> None:
     _register_user(root)
     _register_category(root)
     _register_credit_card(root)
+    _register_financial_account(root)
     _register_account(root)
 
 
@@ -171,6 +172,68 @@ def _register_credit_card(root: click.Group) -> None:
     def update_card(state, json_mode, no_color, account_id, **kwargs):
         args = common_args(state, json_mode, no_color, command="credit-card", credit_card_command="update", account_id=account_id, **kwargs)
         return run_api(args, state=state, command_path="credit_card.update")
+
+
+def _register_financial_account(root: click.Group) -> None:
+    @root.group("financial-account")
+    def financial_account():
+        """Query user-visible financial accounts."""
+
+    @financial_account.command("list")
+    @click.option("--q")
+    @click.option("--type", "financial_account_type")
+    @click.option("--currency")
+    @click.option("--institution-type")
+    @click.option("--subtype")
+    @click.option("--institution")
+    @click.option("--status", type=click.Choice(["active"]))
+    @click.option("--include-balance", is_flag=True)
+    @output_options
+    @pass_state
+    def list_financial_accounts(state, json_mode, no_color, financial_account_type, include_balance, **kwargs):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="financial-account",
+            financial_account_command="list",
+            type=financial_account_type,
+            include_balance=include_balance,
+            **kwargs,
+        )
+        return run_api(args, state=state, command_path="financial_account.list")
+
+    @financial_account.command("show")
+    @click.argument("account_id")
+    @click.option("--include-balance", is_flag=True)
+    @output_options
+    @pass_state
+    def show_financial_account(state, json_mode, no_color, account_id, include_balance):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="financial-account",
+            financial_account_command="show",
+            account_id=account_id,
+            include_balance=include_balance,
+        )
+        return run_api(args, state=state, command_path="financial_account.show")
+
+    @financial_account.command("balance")
+    @click.argument("account_id")
+    @output_options
+    @pass_state
+    def financial_account_balance(state, json_mode, no_color, account_id):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="financial-account",
+            financial_account_command="balance",
+            account_id=account_id,
+        )
+        return run_api(args, state=state, command_path="financial_account.balance")
 
 
 def _register_account(root: click.Group) -> None:

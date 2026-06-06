@@ -211,6 +211,64 @@ def credit_card_summary(data: Any) -> Table:
     )
 
 
+def financial_account_list(data: Any) -> Table | Panel:
+    accounts = _as_dict(data).get("financial_accounts", [])
+    if not accounts:
+        return empty_panel("Financial accounts", "No financial accounts found.")
+    table = Table(title="Financial accounts")
+    table.add_column("ID")
+    table.add_column("Name")
+    table.add_column("Type")
+    table.add_column("Currency")
+    table.add_column("Institution")
+    table.add_column("Subtype")
+    table.add_column("Official balance", justify="right")
+    for account in accounts:
+        if not isinstance(account, dict):
+            continue
+        balance = _as_dict(account.get("balance"))
+        official = _as_dict(balance.get("official_balance"))
+        table.add_row(
+            _stringify(account.get("account_id")),
+            _stringify(account.get("name")),
+            _stringify(account.get("type")),
+            _stringify(account.get("currency")),
+            _stringify(account.get("institution")),
+            _stringify(account.get("subtype")),
+            _stringify(official.get("amount")),
+        )
+    return table
+
+
+def financial_account_summary(data: Any) -> Table:
+    account = _as_dict(_as_dict(data).get("financial_account"))
+    balance = _as_dict(account.get("balance"))
+    official = _as_dict(balance.get("official_balance"))
+    fields = [
+        ("Account ID", account.get("account_id")),
+        ("Ledger account ID", account.get("ledger_account_id")),
+        ("Name", account.get("name")),
+        ("Type", account.get("type")),
+        ("Ledger account type", account.get("ledger_account_type")),
+        ("Currency", account.get("currency")),
+        ("Institution type", account.get("institution_type")),
+        ("Subtype", account.get("subtype")),
+        ("Institution", account.get("institution")),
+        ("Status", account.get("status")),
+        ("Balance semantics", account.get("balance_semantics")),
+    ]
+    if official:
+        fields.extend(
+            [
+                ("Official balance", official.get("amount")),
+                ("Official amount semantics", official.get("amount_semantics")),
+                ("Balance source", official.get("source")),
+                ("As-of ledger version", official.get("as_of_ledger_version")),
+            ]
+        )
+    return object_summary("Financial account", fields)
+
+
 def account_entity_summary(data: Any) -> Table:
     account = _as_dict(_as_dict(data).get("account"))
     return object_summary(

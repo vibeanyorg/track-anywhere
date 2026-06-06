@@ -38,6 +38,8 @@ def infer_catalog_command_path(args: Namespace) -> str | None:
         return f"counterparty.{args.counterparty_command}"
     if command == "credit-card" and getattr(args, "credit_card_command", None) in {"list", "show", "update"}:
         return f"credit_card.{args.credit_card_command}"
+    if command == "financial-account" and getattr(args, "financial_account_command", None) in {"list", "show", "balance"}:
+        return f"financial_account.{args.financial_account_command}"
     if command == "summary" and getattr(args, "summary_command", None) in {"accounts", "categories"}:
         return f"summary.{args.summary_command}"
     if command == "user" and getattr(args, "user_command", None) in {"create", "list"}:
@@ -125,6 +127,35 @@ def request_update_credit_card(args: Namespace, config: CliConfig, requester: Re
     return requester(config, "PATCH", f"/api/v1/credit-cards/{account_id}", credit_card_payload, key=command_idempotency_key(args, "credit-card-update"))
 
 
+def request_list_financial_accounts(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
+    financial_account_query = with_query(
+        "/api/v1/financial-accounts",
+        {
+            "q": args.q,
+            "type": args.type,
+            "currency": args.currency,
+            "institution_type": args.institution_type,
+            "subtype": args.subtype,
+            "institution": args.institution,
+            "status": args.status,
+            "include": "balance" if args.include_balance else None,
+        },
+    )
+    return requester(config, "GET", financial_account_query)
+
+
+def request_show_financial_account(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
+    financial_account_query = with_query(
+        f"/api/v1/financial-accounts/{urllib.parse.quote(args.account_id)}",
+        {"include": "balance" if args.include_balance else None},
+    )
+    return requester(config, "GET", financial_account_query)
+
+
+def request_financial_account_balance(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
+    return requester(config, "GET", f"/api/v1/financial-accounts/{urllib.parse.quote(args.account_id)}/balance")
+
+
 def request_summary_accounts(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
     summary_query = with_query(
         "/api/v1/summary/accounts",
@@ -198,6 +229,9 @@ CATALOG_COMMAND_HANDLERS: dict[str, CommandHandler] = {
     "credit_card.list": request_list_credit_cards,
     "credit_card.show": request_show_credit_card,
     "credit_card.update": request_update_credit_card,
+    "financial_account.list": request_list_financial_accounts,
+    "financial_account.show": request_show_financial_account,
+    "financial_account.balance": request_financial_account_balance,
     "summary.accounts": request_summary_accounts,
     "summary.categories": request_summary_categories,
     "account.create": request_create_account,

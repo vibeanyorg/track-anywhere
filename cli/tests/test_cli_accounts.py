@@ -71,6 +71,72 @@ def test_account_read_commands_use_query_api(monkeypatch):
     ]
 
 
+def test_financial_account_commands_use_financial_account_api(monkeypatch):
+    calls = []
+
+    def fake_request(config, method, path, payload=None, key=None):
+        calls.append({"method": method, "path": path, "payload": payload, "key": key})
+        return 200, {
+            "financial_accounts": [],
+            "financial_account": {"account_id": "acc_1"},
+            "account_id": "acc_1",
+            "official_balance": {"amount": "100"},
+        }
+
+    monkeypatch.setattr(cli_main, "request_json", fake_request)
+
+    assert (
+        main(
+            [
+                "--token",
+                "token-1",
+                "financial-account",
+                "list",
+                "--q",
+                "SafePal",
+                "--type",
+                "crypto_wallet",
+                "--currency",
+                "USDC",
+                "--institution-type",
+                "crypto_wallet",
+                "--subtype",
+                "crypto_token",
+                "--institution",
+                "SafePal",
+                "--status",
+                "active",
+                "--include-balance",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assert main(["--token", "token-1", "financial-account", "show", "acc_1", "--include-balance", "--json"]) == 0
+    assert main(["--token", "token-1", "financial-account", "balance", "acc_1", "--json"]) == 0
+
+    assert calls == [
+        {
+            "method": "GET",
+            "path": "/api/v1/financial-accounts?q=SafePal&type=crypto_wallet&currency=USDC&institution_type=crypto_wallet&subtype=crypto_token&institution=SafePal&status=active&include=balance",
+            "payload": None,
+            "key": None,
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/financial-accounts/acc_1?include=balance",
+            "payload": None,
+            "key": None,
+        },
+        {
+            "method": "GET",
+            "path": "/api/v1/financial-accounts/acc_1/balance",
+            "payload": None,
+            "key": None,
+        },
+    ]
+
+
 def test_account_create_and_update_metadata_payloads(monkeypatch):
     calls = []
 
