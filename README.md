@@ -233,6 +233,16 @@ owed, and negative means overpayment or credit balance. Summary rows expose
 net-worth-style reporting instead of inferring meaning from a bare `amount`
 sign.
 
+### Account API resource split
+
+`/api/v1/accounts` is retained as the legacy catalog-compatible ledger account endpoint. It still exposes the underlying accounting account model and may include `asset`, `liability`, `income`, `expense`, `equity`, `fund`, and `system` records. Existing CLI commands such as `ta account list` continue to call this legacy endpoint.
+
+Use `/api/v1/ledger-accounts` when you explicitly want the double-entry ledger resource. It is a read alias for the same underlying account records and is allowed to return accounting-only and system accounts.
+
+Use `/api/v1/financial-accounts` for user-visible financial accounts: cash, bank accounts/cards, e-wallets, credit cards, brokerage accounts, crypto wallets, funds, and other visible asset/liability locations. This read model is backed by the current `Account.account_id`; the response therefore returns both `account_id` and `ledger_account_id` with the same value, and `ledger_account_type` records the underlying `asset`/`liability`/`fund` type. Its `type` field is the product-facing financial account type such as `cash`, `bank`, `e_wallet`, `credit_card`, `brokerage`, `crypto_wallet`, `fund`, or `other`.
+
+`GET /api/v1/financial-accounts` supports `q`, `type`, `currency`, `institution_type`, `subtype`, `institution`, and `status=active`. By default it excludes `income`, `expense`, `equity`, `system`, opening-equity, adjustment, FX-clearing, and category-clearing accounts. Add `include=balance` to expand confirmed balances in the list without requiring one balance request per account. A single visible account balance is also available at `GET /api/v1/financial-accounts/{account_id}/balance`.
+
 ## Credit card profiles
 
 Credit-card liability account balances use the same natural liability semantics:

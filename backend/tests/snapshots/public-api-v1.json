@@ -194,6 +194,15 @@
     "/api/v1/expenses": [
       "post"
     ],
+    "/api/v1/financial-accounts": [
+      "get"
+    ],
+    "/api/v1/financial-accounts/{account_id}": [
+      "get"
+    ],
+    "/api/v1/financial-accounts/{account_id}/balance": [
+      "get"
+    ],
     "/api/v1/funds": [
       "post"
     ],
@@ -223,6 +232,12 @@
     ],
     "/api/v1/investments/valuations": [
       "post"
+    ],
+    "/api/v1/ledger-accounts": [
+      "get"
+    ],
+    "/api/v1/ledger-accounts/{account_id}": [
+      "get"
     ],
     "/api/v1/ledger/adjustments": [
       "post"
