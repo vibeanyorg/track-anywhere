@@ -34,10 +34,10 @@ class FxUseCases:
             request_hash=request_hash,
             fn=create_fx_exchange_transaction,
         )
-        if replay:
-            self._commit_idempotency()
-        else:
-            self._commit_ledger_change(transaction, accounts=created_accounts)
+        self._commit_replay_or(
+            replay,
+            lambda: self._commit_ledger_change(transaction, accounts=created_accounts),
+        )
         return transaction, replay
 
     def _fx_exchange_context(self, command: RecordFxExchangeCommand) -> FxExchangeContext:

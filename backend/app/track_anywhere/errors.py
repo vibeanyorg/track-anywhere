@@ -10,6 +10,14 @@ class PolicyDenied(TrackAnywhereError):
     """Actor is not allowed to run the requested command."""
 
 
+class RateLimitExceeded(TrackAnywhereError):
+    """A security-sensitive operation exceeded its retry budget."""
+
+    def __init__(self, message: str, *, retry_after: int) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class SecurityPreconditionFailed(TrackAnywhereError):
     """HTTP or deployment security precondition failed."""
 
@@ -24,4 +32,3 @@ class StaleVersion(TrackAnywhereError):
 
 class NotFound(TrackAnywhereError):
     """Requested entity was not found."""
-

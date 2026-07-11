@@ -11,8 +11,9 @@ from track_anywhere.api import app, service
 from track_anywhere.attachments import MAX_ATTACHMENT_BYTES, PNG_MAGIC
 
 
-def test_api_attachment_endpoint_creates_ocr_draft():
+def test_api_attachment_endpoint_creates_ocr_draft(monkeypatch):
     assert app is not None
+    monkeypatch.setattr(service.attachments, "scanner", type("Scanner", (), {"scan": lambda self, content: None})())
     client = TestClient(app)
     response = client.post(
         "/api/v1/attachments",

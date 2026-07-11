@@ -22,7 +22,9 @@ from .storage_snapshot_loader import StorageSnapshotLoader
 from .storage_system import SystemStatusStorageMixin
 from .storage_uow import StorageUnitOfWork
 from .storage_models import Base
+from .storage_models import AttachmentRecord
 from .storage_writers import StorageWriters
+from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 _storage_auth_models.CredentialRecord
@@ -54,6 +56,12 @@ class OrmStorage(
 
     def unit_of_work(self) -> StorageUnitOfWork:
         return StorageUnitOfWork(self)
+
+    def attachment_content(self, attachment_id: str) -> bytes | None:
+        with self.session_factory() as session:
+            return session.scalar(
+                select(AttachmentRecord.content).where(AttachmentRecord.attachment_id == attachment_id)
+            )
 
     def save_startup_maintenance(self, changes: StartupMaintenanceChanges) -> None:
         with self.unit_of_work() as uow:

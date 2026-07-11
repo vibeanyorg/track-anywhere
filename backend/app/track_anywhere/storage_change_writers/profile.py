@@ -18,7 +18,7 @@ class ProfileChangeStorageWriters:
 
     def save_attachment_change(self, changes: AttachmentChanges) -> None:
         with self.unit_of_work() as uow:
-            uow.attachments.save(changes.attachments)
+            uow.attachments.save(changes.attachments, contents=changes.attachment_contents)
             uow.drafts.save(changes.drafts)
             self._save_write_metadata(uow, changes.metadata)
         self.update_read_cache(drafts=changes.drafts)

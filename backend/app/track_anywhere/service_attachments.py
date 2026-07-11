@@ -15,9 +15,8 @@ class AttachmentUseCases:
         idempotency_key: str,
     ):
         actor = self.actor_from_token(token, "attachment:write")
-        scanner_available = self.config.attachment_scanner_available
         request_hash = sha256(
-            content + filename.encode() + mime_type.encode() + str(scanner_available).encode()
+            content + filename.encode() + mime_type.encode()
         ).hexdigest()
 
         def run():
@@ -25,7 +24,6 @@ class AttachmentUseCases:
                 filename=filename,
                 mime_type=mime_type,
                 content=content,
-                scanner_available=scanner_available,
             )
             draft = self.drafts.create(
                 memo=f"Review attachment {attachment.original_filename}",
@@ -53,8 +51,9 @@ class AttachmentUseCases:
         self._commit_replay_or(
             replay,
             lambda: self._commit_attachment_change(
-                attachments=(result["attachment"],),
-                drafts=(result["draft"],),
+                    attachments=(result["attachment"],),
+                    attachment_contents={result["attachment"].attachment_id: content},
+                    drafts=(result["draft"],),
             ),
         )
         return result, replay

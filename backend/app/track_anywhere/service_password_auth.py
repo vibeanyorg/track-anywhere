@@ -8,13 +8,24 @@ from .password_auth import PasswordAccount, PasswordAccountStore, normalize_emai
 
 
 class PasswordAuthUseCases:
-    def authenticate_password_account(self, *, email: str, password: str) -> PasswordAccount:
+    def authenticate_password_account(
+        self,
+        *,
+        email: str,
+        password: str,
+        source: str = "unknown",
+    ) -> PasswordAccount:
+        attempt_key = f"{source}:{normalize_email(email)}"
+        self.password_login_limiter.check(attempt_key)
         try:
             with self.storage.unit_of_work() as uow:
-                return PasswordAccountStore(uow.password_accounts).authenticate(email=email, password=password)
+                account = PasswordAccountStore(uow.password_accounts).authenticate(email=email, password=password)
         except PolicyDenied:
+            self.password_login_limiter.record_failure(attempt_key)
             self.record_security_failure("auth.password_denied", {"reason": "bad_credentials"})
             raise
+        self.password_login_limiter.record_success(attempt_key)
+        return account
 
     def create_password_account(
         self,

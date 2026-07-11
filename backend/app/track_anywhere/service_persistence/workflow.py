@@ -53,11 +53,12 @@ class ServiceProfilePersistence:
         self._mark_metadata_committed(metadata)
         self.payment_profiles.mark_clean()
 
-    def _commit_attachment_change(self, *, attachments=(), drafts=()) -> None:
+    def _commit_attachment_change(self, *, attachments=(), attachment_contents=None, drafts=()) -> None:
         metadata = self._write_metadata()
         changes = AttachmentChanges(
             metadata=metadata,
             attachments=tuple(attachments),
+            attachment_contents=dict(attachment_contents or {}),
             drafts=tuple(drafts),
         )
         self.storage.save_attachment_change(changes)

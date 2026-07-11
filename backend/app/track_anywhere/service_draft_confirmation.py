@@ -48,8 +48,8 @@ class DraftConfirmationUseCases:
             request_hash=request_hash,
             fn=run,
         )
-        if replay:
-            self._commit_idempotency()
-        else:
-            self._commit_draft_change(draft, transactions=(transaction,))
+        self._commit_replay_or(
+            replay,
+            lambda: self._commit_draft_change(draft, transactions=(transaction,)),
+        )
         return transaction, replay

@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Iterable
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from ..accounting import (
     PostingSide,
@@ -15,7 +15,7 @@ from ..accounting import (
     validate_posting_semantic_shape,
 )
 from ..drafts import DraftTransaction
-from ..errors import NotFound, ValidationError
+from ..errors import NotFound, StaleVersion, ValidationError
 from ..ledger import Posting
 from ..recurring import Recurrence, RecurringItem
 from ..storage_json import to_jsonable
@@ -50,21 +50,33 @@ class DraftRepository:
 
     def save(self, drafts: Iterable[Any], *, allow_legacy_signed: bool = False) -> None:
         for draft in drafts:
-            self.session.merge(
-                DraftRecord(
-                    draft_id=draft.draft_id,
-                    memo=draft.memo,
-                    state=draft.state,
-                    book_id=draft.book_id,
-                    missing_fields=list(draft.missing_fields),
-                    source=draft.source,
-                    confidence=draft.confidence,
-                    version=draft.version,
-                    attachment_id=draft.attachment_id,
-                    category_id=draft.category_id,
-                    metadata_json=to_jsonable(draft.metadata or {}),
+            values = {
+                "memo": draft.memo,
+                "state": draft.state,
+                "book_id": draft.book_id,
+                "missing_fields": list(draft.missing_fields),
+                "source": draft.source,
+                "confidence": draft.confidence,
+                "version": draft.version,
+                "attachment_id": draft.attachment_id,
+                "category_id": draft.category_id,
+                "metadata_json": to_jsonable(draft.metadata or {}),
+            }
+            existing = self.session.get(DraftRecord, draft.draft_id)
+            if existing is None:
+                self.session.add(DraftRecord(draft_id=draft.draft_id, **values))
+            else:
+                expected_version = draft.version - 1
+                result = self.session.execute(
+                    update(DraftRecord)
+                    .where(
+                        DraftRecord.draft_id == draft.draft_id,
+                        DraftRecord.version == expected_version,
+                    )
+                    .values(**values)
                 )
-            )
+                if result.rowcount != 1:
+                    raise StaleVersion("draft version conflict")
             self._replace_draft_postings(draft, allow_legacy_signed=allow_legacy_signed)
 
     def _replace_draft_postings(self, draft, *, allow_legacy_signed: bool = False) -> None:
@@ -235,7 +247,8 @@ class AttachmentRepository:
     def __init__(self, session) -> None:
         self.session = session
 
-    def save(self, attachments: Iterable[Any]) -> None:
+    def save(self, attachments: Iterable[Any], *, contents: dict[str, bytes] | None = None) -> None:
+        contents = contents or {}
         for attachment in attachments:
             self.session.merge(
                 AttachmentRecord(
@@ -245,5 +258,6 @@ class AttachmentRepository:
                     mime_type=attachment.mime_type,
                     original_filename=attachment.original_filename,
                     scanner_status=attachment.scanner_status,
+                    content=contents.get(attachment.attachment_id),
                 )
             )

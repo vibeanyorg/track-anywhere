@@ -31,10 +31,7 @@ class DraftCaptureUseCases:
             request_hash=request_hash,
             fn=run,
         )
-        if replay:
-            self._commit_idempotency()
-        else:
-            self._commit_draft_change(draft)
+        self._commit_replay_or(replay, lambda: self._commit_draft_change(draft))
         return draft, replay
 
     def _draft_from_capture_command(self, command: CaptureDraftCommand, *, actor: Actor):

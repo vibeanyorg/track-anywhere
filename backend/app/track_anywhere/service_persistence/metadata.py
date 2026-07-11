@@ -27,7 +27,11 @@ class ServiceMetadataPersistence:
 
     def _commit_idempotency(self) -> None:
         metadata = self._idempotency_metadata()
-        self.storage.save_idempotency(IdempotencyChanges(metadata=metadata))
+        try:
+            self.storage.save_idempotency(IdempotencyChanges(metadata=metadata))
+        except BaseException:
+            self.idempotency.abort_pending()
+            raise
         self._mark_metadata_committed(metadata)
 
     def _commit_credential_change(self) -> None:
@@ -47,7 +51,11 @@ class ServiceMetadataPersistence:
         self.storage.save_device_grant_change(DeviceGrantChanges(grants=(grant,)))
 
     def _commit_replay_or(self, replay: bool, commit) -> None:
-        if replay:
-            self._commit_idempotency()
-        else:
-            commit()
+        try:
+            if replay:
+                self._commit_idempotency()
+            else:
+                commit()
+        except BaseException:
+            self.idempotency.abort_pending()
+            raise

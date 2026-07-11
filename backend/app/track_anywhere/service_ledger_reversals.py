@@ -39,6 +39,7 @@ class LedgerReversalUseCases:
                 scale_lookup=self.assets.scale_for,
             )
             transaction.reversed_by = reversal.transaction_id
+            transaction.version += 1
             self.audit.record(
                 operation="ledger.reverse",
                 actor=actor,

@@ -87,10 +87,10 @@ class CreditCardUseCases:
             request_hash=request_hash,
             fn=run,
         )
-        if replay:
-            self._commit_idempotency()
-        else:
-            self._commit_credit_card_profile_change(result["profile"])
+        self._commit_replay_or(
+            replay,
+            lambda: self._commit_credit_card_profile_change(result["profile"]),
+        )
         return result, replay
 
     def _require_credit_card_account(self, account_id: str) -> Account:

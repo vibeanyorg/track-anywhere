@@ -36,10 +36,7 @@ class DraftLifecycleUseCases:
             request_hash=request_hash,
             fn=run,
         )
-        if replay:
-            self._commit_idempotency()
-        else:
-            self._commit_draft_change(rejected)
+        self._commit_replay_or(replay, lambda: self._commit_draft_change(rejected))
         return rejected, replay
 
     def supersede_draft(self, token: str, payload: dict[str, Any], *, idempotency_key: str):
@@ -73,8 +70,8 @@ class DraftLifecycleUseCases:
             request_hash=request_hash,
             fn=run,
         )
-        if replay:
-            self._commit_idempotency()
-        else:
-            self._commit_draft_change(current, replacement)
+        self._commit_replay_or(
+            replay,
+            lambda: self._commit_draft_change(current, replacement),
+        )
         return replacement, replay

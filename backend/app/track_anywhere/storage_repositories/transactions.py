@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Iterable
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from ..accounting import (
     legacy_signed_amount_to_debit_credit,
@@ -14,7 +14,7 @@ from ..accounting import (
 )
 from ..assets import default_asset_definition
 from ..domain_storage_models import TransactionLineRecord
-from ..errors import ValidationError
+from ..errors import StaleVersion, ValidationError
 from ..ledger import Posting, Transaction, TransactionLine
 from ..storage_json import to_jsonable
 from ..storage_models import AccountRecord, AssetRecord, PostingRecord, TransactionRecord
@@ -86,21 +86,34 @@ class TransactionRepository:
 
     def save(self, transactions: Iterable[Any], *, allow_legacy_signed: bool = False) -> None:
         for transaction in transactions:
-            upsert_record(
-                self.session,
-                TransactionRecord,
-                {
-                    "transaction_id": transaction.transaction_id,
-                    "book_id": transaction.book_id,
-                    "memo": transaction.memo,
-                    "occurred_at": transaction.occurred_at.isoformat(),
-                    "purpose": transaction.purpose,
-                    "reversed_by": transaction.reversed_by,
-                    "reverses_transaction_id": transaction.reverses_transaction_id,
-                    "version": transaction.version,
-                },
-                ["transaction_id"],
-            )
+            values = {
+                "book_id": transaction.book_id,
+                "memo": transaction.memo,
+                "occurred_at": transaction.occurred_at.isoformat(),
+                "purpose": transaction.purpose,
+                "reversed_by": transaction.reversed_by,
+                "reverses_transaction_id": transaction.reverses_transaction_id,
+                "version": transaction.version,
+            }
+            existing = self.session.get(TransactionRecord, transaction.transaction_id)
+            if existing is not None and transaction.version > 1:
+                result = self.session.execute(
+                    update(TransactionRecord)
+                    .where(
+                        TransactionRecord.transaction_id == transaction.transaction_id,
+                        TransactionRecord.version == transaction.version - 1,
+                    )
+                    .values(**values)
+                )
+                if result.rowcount != 1:
+                    raise StaleVersion("transaction version conflict")
+            else:
+                upsert_record(
+                    self.session,
+                    TransactionRecord,
+                    {"transaction_id": transaction.transaction_id, **values},
+                    ["transaction_id"],
+                )
             self._save_transaction_postings(transaction, allow_legacy_signed=allow_legacy_signed)
             self._replace_transaction_lines(transaction)
 

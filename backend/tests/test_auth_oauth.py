@@ -82,6 +82,26 @@ def test_oauth_identity_rejects_non_allowlisted_email(monkeypatch):
         require_allowed_identity(settings, identity)
 
 
+def test_oauth_identity_rejects_unverified_allowlisted_email(monkeypatch):
+    clear_oauth_env(monkeypatch)
+    monkeypatch.setenv("TRACK_ANYWHERE_OAUTH_ALLOWED_EMAILS", "owner@example.com")
+    settings = auth_settings_from_env(mode="local")
+    provider = OAuthProviderSettings(
+        name="oidc",
+        display_name="OIDC",
+        client_id="id",
+        client_secret="secret",
+        server_metadata_url="https://issuer.example.com/.well-known/openid-configuration",
+    )
+    identity = identity_from_oauth_token(
+        provider,
+        {"userinfo": {"sub": "attacker", "email": "owner@example.com", "email_verified": False}},
+    )
+
+    with pytest.raises(PolicyDenied, match="verified"):
+        require_allowed_identity(settings, identity)
+
+
 def test_oauth_role_selection_uses_explicit_owner_email(monkeypatch):
     clear_oauth_env(monkeypatch)
     monkeypatch.setenv("TRACK_ANYWHERE_OAUTH_ALLOWED_EMAILS", "owner@example.com,viewer@example.com")

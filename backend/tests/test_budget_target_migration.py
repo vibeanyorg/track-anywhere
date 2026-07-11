@@ -40,5 +40,5 @@ def test_alembic_migrates_budget_targets_from_merchant_to_counterparty(tmp_path)
         ).fetchone()[0]
         version = connection.execute("select version_num from alembic_version").fetchone()[0]
 
-    assert version == "0019_posting_constraints"
+    assert version == "0021_attachment_content"
     assert target_type == "counterparty"

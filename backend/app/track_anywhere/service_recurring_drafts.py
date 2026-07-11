@@ -55,14 +55,15 @@ class RecurringDraftUseCases:
             request_hash=request_hash,
             fn=run,
         )
-        if replay:
-            self._commit_idempotency()
-        else:
+
+        def commit() -> None:
             draft_ids = [item["draft_id"] for item in result["created"]]
             drafts = [self.drafts.drafts[draft_id] for draft_id in draft_ids]
             recurring_ids = [item["recurring_id"] for item in result["created"]]
             recurring_items = [self.recurring.items[recurring_id] for recurring_id in recurring_ids]
             self._commit_recurring_change(*recurring_items, drafts=drafts, accounts=created_accounts)
+
+        self._commit_replay_or(replay, commit)
         return result, replay
 
     def _create_recurring_draft(self, item: RecurringItem, renewal_date, *, created_accounts):

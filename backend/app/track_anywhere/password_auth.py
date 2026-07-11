@@ -4,16 +4,23 @@ import hashlib
 import hmac
 import re
 import secrets
+from collections import deque
 from dataclasses import dataclass
+from math import ceil
+from threading import Lock
+from time import monotonic
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .errors import PolicyDenied
+from .errors import PolicyDenied, RateLimitExceeded
 
 
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 PASSWORD_ITERATIONS = 390_000
+DUMMY_PASSWORD_HASH = "pbkdf2_sha256$390000$track-anywhere-dummy-auth$ad91c24505d228015b415c01bae7f8ee71cf56bf23d29ac8ffe07ca1589c65aa"
+LOGIN_FAILURE_LIMIT = 5
+LOGIN_FAILURE_WINDOW_SECONDS = 60
 
 
 class PasswordAuthCommand(BaseModel):
@@ -73,9 +80,50 @@ class PasswordAccountStore:
 
     def authenticate(self, *, email: str, password: str) -> PasswordAccount:
         account = self._repository.get(normalize_email(email))
-        if account is None or not _verify_password(password, account.password_hash):
+        encoded = account.password_hash if account is not None else DUMMY_PASSWORD_HASH
+        password_valid = _verify_password(password, encoded)
+        if account is None or not password_valid:
             raise PolicyDenied("email or password is incorrect")
         return account
+
+
+class PasswordLoginLimiter:
+    def __init__(
+        self,
+        *,
+        failure_limit: int = LOGIN_FAILURE_LIMIT,
+        window_seconds: int = LOGIN_FAILURE_WINDOW_SECONDS,
+    ) -> None:
+        self.failure_limit = failure_limit
+        self.window_seconds = window_seconds
+        self._failures: dict[str, deque[float]] = {}
+        self._lock = Lock()
+
+    def check(self, key: str) -> None:
+        now = monotonic()
+        with self._lock:
+            failures = self._active_failures(key, now)
+            if len(failures) < self.failure_limit:
+                return
+            retry_after = max(1, ceil(self.window_seconds - (now - failures[0])))
+            raise RateLimitExceeded("too many password login attempts", retry_after=retry_after)
+
+    def record_failure(self, key: str) -> None:
+        now = monotonic()
+        with self._lock:
+            failures = self._active_failures(key, now)
+            failures.append(now)
+
+    def record_success(self, key: str) -> None:
+        with self._lock:
+            self._failures.pop(key, None)
+
+    def _active_failures(self, key: str, now: float) -> deque[float]:
+        failures = self._failures.setdefault(key, deque())
+        cutoff = now - self.window_seconds
+        while failures and failures[0] <= cutoff:
+            failures.popleft()
+        return failures
 
 
 def normalize_email(value: str) -> str:

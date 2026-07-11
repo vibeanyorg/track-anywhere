@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, File, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from ..api_dependencies import AuthToken, IdempotencyKey
 from ..api_errors import raise_command_error
@@ -105,7 +106,8 @@ async def upload_attachment(
 ):
     try:
         content = await read_upload_with_limit(file)
-        result, replay = service.upload_attachment(
+        result, replay = await run_in_threadpool(
+            service.upload_attachment,
             token,
             filename=file.filename or "attachment",
             mime_type=file.content_type or "application/octet-stream",

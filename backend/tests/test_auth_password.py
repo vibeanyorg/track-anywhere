@@ -11,9 +11,51 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 from track_anywhere import api_auth_runtime
+from track_anywhere import password_auth
 from track_anywhere.api import app, service
 from track_anywhere.api_routers import auth as auth_router
 from track_anywhere.security import DeploymentSecurityConfig
+
+
+class _MissingPasswordAccountRepository:
+    def get(self, _email):
+        return None
+
+    def create(self, **_kwargs):
+        raise AssertionError("not used")
+
+
+def test_missing_password_account_still_runs_dummy_hash(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(password_auth, "_verify_password", lambda _password, encoded: calls.append(encoded) or False)
+    store = password_auth.PasswordAccountStore(_MissingPasswordAccountRepository())
+
+    with pytest.raises(password_auth.PolicyDenied):
+        store.authenticate(email="missing@example.com", password="incorrect-password")
+
+    assert len(calls) == 1
+
+
+def test_password_login_rate_limits_repeated_failures(monkeypatch):
+    assert app is not None
+    monkeypatch.setattr(password_auth, "_verify_password", lambda _password, _encoded: False)
+    client = TestClient(app)
+    email = f"rate-limit-{uuid4().hex}@example.com"
+
+    for _ in range(5):
+        response = client.post(
+            "/api/v1/auth/password/login",
+            json={"email": email, "password": "incorrect-password"},
+        )
+        assert response.status_code == 401
+
+    blocked = client.post(
+        "/api/v1/auth/password/login",
+        json={"email": email, "password": "incorrect-password"},
+    )
+
+    assert blocked.status_code == 429
+    assert int(blocked.headers["Retry-After"]) > 0
 
 
 def _production_config() -> DeploymentSecurityConfig:

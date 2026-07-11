@@ -29,10 +29,7 @@ class UserUseCases:
             request_hash=request_hash,
             fn=run,
         )
-        if replay:
-            self._commit_idempotency()
-        else:
-            self._commit_user_change(user)
+        self._commit_replay_or(replay, lambda: self._commit_user_change(user))
         return user, replay
 
     def list_users(self, token: str) -> list[AppUser]:

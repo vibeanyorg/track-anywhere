@@ -137,6 +137,8 @@ def identity_from_oauth_token(provider: OAuthProviderSettings, token: dict[str, 
 def require_allowed_identity(settings: AuthSettings, identity: OAuthIdentity) -> None:
     if identity.email is None:
         raise PolicyDenied("OAuth identity did not include an email address")
+    if not identity.email_verified:
+        raise PolicyDenied("OAuth identity email must be verified")
     if settings.allowed_emails and identity.email.lower() not in settings.allowed_emails:
         raise PolicyDenied("OAuth identity email is not allowlisted")
 

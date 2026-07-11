@@ -10,7 +10,7 @@ from ..api_dependencies import AuthToken
 from ..api_ports.auth import AuthService
 from ..api_sessions import SESSION_COOKIE, clear_browser_session_cookies, set_browser_session_cookies
 from ..auth_oauth import identity_from_oauth_token, oauth_callback_url, require_allowed_identity, role_for_identity
-from ..errors import PolicyDenied, ValidationError
+from ..errors import PolicyDenied, RateLimitExceeded, ValidationError
 from ..password_auth import PasswordAccount, PasswordLoginCommand, PasswordSignupCommand
 from ..platform_auth import ApiKeySessionCommand
 from ..platform_auth_http import identity_for_actor
@@ -94,9 +94,19 @@ def signup_with_password(payload: PasswordSignupCommand, auth_service: AuthServi
 
 
 @router.post("/password/login")
-def login_with_password(payload: PasswordLoginCommand, auth_service: AuthService):
+def login_with_password(payload: PasswordLoginCommand, request: Request, auth_service: AuthService):
     try:
-        account = auth_service.authenticate_password_account(email=payload.email, password=payload.password)
+        account = auth_service.authenticate_password_account(
+            email=payload.email,
+            password=payload.password,
+            source=request.client.host if request.client else "unknown",
+        )
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="too many password login attempts",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
     except PolicyDenied as exc:
         raise HTTPException(status_code=401, detail="email or password is incorrect") from exc
     return _password_session_response(auth_service, account)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .assets import AssetCatalog
 from .audit import AuditLog
-from .attachments import AttachmentIntake
+from .attachments import AttachmentIntake, AttachmentScanner
 from .auth_identities import AuthIdentityDirectory
 from .books import BookDirectory
 from .budgets import BudgetBook
@@ -43,6 +43,7 @@ from .storage import OrmStorage, new_owner_token
 from .platform_auth import PlatformKeyExchange
 from .payment_instruments import PaymentInstrumentDirectory
 from .payment_profiles import PaymentProfileDirectory
+from .password_auth import PasswordLoginLimiter
 from .users import UserDirectory
 
 
@@ -78,6 +79,7 @@ class FinanceService(
         *,
         database_url: str | None = None,
         persist_on_initialize: bool = False,
+        attachment_scanner: AttachmentScanner | None = None,
     ) -> None:
         self.config = config or DeploymentSecurityConfig()
         self.startup_warnings = validate_startup_security(self.config)
@@ -97,9 +99,10 @@ class FinanceService(
         self.investments = InvestmentBook()
         self.categories = CategoryBook()
         self.credit_cards = CreditCardBook()
-        self.attachments = AttachmentIntake(self.config)
+        self.attachments = AttachmentIntake(self.config, attachment_scanner)
         self.users = UserDirectory()
         self.auth_identities = AuthIdentityDirectory()
+        self.password_login_limiter = PasswordLoginLimiter()
         self.platform_key_exchange = PlatformKeyExchange()
         self.reconciliation_actions: list[dict[str, object]] = []
         self.adjustment_account_ids: dict[str, str] = {}

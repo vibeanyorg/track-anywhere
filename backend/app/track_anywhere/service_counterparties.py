@@ -36,10 +36,7 @@ class CounterpartyUseCases:
             request_hash=request_hash,
             fn=run,
         )
-        if replay:
-            self._commit_idempotency()
-        else:
-            self._commit_catalog_change()
+        self._commit_replay_or(replay, self._commit_catalog_change)
         return counterparty, replay
 
     def list_counterparties(

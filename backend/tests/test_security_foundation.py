@@ -105,7 +105,7 @@ def test_attachment_intake_fails_closed_when_scanner_missing_local_without_bypas
         )
 
 
-def test_attachment_intake_uses_server_side_scanner_config():
+def test_attachment_intake_requires_a_real_scanner_even_when_configured():
     service = FinanceService(
         DeploymentSecurityConfig(
             mode="production",
@@ -115,14 +115,14 @@ def test_attachment_intake_uses_server_side_scanner_config():
             attachment_scanner_available=True,
         )
     )
-    result, _ = service.upload_attachment(
-        service.owner_token,
-        filename="receipt.png",
-        mime_type="image/png",
-        content=PNG_MAGIC + b"body",
-        idempotency_key="att-2",
-    )
-    assert result["attachment"].scanner_status == "accepted"
+    with pytest.raises(SecurityPreconditionFailed, match="scanner unavailable"):
+        service.upload_attachment(
+            service.owner_token,
+            filename="receipt.png",
+            mime_type="image/png",
+            content=PNG_MAGIC + b"body",
+            idempotency_key="att-2",
+        )
 
 
 def test_attachment_intake_rejects_signature_mismatch_and_unsafe_names():

@@ -11,7 +11,7 @@ from ..api_auth_runtime import auth_cookie_secure, auth_settings
 from ..api_browser_sessions import browser_sessions
 from ..api_ports.auth_pages import AuthPagesService
 from ..api_sessions import CSRF_COOKIE, SESSION_COOKIE, set_browser_session_cookies
-from ..errors import PolicyDenied, ValidationError
+from ..errors import PolicyDenied, RateLimitExceeded, ValidationError
 from ..password_auth import PasswordAccount, PasswordSignupCommand
 from ..platform_auth import OAuthAuthorizeCommand
 from .auth_page_ui import error_message as _error, hidden_input as _hidden, render_auth_page as _page
@@ -40,7 +40,21 @@ def login_form(
     next: Annotated[str, Form()] = "/api/v1/auth/session-view",
 ):
     try:
-        account = auth_service.authenticate_password_account(email=email, password=password)
+        account = auth_service.authenticate_password_account(
+            email=email,
+            password=password,
+            source=request.client.host if request.client else "unknown",
+        )
+    except RateLimitExceeded as exc:
+        response = _auth_form(
+            request,
+            mode="login",
+            next_path=_safe_next(next),
+            error="Too many login attempts. Please try again later.",
+            status_code=429,
+        )
+        response.headers["Retry-After"] = str(exc.retry_after)
+        return response
     except PolicyDenied:
         return _auth_form(request, mode="login", next_path=_safe_next(next), error="Email or password is incorrect.", status_code=401)
     return _issue_password_session(auth_service, account=account, next_path=next)

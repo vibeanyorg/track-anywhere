@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Any
-from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Index, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Float, ForeignKey, Index, Integer, JSON, LargeBinary, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 ASSET_CODE_LENGTH = 16
@@ -77,7 +77,10 @@ class PasswordAccountRecord(Base):
 
 class TransactionRecord(Base):
     __tablename__ = "transactions"
-    __table_args__ = (Index("ix_transactions_book_occurred", "book_id", "occurred_at", "transaction_id"),)
+    __table_args__ = (
+        UniqueConstraint("reverses_transaction_id", name="uq_transactions_reverses_transaction_id"),
+        Index("ix_transactions_book_occurred", "book_id", "occurred_at", "transaction_id"),
+    )
 
     transaction_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     book_id: Mapped[str] = mapped_column(String(80), default="book_default")
@@ -288,6 +291,7 @@ class AttachmentRecord(Base):
     mime_type: Mapped[str] = mapped_column(String(80))
     original_filename: Mapped[str] = mapped_column(String(240))
     scanner_status: Mapped[str] = mapped_column(String(80))
+    content: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
 
 class AuditEventRecord(Base):

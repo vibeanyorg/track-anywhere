@@ -169,6 +169,7 @@ class PaymentProfileChanges:
 class AttachmentChanges:
     metadata: WriteMetadata = field(default_factory=WriteMetadata)
     attachments: tuple[Any, ...] = ()
+    attachment_contents: dict[str, bytes] = field(default_factory=dict)
     drafts: tuple[Any, ...] = ()
 
 

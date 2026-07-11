@@ -49,7 +49,7 @@ def test_alembic_clears_legacy_duplicate_transaction_memos(tmp_path):
         payment_instrument_columns = {row[1] for row in connection.execute("pragma table_info(payment_instruments)").fetchall()}
         counterparty_columns = {row[1] for row in connection.execute("pragma table_info(counterparties)").fetchall()}
 
-    assert version == "0019_posting_constraints"
+    assert version == "0021_attachment_content"
     assert PAYMENT_PROFILE_COLUMNS <= payment_profile_columns
     assert PAYMENT_INSTRUMENT_COLUMNS <= payment_instrument_columns
     assert COUNTERPARTY_COLUMNS <= counterparty_columns
@@ -85,7 +85,7 @@ def test_alembic_drops_legacy_django_tables_without_dropping_track_anywhere_tabl
         payment_profile_indexes = index_columns(connection, "payment_profiles")
         counterparty_indexes = index_columns(connection, "counterparties")
 
-    assert version == "0019_posting_constraints"
+    assert version == "0021_attachment_content"
     assert "accounts" in tables
     assert "auth_identities" in tables
     assert "payment_profiles" in tables
@@ -144,7 +144,7 @@ def test_alembic_backfills_lines_and_drops_legacy_category_columns(tmp_path):
             """
         ).fetchone()
 
-    assert version == "0019_posting_constraints"
+    assert version == "0021_attachment_content"
     assert "category_id" not in transaction_columns
     assert "primary" not in category_columns
     assert "secondary" not in category_columns
@@ -251,7 +251,7 @@ def test_legacy_sqlite_adoption_backfills_posting_side_and_future_debit_credit_d
             """
         ).fetchall()
 
-    assert version == "0019_posting_constraints"
+    assert version == "0021_attachment_content"
     assert rows == [
         ("txn_legacy_adopted", "credit", "-10", "legacy_signed"),
         ("txn_legacy_adopted", "debit", "10", "legacy_signed"),

@@ -75,12 +75,13 @@ class ReclassificationUseCases:
             request_hash=request_hash,
             fn=run,
         )
-        if replay:
-            self._commit_idempotency()
-        else:
+
+        def commit() -> None:
             if changed_line_id is None:
                 raise ValidationError("reclassification did not select a transaction line")
             self._commit_reclassification_change(result, changed_line_id)
+
+        self._commit_replay_or(replay, commit)
         return result, replay
 
     def _line_for_reclassification(self, transaction: Transaction, *, line_id: str | None, category_kind: str):

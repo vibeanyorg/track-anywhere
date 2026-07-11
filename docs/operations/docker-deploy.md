@@ -109,9 +109,11 @@ Prepare `deploy/env/prod.env` on the host. It must include
 `TRACK_ANYWHERE_DATABASE_URL`; for public deployments also set
 `TRACK_ANYWHERE_ALLOWED_ORIGINS`, `TRACK_ANYWHERE_PUBLIC_BASE_URL`, and
 `TRACK_ANYWHERE_AUTH_SESSION_SECRET`. Non-local deployments must also keep the
-production security precondition flags enabled: `TRACK_ANYWHERE_TLS`,
+production security preconditions enabled: `TRACK_ANYWHERE_TLS`,
 `TRACK_ANYWHERE_KEY_PROVIDER` or `TRACK_ANYWHERE_ENCRYPTED_VOLUME`,
-`TRACK_ANYWHERE_BACKUP_DOC`, and `TRACK_ANYWHERE_ATTACHMENT_SCANNER`.
+`TRACK_ANYWHERE_BACKUP_DOC`, `TRACK_ANYWHERE_CLAMAV_HOST`, and
+`TRACK_ANYWHERE_CLAMAV_PORT`. The production Compose stack starts ClamAV and the
+API streams every attachment through it before storing the original bytes.
 
 For a private SSH-tunnel login at `http://127.0.0.1:3000`, include
 `http://127.0.0.1:3000` in `TRACK_ANYWHERE_ALLOWED_ORIGINS` and set
