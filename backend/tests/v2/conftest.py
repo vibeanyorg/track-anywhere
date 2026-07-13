@@ -41,7 +41,9 @@ def postgres_database_factory() -> Iterator[PostgresDatabaseFactory]:
 
 
 @pytest.fixture
-def empty_postgres_database(postgres_database_factory: PostgresDatabaseFactory) -> ProvisionedDatabase:
+def empty_postgres_database(
+    postgres_database_factory: PostgresDatabaseFactory,
+) -> ProvisionedDatabase:
     return postgres_database_factory.create(purpose="runtime")
 
 
@@ -56,13 +58,34 @@ def empty_postgres_source_target(
 
 
 @pytest.fixture
+def migrated_postgres_database(
+    postgres_database_factory: PostgresDatabaseFactory,
+) -> ProvisionedDatabase:
+    return postgres_database_factory.create(purpose="runtime", schema="v2")
+
+
+@pytest.fixture
+def migrated_postgres_source_target(
+    postgres_database_factory: PostgresDatabaseFactory,
+) -> tuple[ProvisionedDatabase, ProvisionedDatabase]:
+    return (
+        postgres_database_factory.create(purpose="source", schema="v2"),
+        postgres_database_factory.create(purpose="target", schema="v2"),
+    )
+
+
+@pytest.fixture
 def pg_engine(
-    empty_postgres_database: ProvisionedDatabase,
+    migrated_postgres_database: ProvisionedDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[Engine]:
-    monkeypatch.setenv("TRACK_ANYWHERE_TEST_POSTGRES_URL", empty_postgres_database.runtime_url)
-    monkeypatch.setenv("TRACK_ANYWHERE_DATABASE_URL", empty_postgres_database.runtime_url)
-    engine = create_engine(empty_postgres_database.runtime_url, pool_pre_ping=True)
+    monkeypatch.setenv(
+        "TRACK_ANYWHERE_TEST_POSTGRES_URL", migrated_postgres_database.runtime_url
+    )
+    monkeypatch.setenv(
+        "TRACK_ANYWHERE_DATABASE_URL", migrated_postgres_database.runtime_url
+    )
+    engine = create_engine(migrated_postgres_database.runtime_url, pool_pre_ping=True)
     try:
         yield engine
     finally:

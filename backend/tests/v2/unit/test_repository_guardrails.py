@@ -27,9 +27,15 @@ def test_all_ledger_compose_services_use_postgres_17() -> None:
 
 
 def test_v2_does_not_reuse_a_postgres_16_data_volume() -> None:
-    assert ".local/postgres17-data" in _repository_file("compose.yaml").read_text(encoding="utf-8")
-    assert "track-anywhere-v2-postgres17" in _repository_file("compose.dev.yaml").read_text(encoding="utf-8")
-    assert "postgres17-data" in _repository_file("compose.e2e.yaml").read_text(encoding="utf-8")
+    assert ".local/postgres17-data" in _repository_file("compose.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "track-anywhere-v2-postgres17" in _repository_file(
+        "compose.dev.yaml"
+    ).read_text(encoding="utf-8")
+    assert "postgres17-data" in _repository_file("compose.e2e.yaml").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_backend_agent_rules_name_v2_units_and_postgres_17() -> None:
@@ -51,7 +57,9 @@ def test_python_support_range_is_finite_and_ci_testable() -> None:
 
 
 def test_pytest_is_in_uv_default_dev_group() -> None:
-    config = tomllib.loads(_repository_file("pyproject.toml").read_text(encoding="utf-8"))
+    config = tomllib.loads(
+        _repository_file("pyproject.toml").read_text(encoding="utf-8")
+    )
     assert "pytest>=8.4" in config["dependency-groups"]["dev"]
     assert "dev" not in config.get("project", {}).get("optional-dependencies", {})
 
@@ -111,7 +119,9 @@ print(json.dumps({key: os.environ.get(key) for key in keys}))
 
 
 def test_compose_provisions_distinct_migrator_and_runtime_roles() -> None:
-    init = _repository_file("docker/postgres/init/001-v2-roles.sh").read_text(encoding="utf-8")
+    init = _repository_file("docker/postgres/init/001-v2-roles.sh").read_text(
+        encoding="utf-8"
+    )
     assert "TRACK_ANYWHERE_OWNER_ROLE" in init
     assert "TRACK_ANYWHERE_MIGRATOR_ROLE" in init
     assert "TRACK_ANYWHERE_RUNTIME_ROLE" in init
@@ -122,6 +132,7 @@ def test_compose_provisions_distinct_migrator_and_runtime_roles() -> None:
     assert r"\getenv migrator_password TRACK_ANYWHERE_MIGRATOR_PASSWORD" in init
     assert r"\getenv runtime_password TRACK_ANYWHERE_RUNTIME_PASSWORD" in init
     assert "pg_auth_members" in init
+    assert "WHERE member.rolname = :'owner_role'" in init
     assert "WITH ADMIN FALSE, INHERIT FALSE, SET TRUE" in init
 
 
@@ -137,7 +148,9 @@ def test_postgres_identifier_validation_enforces_the_63_byte_boundary() -> None:
 
 
 def test_postgres_init_statically_guards_identifier_byte_limits() -> None:
-    init = _repository_file("docker/postgres/init/001-v2-roles.sh").read_text(encoding="utf-8")
+    init = _repository_file("docker/postgres/init/001-v2-roles.sh").read_text(
+        encoding="utf-8"
+    )
 
     assert "export LC_ALL=C" in init
     assert "(( ${#role} > 63 ))" in init
@@ -158,7 +171,9 @@ def test_postgres_init_rejects_overlong_identifiers_before_psql(
     overlong_environment_name: str,
 ) -> None:
     fake_psql = tmp_path / "psql"
-    fake_psql.write_text("#!/bin/sh\necho psql-invoked >&2\nexit 99\n", encoding="utf-8")
+    fake_psql.write_text(
+        "#!/bin/sh\necho psql-invoked >&2\nexit 99\n", encoding="utf-8"
+    )
     fake_psql.chmod(0o755)
     environment = os.environ.copy()
     environment.update(

@@ -33,7 +33,9 @@ def _database_exists(admin_url: str, database_name: str) -> bool:
         with engine.connect() as connection:
             return bool(
                 connection.execute(
-                    text("select exists(select 1 from pg_database where datname = :name)"),
+                    text(
+                        "select exists(select 1 from pg_database where datname = :name)"
+                    ),
                     {"name": database_name},
                 ).scalar_one()
             )
@@ -56,23 +58,32 @@ def _render_url(url) -> str:
 
 
 @contextmanager
-def _temporary_role_config(postgres_cluster_config) -> Iterator[tuple[ClusterConfig, dict[str, str]]]:
+def _temporary_role_config(
+    postgres_cluster_config,
+) -> Iterator[tuple[ClusterConfig, dict[str, str]]]:
     suffix = uuid.uuid4().hex[:10]
     roles = {
+        "owner": f"ta_bad_owner_{suffix}",
         "migrator": f"ta_bad_migrator_{suffix}",
         "runtime": f"ta_bad_runtime_{suffix}",
         "extra": f"ta_bad_extra_{suffix}",
     }
     password = f"temporary_{suffix}"
-    admin_engine = create_engine(postgres_cluster_config.admin_url, isolation_level="AUTOCOMMIT")
+    admin_engine = create_engine(
+        postgres_cluster_config.admin_url, isolation_level="AUTOCOMMIT"
+    )
     try:
         with admin_engine.connect() as connection:
             connection.exec_driver_sql(
-                f'CREATE ROLE "{roles["migrator"]}" LOGIN PASSWORD \'{password}\' '
+                f'CREATE ROLE "{roles["owner"]}" NOLOGIN '
                 "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT"
             )
             connection.exec_driver_sql(
-                f'CREATE ROLE "{roles["runtime"]}" LOGIN PASSWORD \'{password}\' '
+                f"CREATE ROLE \"{roles['migrator']}\" LOGIN PASSWORD '{password}' "
+                "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT"
+            )
+            connection.exec_driver_sql(
+                f"CREATE ROLE \"{roles['runtime']}\" LOGIN PASSWORD '{password}' "
                 "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT"
             )
             connection.exec_driver_sql(
@@ -80,7 +91,7 @@ def _temporary_role_config(postgres_cluster_config) -> Iterator[tuple[ClusterCon
                 "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT"
             )
             connection.exec_driver_sql(
-                f'GRANT "{postgres_cluster_config.owner_role}" TO "{roles["migrator"]}" '
+                f'GRANT "{roles["owner"]}" TO "{roles["migrator"]}" '
                 "WITH ADMIN FALSE, INHERIT FALSE, SET TRUE"
             )
 
@@ -99,27 +110,42 @@ def _temporary_role_config(postgres_cluster_config) -> Iterator[tuple[ClusterCon
                     password=password,
                 )
             ),
-            "TRACK_ANYWHERE_OWNER_ROLE": postgres_cluster_config.owner_role,
+            "TRACK_ANYWHERE_OWNER_ROLE": roles["owner"],
             "TRACK_ANYWHERE_MIGRATOR_ROLE": roles["migrator"],
             "TRACK_ANYWHERE_RUNTIME_ROLE": roles["runtime"],
         }
         yield ClusterConfig.from_env(environment), roles
     finally:
         with admin_engine.connect() as connection:
-            connection.exec_driver_sql(f'ALTER ROLE "{roles["runtime"]}" NOBYPASSRLS NOREPLICATION')
-            connection.exec_driver_sql(f'ALTER ROLE "{roles["migrator"]}" NOBYPASSRLS NOREPLICATION')
-            connection.exec_driver_sql(f'REVOKE "{roles["extra"]}" FROM "{roles["runtime"]}"')
-            connection.exec_driver_sql(f'REVOKE "{roles["extra"]}" FROM "{roles["migrator"]}"')
             connection.exec_driver_sql(
-                f'REVOKE "{postgres_cluster_config.owner_role}" FROM "{roles["migrator"]}"'
+                f'ALTER ROLE "{roles["runtime"]}" NOBYPASSRLS NOREPLICATION'
+            )
+            connection.exec_driver_sql(
+                f'ALTER ROLE "{roles["migrator"]}" NOBYPASSRLS NOREPLICATION'
+            )
+            connection.exec_driver_sql(f'ALTER ROLE "{roles["extra"]}" NOCREATEDB')
+            connection.exec_driver_sql(
+                f'REVOKE "{roles["extra"]}" FROM "{roles["owner"]}"'
+            )
+            connection.exec_driver_sql(
+                f'REVOKE "{roles["extra"]}" FROM "{roles["runtime"]}"'
+            )
+            connection.exec_driver_sql(
+                f'REVOKE "{roles["extra"]}" FROM "{roles["migrator"]}"'
+            )
+            connection.exec_driver_sql(
+                f'REVOKE "{roles["owner"]}" FROM "{roles["migrator"]}"'
             )
             connection.exec_driver_sql(f'DROP ROLE "{roles["runtime"]}"')
             connection.exec_driver_sql(f'DROP ROLE "{roles["migrator"]}"')
+            connection.exec_driver_sql(f'DROP ROLE "{roles["owner"]}"')
             connection.exec_driver_sql(f'DROP ROLE "{roles["extra"]}"')
         admin_engine.dispose()
 
 
-def test_cluster_config_requires_all_three_role_urls(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cluster_config_requires_all_three_role_urls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     for name in (
         "TRACK_ANYWHERE_TEST_POSTGRES_ADMIN_URL",
         "TRACK_ANYWHERE_TEST_POSTGRES_MIGRATOR_BASE_URL",
@@ -131,7 +157,9 @@ def test_cluster_config_requires_all_three_role_urls(monkeypatch: pytest.MonkeyP
         ClusterConfig.from_env()
 
 
-def test_cluster_config_rejects_mismatched_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cluster_config_rejects_mismatched_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv(
         "TRACK_ANYWHERE_TEST_POSTGRES_RUNTIME_BASE_URL",
         "postgresql+psycopg://track_anywhere_runtime:runtime@localhost:15543/postgres",
@@ -141,7 +169,9 @@ def test_cluster_config_rejects_mismatched_hosts(monkeypatch: pytest.MonkeyPatch
         ClusterConfig.from_env()
 
 
-def test_cluster_config_rejects_reused_login_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cluster_config_rejects_reused_login_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     admin_url = os.environ["TRACK_ANYWHERE_TEST_POSTGRES_ADMIN_URL"]
     monkeypatch.setenv("TRACK_ANYWHERE_TEST_POSTGRES_MIGRATOR_BASE_URL", admin_url)
 
@@ -168,7 +198,9 @@ def test_cluster_config_rejects_connection_query_overrides(
         ClusterConfig.from_env()
 
 
-def test_cluster_config_requires_exact_psycopg_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cluster_config_requires_exact_psycopg_driver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv(
         RUNTIME_URL_ENV,
         "postgresql://track_anywhere_runtime:runtime@127.0.0.1:15543/postgres",
@@ -238,7 +270,9 @@ def test_drop_cli_rejects_64_byte_name_without_truncating_a_63_byte_database(
             postgres_cluster_config.runtime_base_url.set(database=overlong_name)
         )
         result = _run_factory_cli("drop", "--url", drop_url)
-        still_exists = _database_exists(postgres_cluster_config.admin_url, database_name)
+        still_exists = _database_exists(
+            postgres_cluster_config.admin_url, database_name
+        )
 
         assert (result.returncode, still_exists) == (2, True)
         assert "Traceback" not in result.stderr
@@ -246,11 +280,15 @@ def test_drop_cli_rejects_64_byte_name_without_truncating_a_63_byte_database(
         assert len(result.stderr.splitlines()) == 1
     finally:
         with admin_engine.connect() as connection:
-            connection.exec_driver_sql(f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)')
+            connection.exec_driver_sql(
+                f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)'
+            )
         admin_engine.dispose()
 
 
-def test_factory_creates_empty_database_with_isolated_name(postgres_database_factory) -> None:
+def test_factory_creates_empty_database_with_isolated_name(
+    postgres_database_factory,
+) -> None:
     first = postgres_database_factory.create(purpose="lifecycle")
     second = postgres_database_factory.create(purpose="lifecycle")
 
@@ -259,17 +297,26 @@ def test_factory_creates_empty_database_with_isolated_name(postgres_database_fac
     assert postgres_database_factory.test_uuid in first.database_name
     assert len(first.database_name.encode("ascii")) <= 63
     assert _database_exists(first.admin_url, first.database_name)
-    assert make_url(first.admin_url).set(database=postgres_database_factory.config.admin_base_url.database) == (
-        postgres_database_factory.config.admin_base_url
+    assert make_url(first.admin_url).set(
+        database=postgres_database_factory.config.admin_base_url.database
+    ) == (postgres_database_factory.config.admin_base_url)
+    assert (
+        make_url(first.migrator_url).set(
+            database=postgres_database_factory.config.migrator_base_url.database
+        )
+        == postgres_database_factory.config.migrator_base_url
     )
-    assert make_url(first.migrator_url).set(
-        database=postgres_database_factory.config.migrator_base_url.database
-    ) == postgres_database_factory.config.migrator_base_url
-    assert make_url(first.runtime_url).set(
-        database=postgres_database_factory.config.runtime_base_url.database
-    ) == postgres_database_factory.config.runtime_base_url
+    assert (
+        make_url(first.runtime_url).set(
+            database=postgres_database_factory.config.runtime_base_url.database
+        )
+        == postgres_database_factory.config.runtime_base_url
+    )
     with create_engine(first.runtime_url).connect() as connection:
-        assert connection.execute(text("select current_database()")).scalar_one() == first.database_name
+        assert (
+            connection.execute(text("select current_database()")).scalar_one()
+            == first.database_name
+        )
         assert (
             connection.execute(
                 text(
@@ -281,11 +328,19 @@ def test_factory_creates_empty_database_with_isolated_name(postgres_database_fac
         )
 
 
-def test_factory_names_are_isolated_by_worker_and_test_uuid(postgres_cluster_config) -> None:
+def test_factory_names_are_isolated_by_worker_and_test_uuid(
+    postgres_cluster_config,
+) -> None:
     factories = (
-        PostgresDatabaseFactory(postgres_cluster_config, worker_id="gw0", test_uuid="a" * 16),
-        PostgresDatabaseFactory(postgres_cluster_config, worker_id="gw1", test_uuid="a" * 16),
-        PostgresDatabaseFactory(postgres_cluster_config, worker_id="gw0", test_uuid="b" * 16),
+        PostgresDatabaseFactory(
+            postgres_cluster_config, worker_id="gw0", test_uuid="a" * 16
+        ),
+        PostgresDatabaseFactory(
+            postgres_cluster_config, worker_id="gw1", test_uuid="a" * 16
+        ),
+        PostgresDatabaseFactory(
+            postgres_cluster_config, worker_id="gw0", test_uuid="b" * 16
+        ),
     )
     try:
         databases = tuple(factory.create(purpose="isolation") for factory in factories)
@@ -299,7 +354,9 @@ def test_factory_names_are_isolated_by_worker_and_test_uuid(postgres_cluster_con
             factory.close()
 
 
-def test_create_collision_never_drops_the_existing_database(postgres_cluster_config) -> None:
+def test_create_collision_never_drops_the_existing_database(
+    postgres_cluster_config,
+) -> None:
     first_factory = PostgresDatabaseFactory(
         postgres_cluster_config,
         worker_id="collision",
@@ -317,13 +374,18 @@ def test_create_collision_never_drops_the_existing_database(postgres_cluster_con
 
         assert _database_exists(postgres_cluster_config.admin_url, first.database_name)
         with create_engine(first.runtime_url).connect() as connection:
-            assert connection.execute(text("select current_database()")).scalar_one() == first.database_name
+            assert (
+                connection.execute(text("select current_database()")).scalar_one()
+                == first.database_name
+            )
     finally:
         second_factory.close()
         first_factory.close()
 
 
-def test_factory_uses_separate_owner_migrator_and_runtime_roles(postgres_database_factory) -> None:
+def test_factory_uses_separate_owner_migrator_and_runtime_roles(
+    postgres_database_factory,
+) -> None:
     database = postgres_database_factory.create(purpose="roles")
 
     with create_engine(database.admin_url).connect() as connection:
@@ -388,11 +450,15 @@ def test_factory_uses_separate_owner_migrator_and_runtime_roles(postgres_databas
                   from pg_auth_members membership
                   join pg_roles member on member.oid = membership.member
                   join pg_roles granted on granted.oid = membership.roleid
-                 where member.rolname in (:migrator, :runtime)
+                 where member.rolname in (:owner, :migrator, :runtime)
                  order by member.rolname, granted.rolname
                 """
             ),
-            {"migrator": database.migrator_role, "runtime": database.runtime_role},
+            {
+                "owner": database.owner_role,
+                "migrator": database.migrator_role,
+                "runtime": database.runtime_role,
+            },
         ).all()
 
     assert [tuple(row) for row in memberships] == [
@@ -400,13 +466,25 @@ def test_factory_uses_separate_owner_migrator_and_runtime_roles(postgres_databas
     ]
 
     with create_engine(database.migrator_url).connect() as connection:
-        assert connection.execute(text("select session_user")).scalar_one() == database.migrator_role
+        assert (
+            connection.execute(text("select session_user")).scalar_one()
+            == database.migrator_role
+        )
         connection.execute(text(f'SET ROLE "{database.owner_role}"'))
-        assert connection.execute(text("select current_user")).scalar_one() == database.owner_role
+        assert (
+            connection.execute(text("select current_user")).scalar_one()
+            == database.owner_role
+        )
 
     with create_engine(database.runtime_url).connect() as connection:
-        assert connection.execute(text("select session_user")).scalar_one() == database.runtime_role
-        assert connection.execute(text("select current_user")).scalar_one() == database.runtime_role
+        assert (
+            connection.execute(text("select session_user")).scalar_one()
+            == database.runtime_role
+        )
+        assert (
+            connection.execute(text("select current_user")).scalar_one()
+            == database.runtime_role
+        )
 
 
 @pytest.mark.parametrize(
@@ -415,6 +493,7 @@ def test_factory_uses_separate_owner_migrator_and_runtime_roles(postgres_databas
         "runtime_bypassrls",
         "runtime_extra_membership",
         "migrator_extra_membership",
+        "owner_upstream_membership",
     ),
 )
 def test_factory_rejects_unsafe_independent_roles_before_database_creation(
@@ -426,17 +505,28 @@ def test_factory_rejects_unsafe_independent_roles_before_database_creation(
         try:
             with admin_engine.connect() as connection:
                 if corruption == "runtime_bypassrls":
-                    connection.exec_driver_sql(f'ALTER ROLE "{roles["runtime"]}" BYPASSRLS')
+                    connection.exec_driver_sql(
+                        f'ALTER ROLE "{roles["runtime"]}" BYPASSRLS'
+                    )
                 elif corruption == "runtime_extra_membership":
                     connection.exec_driver_sql(
                         f'GRANT "{roles["extra"]}" TO "{roles["runtime"]}"'
                     )
-                else:
+                elif corruption == "migrator_extra_membership":
                     connection.exec_driver_sql(
                         f'GRANT "{roles["extra"]}" TO "{roles["migrator"]}"'
                     )
+                else:
+                    connection.exec_driver_sql(
+                        f'ALTER ROLE "{roles["extra"]}" CREATEDB'
+                    )
+                    connection.exec_driver_sql(
+                        f'GRANT "{roles["extra"]}" TO "{roles["owner"]}"'
+                    )
 
-            factory = PostgresDatabaseFactory(config, worker_id="bad", test_uuid=uuid.uuid4().hex)
+            factory = PostgresDatabaseFactory(
+                config, worker_id="bad", test_uuid=uuid.uuid4().hex
+            )
             expected_database = (
                 f"ta_v2_{factory.worker_id}_{factory.test_uuid}_unsafe_role_1"
             )
@@ -457,7 +547,9 @@ def test_factory_rejects_unsafe_independent_roles_before_database_creation(
         "create table public.forbidden_table(id integer)",
     ),
 )
-def test_runtime_cannot_create_schema_objects(postgres_database_factory, statement: str) -> None:
+def test_runtime_cannot_create_schema_objects(
+    postgres_database_factory, statement: str
+) -> None:
     database = postgres_database_factory.create(purpose="runtime_permissions")
 
     with create_engine(database.runtime_url).connect() as connection:
@@ -473,7 +565,9 @@ def test_runtime_cannot_set_role_to_owner(postgres_database_factory) -> None:
             connection.execute(text(f'SET ROLE "{database.owner_role}"'))
 
 
-def test_source_and_target_databases_are_independent(empty_postgres_source_target) -> None:
+def test_source_and_target_databases_are_independent(
+    empty_postgres_source_target,
+) -> None:
     source, target = empty_postgres_source_target
 
     assert source.database_name != target.database_name
@@ -482,10 +576,17 @@ def test_source_and_target_databases_are_independent(empty_postgres_source_targe
         connection.execute(text("create table source_marker(id integer)"))
 
     with create_engine(target.runtime_url).connect() as connection:
-        assert connection.execute(text("select to_regclass('public.source_marker')")).scalar_one() is None
+        assert (
+            connection.execute(
+                text("select to_regclass('public.source_marker')")
+            ).scalar_one()
+            is None
+        )
 
 
-def test_created_database_is_visible_to_a_child_process(postgres_database_factory) -> None:
+def test_created_database_is_visible_to_a_child_process(
+    postgres_database_factory,
+) -> None:
     database = postgres_database_factory.create(purpose="child_process")
     result = subprocess.run(
         [
@@ -509,14 +610,18 @@ def test_created_database_is_visible_to_a_child_process(postgres_database_factor
     assert result.stdout == f"{database.database_name}\n"
 
 
-def test_drop_terminates_connections_and_removes_database(postgres_database_factory) -> None:
+def test_drop_terminates_connections_and_removes_database(
+    postgres_database_factory,
+) -> None:
     database = postgres_database_factory.create(purpose="cleanup")
     engine = create_engine(database.runtime_url)
     connection = engine.connect()
 
     postgres_database_factory.drop(database)
 
-    assert not _database_exists(postgres_database_factory.config.admin_url, database.database_name)
+    assert not _database_exists(
+        postgres_database_factory.config.admin_url, database.database_name
+    )
     with pytest.raises(DBAPIError):
         connection.execute(text("select 1"))
     with suppress(DBAPIError):
@@ -532,11 +637,16 @@ def test_drop_terminates_connections_and_removes_database(postgres_database_fact
         ("runtime", "TRACK_ANYWHERE_RUNTIME_ROLE"),
     ),
 )
-def test_role_name_cli_prints_only_requested_role(kind: str, expected_environment_name: str) -> None:
+def test_role_name_cli_prints_only_requested_role(
+    kind: str, expected_environment_name: str
+) -> None:
     result = _run_factory_cli("role-name", "--kind", kind)
 
     assert result.returncode == 0, result.stderr
-    assert result.stdout == f"{os.environ.get(expected_environment_name, PostgresDatabaseFactory.default_role_name(kind))}\n"
+    assert (
+        result.stdout
+        == f"{os.environ.get(expected_environment_name, PostgresDatabaseFactory.default_role_name(kind))}\n"
+    )
     assert result.stderr == ""
 
 
@@ -557,7 +667,9 @@ def test_create_and_drop_cli_emit_only_the_requested_dsn(emit_role: str) -> None
     created_url = created.stdout.strip()
     try:
         assert created_url.startswith("postgresql+psycopg://")
-        base_url = os.environ[f"TRACK_ANYWHERE_TEST_POSTGRES_{emit_role.upper()}_BASE_URL"]
+        base_url = os.environ[
+            f"TRACK_ANYWHERE_TEST_POSTGRES_{emit_role.upper()}_BASE_URL"
+        ]
         assert make_url(created_url).username == make_url(base_url).username
     finally:
         dropped = _run_factory_cli("drop", "--url", created_url)
@@ -565,3 +677,29 @@ def test_create_and_drop_cli_emit_only_the_requested_dsn(emit_role: str) -> None
     assert dropped.returncode == 0, dropped.stderr
     assert dropped.stdout == ""
     assert dropped.stderr == ""
+
+
+def test_create_cli_accepts_the_v2_schema_boundary() -> None:
+    created = _run_factory_cli(
+        "create",
+        "--purpose",
+        "v2_boundary",
+        "--schema",
+        "v2",
+        "--emit-role",
+        "runtime",
+    )
+
+    assert created.returncode == 0, created.stderr
+    created_url = created.stdout.strip()
+    try:
+        with create_engine(created_url).connect() as connection:
+            assert (
+                connection.execute(
+                    text("select schema_generation from v2_schema_metadata")
+                ).scalar_one()
+                == 2
+            )
+    finally:
+        dropped = _run_factory_cli("drop", "--url", created_url)
+    assert dropped.returncode == 0, dropped.stderr

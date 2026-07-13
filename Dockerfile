@@ -11,7 +11,6 @@ RUN python -m pip install --no-cache-dir --upgrade pip uv \
 
 COPY pyproject.toml uv.lock README.md ./
 COPY alembic ./alembic
-COPY alembic_helpers ./alembic_helpers
 COPY backend ./backend
 COPY cli ./cli
 COPY alembic.ini ./
@@ -73,7 +72,6 @@ COPY --from=python-builder /opt/venv /opt/venv
 COPY --from=python-builder /app/backend /app/backend
 COPY --from=python-builder /app/cli /app/cli
 COPY --from=python-builder /app/alembic /app/alembic
-COPY --from=python-builder /app/alembic_helpers /app/alembic_helpers
 COPY --from=python-builder /app/alembic.ini /app/alembic.ini
 
 USER track-anywhere

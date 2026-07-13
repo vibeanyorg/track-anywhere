@@ -101,6 +101,19 @@ FROM pg_auth_members membership
 JOIN pg_roles granted ON granted.oid = membership.roleid
 JOIN pg_roles member ON member.oid = membership.member
 JOIN pg_roles grantor ON grantor.oid = membership.grantor
+WHERE member.rolname = :'owner_role'
+\gexec
+
+SELECT format(
+  'REVOKE %I FROM %I GRANTED BY %I CASCADE',
+  granted.rolname,
+  member.rolname,
+  grantor.rolname
+)
+FROM pg_auth_members membership
+JOIN pg_roles granted ON granted.oid = membership.roleid
+JOIN pg_roles member ON member.oid = membership.member
+JOIN pg_roles grantor ON grantor.oid = membership.grantor
 WHERE member.rolname = :'runtime_role'
 \gexec
 
