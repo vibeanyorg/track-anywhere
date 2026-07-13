@@ -1,0 +1,134 @@
+{
+  "$defs": {
+    "ReportingDimension": {
+      "enum": [
+        "category",
+        "project",
+        "counterparty",
+        "tax"
+      ],
+      "title": "ReportingDimension",
+      "type": "string"
+    },
+    "ReportingLine": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_code": {
+          "pattern": "^[A-Z][A-Z0-9._-]{0,15}$",
+          "title": "Asset Code",
+          "type": "string"
+        },
+        "catalog_id": {
+          "format": "uuid",
+          "title": "Catalog Id",
+          "type": "string"
+        },
+        "description_ref": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description Ref"
+        },
+        "dimension": {
+          "$ref": "#/$defs/ReportingDimension"
+        },
+        "dimension_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dimension Id"
+        },
+        "line_id": {
+          "format": "uuid",
+          "title": "Line Id",
+          "type": "string"
+        },
+        "line_kind": {
+          "$ref": "#/$defs/ReportingLineKind"
+        },
+        "line_version_id": {
+          "format": "uuid",
+          "title": "Line Version Id",
+          "type": "string"
+        },
+        "position": {
+          "minimum": 0,
+          "title": "Position",
+          "type": "integer"
+        },
+        "units": {
+          "pattern": "^[1-9][0-9]{0,37}$",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "line_id",
+        "line_version_id",
+        "catalog_id",
+        "position",
+        "asset_code",
+        "units",
+        "line_kind",
+        "dimension"
+      ],
+      "title": "ReportingLine",
+      "type": "object"
+    },
+    "ReportingLineKind": {
+      "enum": [
+        "expense",
+        "income",
+        "transfer",
+        "tax",
+        "investment"
+      ],
+      "title": "ReportingLineKind",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.track-anywhere.dev/v2/events/ReportingLinesAssigned.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "classification_revision": {
+      "exclusiveMinimum": 0,
+      "title": "Classification Revision",
+      "type": "integer"
+    },
+    "lines": {
+      "items": {
+        "$ref": "#/$defs/ReportingLine"
+      },
+      "title": "Lines",
+      "type": "array"
+    },
+    "transaction_id": {
+      "format": "uuid",
+      "title": "Transaction Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "transaction_id",
+    "classification_revision",
+    "lines"
+  ],
+  "title": "ReportingLinesAssigned",
+  "type": "object",
+  "x-event-type": "ReportingLinesAssigned",
+  "x-schema-version": 1
+}

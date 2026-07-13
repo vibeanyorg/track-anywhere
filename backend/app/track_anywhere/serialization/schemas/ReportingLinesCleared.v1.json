@@ -1,0 +1,24 @@
+{
+  "$id": "https://schemas.track-anywhere.dev/v2/events/ReportingLinesCleared.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "classification_revision": {
+      "exclusiveMinimum": 0,
+      "title": "Classification Revision",
+      "type": "integer"
+    },
+    "transaction_id": {
+      "format": "uuid",
+      "title": "Transaction Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "transaction_id",
+    "classification_revision"
+  ],
+  "title": "ReportingLinesCleared",
+  "type": "object",
+  "x-event-type": "ReportingLinesCleared",
+  "x-schema-version": 1
+}

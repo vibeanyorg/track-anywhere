@@ -1,0 +1,110 @@
+{
+  "$defs": {
+    "LotDisposalAllocation": {
+      "additionalProperties": false,
+      "properties": {
+        "allocation_id": {
+          "format": "uuid",
+          "title": "Allocation Id",
+          "type": "string"
+        },
+        "cost_units": {
+          "pattern": "^[1-9][0-9]{0,37}$",
+          "title": "Cost Units",
+          "type": "string"
+        },
+        "lot_id": {
+          "format": "uuid",
+          "title": "Lot Id",
+          "type": "string"
+        },
+        "position": {
+          "minimum": 0,
+          "title": "Position",
+          "type": "integer"
+        },
+        "quantity_units": {
+          "pattern": "^[1-9][0-9]{0,37}$",
+          "title": "Quantity Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "allocation_id",
+        "lot_id",
+        "position",
+        "quantity_units",
+        "cost_units"
+      ],
+      "title": "LotDisposalAllocation",
+      "type": "object"
+    }
+  },
+  "$id": "https://schemas.track-anywhere.dev/v2/events/InvestmentLotDisposed.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "allocations": {
+      "items": {
+        "$ref": "#/$defs/LotDisposalAllocation"
+      },
+      "title": "Allocations",
+      "type": "array"
+    },
+    "cost_basis_units": {
+      "pattern": "^[1-9][0-9]{0,37}$",
+      "title": "Cost Basis Units",
+      "type": "string"
+    },
+    "fee_units": {
+      "anyOf": [
+        {
+          "pattern": "^[1-9][0-9]{0,37}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fee Units"
+    },
+    "instrument_asset_code": {
+      "pattern": "^[A-Z][A-Z0-9._-]{0,15}$",
+      "title": "Instrument Asset Code",
+      "type": "string"
+    },
+    "proceeds_units": {
+      "pattern": "^[1-9][0-9]{0,37}$",
+      "title": "Proceeds Units",
+      "type": "string"
+    },
+    "quantity_units": {
+      "pattern": "^[1-9][0-9]{0,37}$",
+      "title": "Quantity Units",
+      "type": "string"
+    },
+    "settlement_asset_code": {
+      "pattern": "^[A-Z][A-Z0-9._-]{0,15}$",
+      "title": "Settlement Asset Code",
+      "type": "string"
+    },
+    "transaction_id": {
+      "format": "uuid",
+      "title": "Transaction Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "transaction_id",
+    "instrument_asset_code",
+    "settlement_asset_code",
+    "quantity_units",
+    "proceeds_units",
+    "cost_basis_units",
+    "allocations"
+  ],
+  "title": "InvestmentLotDisposed",
+  "type": "object",
+  "x-event-type": "InvestmentLotDisposed",
+  "x-schema-version": 1
+}

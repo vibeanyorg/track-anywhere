@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "ExternalReferenceKind": {
+      "enum": [
+        "provider_transaction",
+        "bank_transaction",
+        "card_transaction",
+        "broker_trade"
+      ],
+      "title": "ExternalReferenceKind",
+      "type": "string"
+    },
+    "FinancialExternalReference": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ExternalReferenceKind"
+        },
+        "provider_code": {
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+          "title": "Provider Code",
+          "type": "string"
+        },
+        "reference": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$",
+          "title": "Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider_code",
+        "kind",
+        "reference"
+      ],
+      "title": "FinancialExternalReference",
+      "type": "object"
+    },
+    "JournalPostingFact": {
+      "additionalProperties": false,
+      "properties": {
+        "account_id": {
+          "format": "uuid",
+          "title": "Account Id",
+          "type": "string"
+        },
+        "asset_code": {
+          "pattern": "^[A-Z][A-Z0-9._-]{0,15}$",
+          "title": "Asset Code",
+          "type": "string"
+        },
+        "position": {
+          "minimum": 0,
+          "title": "Position",
+          "type": "integer"
+        },
+        "posting_id": {
+          "format": "uuid",
+          "title": "Posting Id",
+          "type": "string"
+        },
+        "side": {
+          "$ref": "#/$defs/PostingSide"
+        },
+        "units": {
+          "pattern": "^[1-9][0-9]{0,37}$",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "posting_id",
+        "position",
+        "account_id",
+        "asset_code",
+        "side",
+        "units"
+      ],
+      "title": "JournalPostingFact",
+      "type": "object"
+    },
+    "PostingSide": {
+      "enum": [
+        "debit",
+        "credit"
+      ],
+      "title": "PostingSide",
+      "type": "string"
+    },
+    "TransactionKind": {
+      "enum": [
+        "standard",
+        "opening",
+        "adjustment",
+        "transfer",
+        "fx",
+        "investment_cash"
+      ],
+      "title": "TransactionKind",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.track-anywhere.dev/v2/events/JournalTransactionPosted.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "description_ref": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description Ref"
+    },
+    "external_references": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/FinancialExternalReference"
+      },
+      "title": "External References",
+      "type": "array"
+    },
+    "kind": {
+      "$ref": "#/$defs/TransactionKind"
+    },
+    "postings": {
+      "items": {
+        "$ref": "#/$defs/JournalPostingFact"
+      },
+      "title": "Postings",
+      "type": "array"
+    },
+    "transaction_id": {
+      "format": "uuid",
+      "title": "Transaction Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "transaction_id",
+    "kind",
+    "postings"
+  ],
+  "title": "JournalTransactionPosted",
+  "type": "object",
+  "x-event-type": "JournalTransactionPosted",
+  "x-schema-version": 1
+}

@@ -1,0 +1,124 @@
+{
+  "$defs": {
+    "JournalPostingFact": {
+      "additionalProperties": false,
+      "properties": {
+        "account_id": {
+          "format": "uuid",
+          "title": "Account Id",
+          "type": "string"
+        },
+        "asset_code": {
+          "pattern": "^[A-Z][A-Z0-9._-]{0,15}$",
+          "title": "Asset Code",
+          "type": "string"
+        },
+        "position": {
+          "minimum": 0,
+          "title": "Position",
+          "type": "integer"
+        },
+        "posting_id": {
+          "format": "uuid",
+          "title": "Posting Id",
+          "type": "string"
+        },
+        "side": {
+          "$ref": "#/$defs/PostingSide"
+        },
+        "units": {
+          "pattern": "^[1-9][0-9]{0,37}$",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "posting_id",
+        "position",
+        "account_id",
+        "asset_code",
+        "side",
+        "units"
+      ],
+      "title": "JournalPostingFact",
+      "type": "object"
+    },
+    "PostingSide": {
+      "enum": [
+        "debit",
+        "credit"
+      ],
+      "title": "PostingSide",
+      "type": "string"
+    },
+    "ReversalReasonCode": {
+      "enum": [
+        "user_correction",
+        "duplicate",
+        "import_correction",
+        "provider_reversal"
+      ],
+      "title": "ReversalReasonCode",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.track-anywhere.dev/v2/events/JournalTransactionReversed.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "description_ref": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description Ref"
+    },
+    "inverse_postings": {
+      "items": {
+        "$ref": "#/$defs/JournalPostingFact"
+      },
+      "title": "Inverse Postings",
+      "type": "array"
+    },
+    "original_event_hash": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Original Event Hash",
+      "type": "string"
+    },
+    "original_event_id": {
+      "format": "uuid",
+      "title": "Original Event Id",
+      "type": "string"
+    },
+    "reason_code": {
+      "$ref": "#/$defs/ReversalReasonCode"
+    },
+    "reversal_transaction_id": {
+      "format": "uuid",
+      "title": "Reversal Transaction Id",
+      "type": "string"
+    },
+    "reverses_transaction_id": {
+      "format": "uuid",
+      "title": "Reverses Transaction Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reversal_transaction_id",
+    "reverses_transaction_id",
+    "original_event_id",
+    "original_event_hash",
+    "reason_code",
+    "inverse_postings"
+  ],
+  "title": "JournalTransactionReversed",
+  "type": "object",
+  "x-event-type": "JournalTransactionReversed",
+  "x-schema-version": 1
+}

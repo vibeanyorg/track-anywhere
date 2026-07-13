@@ -1,0 +1,61 @@
+{
+  "$id": "https://schemas.track-anywhere.dev/v2/events/InvestmentLotAcquired.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "cost_units": {
+      "pattern": "^[1-9][0-9]{0,37}$",
+      "title": "Cost Units",
+      "type": "string"
+    },
+    "fee_units": {
+      "anyOf": [
+        {
+          "pattern": "^[1-9][0-9]{0,37}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fee Units"
+    },
+    "instrument_asset_code": {
+      "pattern": "^[A-Z][A-Z0-9._-]{0,15}$",
+      "title": "Instrument Asset Code",
+      "type": "string"
+    },
+    "lot_id": {
+      "format": "uuid",
+      "title": "Lot Id",
+      "type": "string"
+    },
+    "quantity_units": {
+      "pattern": "^[1-9][0-9]{0,37}$",
+      "title": "Quantity Units",
+      "type": "string"
+    },
+    "settlement_asset_code": {
+      "pattern": "^[A-Z][A-Z0-9._-]{0,15}$",
+      "title": "Settlement Asset Code",
+      "type": "string"
+    },
+    "transaction_id": {
+      "format": "uuid",
+      "title": "Transaction Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "transaction_id",
+    "lot_id",
+    "instrument_asset_code",
+    "settlement_asset_code",
+    "quantity_units",
+    "cost_units"
+  ],
+  "title": "InvestmentLotAcquired",
+  "type": "object",
+  "x-event-type": "InvestmentLotAcquired",
+  "x-schema-version": 1
+}

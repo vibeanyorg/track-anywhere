@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "ExternalReferenceKind": {
+      "enum": [
+        "provider_transaction",
+        "bank_transaction",
+        "card_transaction",
+        "broker_trade"
+      ],
+      "title": "ExternalReferenceKind",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.track-anywhere.dev/v2/events/FinancialExternalReferenceCorrected.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "corrected_reference": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$",
+      "title": "Corrected Reference",
+      "type": "string"
+    },
+    "previous_reference": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Previous Reference"
+    },
+    "provider_code": {
+      "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+      "title": "Provider Code",
+      "type": "string"
+    },
+    "reference_kind": {
+      "$ref": "#/$defs/ExternalReferenceKind"
+    },
+    "transaction_id": {
+      "format": "uuid",
+      "title": "Transaction Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "transaction_id",
+    "provider_code",
+    "reference_kind",
+    "corrected_reference"
+  ],
+  "title": "FinancialExternalReferenceCorrected",
+  "type": "object",
+  "x-event-type": "FinancialExternalReferenceCorrected",
+  "x-schema-version": 1
+}
