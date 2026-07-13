@@ -1,15 +1,21 @@
 services:
   postgres:
-    image: postgres:16-alpine
-    container_name: track-anywhere-postgres
+    image: postgres:17-alpine
+    container_name: track-anywhere-v2-postgres17
     environment:
       POSTGRES_DB: track_anywhere
       POSTGRES_USER: track_anywhere
       POSTGRES_PASSWORD: track_anywhere
+      TRACK_ANYWHERE_OWNER_ROLE: ${TRACK_ANYWHERE_OWNER_ROLE:-track_anywhere_owner}
+      TRACK_ANYWHERE_MIGRATOR_ROLE: ${TRACK_ANYWHERE_MIGRATOR_ROLE:-track_anywhere_migrator}
+      TRACK_ANYWHERE_MIGRATOR_PASSWORD: ${TRACK_ANYWHERE_MIGRATOR_PASSWORD:-track_anywhere_migrator_test}
+      TRACK_ANYWHERE_RUNTIME_ROLE: ${TRACK_ANYWHERE_RUNTIME_ROLE:-track_anywhere_runtime}
+      TRACK_ANYWHERE_RUNTIME_PASSWORD: ${TRACK_ANYWHERE_RUNTIME_PASSWORD:-track_anywhere_runtime_test}
     ports:
       - "${TRACK_ANYWHERE_POSTGRES_PORT:-55432}:5432"
     volumes:
-      - ./.local/postgres-data:/var/lib/postgresql/data
+      - ./.local/postgres17-data:/var/lib/postgresql/data
+      - ./docker/postgres/init/001-v2-roles.sh:/docker-entrypoint-initdb.d/001-v2-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U track_anywhere -d track_anywhere"]
       interval: 5s

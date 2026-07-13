@@ -2,7 +2,7 @@
 name = "track-anywhere"
 version = "0.1.1"
 description = "Personal accounting system with a strict ledger core and draft-first capture."
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
   "alembic>=1.13",
   "authlib>=1.6.6",
@@ -18,11 +18,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = [
-  "pytest>=8.4",
-]
 postgres = [
   "psycopg[binary]>=3.2",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.4",
 ]
 
 [project.scripts]

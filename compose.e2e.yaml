@@ -1,14 +1,20 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_DB: track_anywhere
       POSTGRES_USER: track_anywhere
       POSTGRES_PASSWORD: track_anywhere
+      TRACK_ANYWHERE_OWNER_ROLE: ${TRACK_ANYWHERE_OWNER_ROLE:-track_anywhere_owner}
+      TRACK_ANYWHERE_MIGRATOR_ROLE: ${TRACK_ANYWHERE_MIGRATOR_ROLE:-track_anywhere_migrator}
+      TRACK_ANYWHERE_MIGRATOR_PASSWORD: ${TRACK_ANYWHERE_MIGRATOR_PASSWORD:-track_anywhere_migrator_test}
+      TRACK_ANYWHERE_RUNTIME_ROLE: ${TRACK_ANYWHERE_RUNTIME_ROLE:-track_anywhere_runtime}
+      TRACK_ANYWHERE_RUNTIME_PASSWORD: ${TRACK_ANYWHERE_RUNTIME_PASSWORD:-track_anywhere_runtime_test}
     ports:
       - "${TRACK_ANYWHERE_E2E_POSTGRES_BIND:-127.0.0.1}:${TRACK_ANYWHERE_E2E_POSTGRES_PORT:-15543}:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres17-data:/var/lib/postgresql/data
+      - ./docker/postgres/init/001-v2-roles.sh:/docker-entrypoint-initdb.d/001-v2-roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U track_anywhere -d track_anywhere"]
       interval: 5s
@@ -25,11 +31,11 @@ services:
         condition: service_healthy
     environment:
       TRACK_ANYWHERE_MODE: local
-      TRACK_ANYWHERE_DATABASE_URL: postgresql+psycopg://track_anywhere:track_anywhere@postgres:5432/track_anywhere
+      TRACK_ANYWHERE_DATABASE_URL: postgresql+psycopg://${TRACK_ANYWHERE_RUNTIME_ROLE:-track_anywhere_runtime}:${TRACK_ANYWHERE_RUNTIME_PASSWORD:-track_anywhere_runtime_test}@postgres:5432/track_anywhere
       TRACK_ANYWHERE_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       PYTHONUNBUFFERED: "1"
     ports:
       - "${TRACK_ANYWHERE_E2E_API_BIND:-127.0.0.1}:${TRACK_ANYWHERE_E2E_API_PORT:-18080}:8000"
 
 volumes:
-  postgres-data:
+  postgres17-data:

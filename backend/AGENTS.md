@@ -9,12 +9,12 @@ tests.
 
 ## Project Shape
 
-- Runtime target: Python 3.12+.
+- Runtime target: Python 3.12-3.13.
 - Framework stack: FastAPI 0.115+, Pydantic v2, SQLAlchemy 2.x, Alembic.
 - Application import path: `backend/app`.
 - FastAPI entrypoint: `backend/app/main.py`, which imports `track_anywhere.api:app`.
 - Backend tests live in `backend/tests`.
-- Public routes are under `/api/v1`; do not introduce unversioned public API
+- Public routes are under `/api/v2`; do not introduce unversioned public API
   routes.
 
 ## FastAPI Practices
@@ -56,8 +56,10 @@ tests.
   precise collection types, and explicit return annotations on public functions.
 - Prefer small pure functions and dataclasses/Pydantic models over mutable
   ad-hoc dictionaries for internal data.
-- Use `Decimal` for money. Never use `float` for balances, amounts, prices, or
-  rates where exact decimal behavior matters.
+- Represent V2 money as exact integer units paired with an explicit asset
+  scale. Parse decimal text at the boundary without rounding, then keep integer
+  units through commands, events, projections, and persistence. Never use
+  `float` or persist `Decimal` values for ledger facts.
 - Use timezone-aware `datetime` values for persisted or API-visible timestamps.
   Do not silently strip offsets.
 - Keep imports explicit and local to their layer. Avoid wildcard imports,
@@ -119,6 +121,10 @@ tests.
   near the layer being changed, plus API tests when the HTTP contract changes.
 - Use FastAPI `TestClient` for HTTP-level tests unless the app is intentionally
   moved to a fully async test stack.
+- PostgreSQL 17 is mandatory for V2 persistence, migration, repository,
+  concurrency, replay, and backfill tests. SQLite is allowed only for pure
+  functions that do not open a database and for explicitly unported V1 tests
+  while the V1 runtime still exists.
 - Test security-sensitive behavior directly: auth failures, CSRF/origin checks,
   idempotency conflicts, stale versions, and sensitive-data redaction.
 - For API contract changes, update `backend/tests/snapshots/public-api-v1.json`
@@ -130,6 +136,9 @@ tests.
 
 ## Migration Rules
 
+- V2 Alembic migrations start from a clean PostgreSQL 17 schema. Do not add an
+  in-place V1-to-V2 compatibility path; V1 data moves through the separately
+  verified backfill workflow.
 - Alembic migrations must be deterministic, reviewable, and reversible when the
   database operation allows it.
 - Do not modify an existing migration that may already have been applied unless
@@ -145,7 +154,9 @@ Before finishing backend work, verify:
 - Domain rules are not embedded in route handlers.
 - New public inputs and outputs are typed and documented through Pydantic or
   FastAPI metadata.
-- Money uses `Decimal`; timestamps are timezone-aware when API-visible.
+- Money uses exact integer units and explicit asset scales; timestamps are
+  timezone-aware when API-visible.
+- Every changed V2 database path passes its PostgreSQL 17 integration gate.
 - Security, idempotency, and API contract tests are updated when touched.
 - `uv run pytest backend/tests` passes or the remaining failure is reported with
   exact evidence.
