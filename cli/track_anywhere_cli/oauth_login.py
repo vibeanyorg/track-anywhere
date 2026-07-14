@@ -45,7 +45,7 @@ def create_browser_login_request(
     redirect_uri: str | None = None,
 ) -> BrowserLoginRequest:
     base_web_url = web_url.rstrip("/")
-    auth_endpoint = f"{base_web_url}/api/v1/auth/callback"
+    auth_endpoint = f"{base_web_url}/api/v2/auth/callback"
     redirect_uri = redirect_uri or auth_endpoint
     state = _random_base64_url(18)
     verifier = _random_base64_url(48)
@@ -77,9 +77,13 @@ def create_device_login_request(
     scope: str = DEFAULT_CLI_SCOPE,
 ) -> tuple[int, dict, DeviceLoginRequest | None]:
     status, data = requester(
-        CliConfig(base_url=config.base_url, token=None, insecure_automation=config.insecure_automation),
+        CliConfig(
+            base_url=config.base_url,
+            token=None,
+            insecure_automation=config.insecure_automation,
+        ),
         "POST",
-        "/api/v1/oauth/device/authorize",
+        "/api/v2/oauth/device/authorize",
         {"client_id": client_id, "scope": scope},
         None,
     )
@@ -89,7 +93,9 @@ def create_device_login_request(
         device_code=str(data["device_code"]),
         user_code=str(data["user_code"]),
         verification_uri=str(data["verification_uri"]),
-        verification_uri_complete=str(data.get("verification_uri_complete") or data["verification_uri"]),
+        verification_uri_complete=str(
+            data.get("verification_uri_complete") or data["verification_uri"]
+        ),
         expires_in=int(data["expires_in"]),
         interval=int(data["interval"]),
         client_id=client_id,
@@ -108,9 +114,13 @@ def exchange_device_code_for_token(
     interval = request.interval
     while time.monotonic() < deadline:
         status, data = requester(
-            CliConfig(base_url=config.base_url, token=None, insecure_automation=config.insecure_automation),
+            CliConfig(
+                base_url=config.base_url,
+                token=None,
+                insecure_automation=config.insecure_automation,
+            ),
             "POST",
-            "/api/v1/oauth/token",
+            "/api/v2/oauth/token",
             {
                 "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 "device_code": request.device_code,
@@ -130,7 +140,10 @@ def exchange_device_code_for_token(
         if remaining <= 0:
             break
         sleep(min(interval, max(0, remaining)))
-    return 400, {"error": "expired_token", "error_description": "device authorization expired"}
+    return 400, {
+        "error": "expired_token",
+        "error_description": "device authorization expired",
+    }
 
 
 def exchange_callback_for_token(
@@ -142,9 +155,13 @@ def exchange_callback_for_token(
 ) -> tuple[int, dict]:
     code = callback_code(callback_value, expected_state=request.state)
     status, data = requester(
-        CliConfig(base_url=config.base_url, token=None, insecure_automation=config.insecure_automation),
+        CliConfig(
+            base_url=config.base_url,
+            token=None,
+            insecure_automation=config.insecure_automation,
+        ),
         "POST",
-        "/api/v1/oauth/token",
+        "/api/v2/oauth/token",
         {
             "grant_type": "authorization_code",
             "code": code,

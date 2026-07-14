@@ -12,60 +12,42 @@ type AuthFormProps = {
   mode: AuthMode;
 };
 
-type AuthResponse = {
-  authenticated: boolean;
-  identity?: {
-    display_name?: string | null;
-    email?: string | null;
-    role?: string | null;
-  } | null;
-};
-
 export function AuthForm({ mode }: AuthFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { notifyChanged } = useAuth();
-  const [email, setEmail] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const nextPath = useMemo(() => safeNext(searchParams.get("next")), [searchParams]);
-  const isSignup = mode === "signup";
-  const alternatePath = isSignup
-    ? `/auth/login?next=${encodeURIComponent(nextPath)}`
-    : `/auth/signup?next=${encodeURIComponent(nextPath)}`;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isSignup && password !== confirmPassword) {
-      setError("Passwords don't match.");
+    const key = apiKey.trim();
+    if (!key) {
+      setError("Paste your API key first.");
       return;
     }
 
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(`/api/v1/auth/password/${isSignup ? "signup" : "login"}`, {
+      const response = await fetch("/api/v2/auth/session/api-key", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          password,
-          ...(isSignup && displayName.trim() ? { display_name: displayName.trim() } : {})
-        })
+        body: JSON.stringify({ api_key: key })
       });
-      const payload = await readJson<AuthResponse | { detail?: string }>(response);
-      if (!response.ok || !("authenticated" in payload) || !payload.authenticated) {
-        throw new Error(responseError(payload, isSignup ? "Couldn't create the account." : "Email or password didn't match."));
+      const payload = await readJson<{ authenticated?: boolean; detail?: string }>(response);
+      if (!response.ok || !payload.authenticated) {
+        throw new Error(responseError(payload, "That API key didn't work."));
       }
+      setApiKey("");
       notifyChanged();
       router.push(nextPath);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      setError(err instanceof Error ? err.message : "That API key didn't work.");
     } finally {
       setBusy(false);
     }
@@ -80,82 +62,43 @@ export function AuthForm({ mode }: AuthFormProps) {
 
       <section className="auth-form-panel" aria-labelledby="auth-form-title">
         <div className="auth-form-heading">
-          <h1 id="auth-form-title">{isSignup ? "Create your account" : "Welcome back"}</h1>
+          <h1 id="auth-form-title">{mode === "signup" ? "Account setup" : "Sign in with an API key"}</h1>
           <p className="auth-form-subhead">
-            {isSignup ? "A space for your numbers. Takes a minute." : "Sign in to pick up where you left off."}
+            {mode === "signup"
+              ? "Self-service account creation is not available in API V2. Ask your Book owner for an API key."
+              : "Your key is exchanged for a short-lived browser session and is never stored in the browser."}
           </p>
           {error ? <span className="auth-state">{error}</span> : null}
         </div>
 
-        <form className="auth-form" onSubmit={submit}>
-          {isSignup ? (
+        {mode === "login" ? (
+          <form className="auth-form" onSubmit={submit}>
             <label className="auth-label">
-              Your name
+              API key
               <input
-                id="display-name"
-                name="display_name"
+                id="api-key"
+                name="api_key"
                 className="auth-input auth-input-wide"
-                autoComplete="name"
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="What should we call you?"
-              />
-            </label>
-          ) : null}
-          <label className="auth-label">
-            Email
-            <input
-              id="email"
-              name="email"
-              className="auth-input auth-input-wide"
-              autoComplete="email"
-              type="email"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="you@example.com"
-            />
-          </label>
-          <label className="auth-label">
-            Password
-            <input
-              id="password"
-              name="password"
-              className="auth-input auth-input-wide"
-              autoComplete={isSignup ? "new-password" : "current-password"}
-              type="password"
-              minLength={8}
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder={isSignup ? "At least 8 characters" : ""}
-            />
-          </label>
-          {isSignup ? (
-            <label className="auth-label">
-              Confirm password
-              <input
-                id="confirm-password"
-                name="confirm_password"
-                className="auth-input auth-input-wide"
-                autoComplete="new-password"
+                autoComplete="off"
                 type="password"
-                minLength={8}
                 required
-                value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                placeholder="ta_…"
               />
             </label>
-          ) : null}
-          <button className="primary-action auth-form-submit" type="submit" disabled={busy}>
-            {busy ? (isSignup ? "Creating…" : "Signing in…") : isSignup ? "Create account" : "Sign in"}
-          </button>
-        </form>
+            <button className="primary-action auth-form-submit" type="submit" disabled={busy}>
+              {busy ? "Signing in…" : "Sign in"}
+            </button>
+          </form>
+        ) : null}
 
         <div className="auth-form-switch">
-          <Link className="text-button" href={alternatePath}>
-            {isSignup ? "I already have an account" : "I'm new here — sign me up"}
-          </Link>
+          {mode === "signup" ? (
+            <Link className="text-button text-button-strong" href={`/auth/login?next=${encodeURIComponent(nextPath)}`}>
+              I have an API key
+            </Link>
+          ) : null}
           <Link className="text-button" href={nextPath}>
             Back
           </Link>

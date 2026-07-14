@@ -9,13 +9,13 @@ def unique(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
 
 
-def issue_dev_token(client: BackendApiClient) -> str:
-    response = client.post("/api/v1/auth/dev-token")
-    assert response.status_code == 200
-    assert response.data["token"].startswith("ta_")
-    assert "account:write" in response.data["actor"]["scopes"]
-    return response.data["token"]
+def issue_contract_token(client: BackendApiClient) -> str:
+    return client.api_key
 
 
 def auth_headers(client: BackendApiClient) -> dict[str, str]:
-    return bearer(issue_dev_token(client))
+    return {"X-API-Key": client.api_key}
+
+
+def bearer_headers(client: BackendApiClient) -> dict[str, str]:
+    return bearer(issue_contract_token(client))

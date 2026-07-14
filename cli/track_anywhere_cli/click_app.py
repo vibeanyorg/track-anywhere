@@ -9,7 +9,6 @@ import click
 from .click_auth import register as register_auth
 from .click_catalog import register as register_catalog
 from .click_common import ClickState, Requester, output_options, pass_state
-from .click_counterparties import register as register_counterparties
 from .click_investment import register as register_investment
 from .click_ledger import register as register_ledger
 from .click_payment import register as register_payment
@@ -19,20 +18,46 @@ from .data_backup import create_data_backup
 from .exit_codes import EXIT_SUCCESS, EXIT_VALIDATION
 from .http import request_json
 from .protocol import capabilities_payload, schema_payload, version_payload
-from .release_version import ReleaseVersionError, apply_version_bump, build_version_bump_plan
+from .release_version import (
+    ReleaseVersionError,
+    apply_version_bump,
+    build_version_bump_plan,
+)
 from .renderers import emit_outcome
 from .runtime import build_outcome
 
 
 @click.group()
-@click.option("--base-url", envvar=["TRACK_ANYWHERE_API", "TRACK_ANYWHERE_SERVICE_URL"], default="http://localhost:8000")
-@click.option("--token", default=None, help="Bearer token. Prefer OS keyring; this is for one-shot use.")
-@click.option("--insecure-automation", is_flag=True, help="Allow env-token automation with warning.")
-@click.option("--format", "output_format", type=click.Choice(["human", "json"]), default=None, help="Output renderer.")
-@click.option("--json", "json_mode", is_flag=True, help="Emit machine-readable JSON by default.")
+@click.option(
+    "--base-url",
+    envvar=["TRACK_ANYWHERE_API", "TRACK_ANYWHERE_SERVICE_URL"],
+    default="http://localhost:8000",
+)
+@click.option(
+    "--token",
+    default=None,
+    help="Bearer token. Prefer OS keyring; this is for one-shot use.",
+)
+@click.option(
+    "--insecure-automation",
+    is_flag=True,
+    help="Allow env-token automation with warning.",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["human", "json"]),
+    default=None,
+    help="Output renderer.",
+)
+@click.option(
+    "--json", "json_mode", is_flag=True, help="Emit machine-readable JSON by default."
+)
 @click.option("--no-color", is_flag=True, help="Disable colored human output.")
 @click.option("--no-input", is_flag=True, help="Fail instead of prompting for input.")
-@click.option("--agent", "agent_mode", is_flag=True, help="Agent mode: JSON, no color, no input.")
+@click.option(
+    "--agent", "agent_mode", is_flag=True, help="Agent mode: JSON, no color, no input."
+)
 @click.pass_context
 def cli(
     ctx,
@@ -73,13 +98,35 @@ def release():
 
 
 @release.command("bump")
-@click.option("--part", type=click.Choice(["major", "minor", "patch"]), default="patch", show_default=True)
-@click.option("--to", "target_version", help="Set an exact semver target instead of incrementing a part.")
-@click.option("--project-file", type=click.Path(dir_okay=False, path_type=Path), default=Path("pyproject.toml"), show_default=True)
-@click.option("--apply", "apply_changes", is_flag=True, help="Apply the version change.")
-@click.option("--dry-run", is_flag=True, help="Preview the version change without writing files.")
+@click.option(
+    "--part",
+    type=click.Choice(["major", "minor", "patch"]),
+    default="patch",
+    show_default=True,
+)
+@click.option(
+    "--to",
+    "target_version",
+    help="Set an exact semver target instead of incrementing a part.",
+)
+@click.option(
+    "--project-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("pyproject.toml"),
+    show_default=True,
+)
+@click.option(
+    "--apply", "apply_changes", is_flag=True, help="Apply the version change."
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Preview the version change without writing files."
+)
 @click.option("--confirm", help="Required with --apply. Must equal the target version.")
-@click.option("--allow-dirty", is_flag=True, help="Allow applying with an existing dirty git worktree.")
+@click.option(
+    "--allow-dirty",
+    is_flag=True,
+    help="Allow applying with an existing dirty git worktree.",
+)
 @output_options
 @pass_state
 def release_bump(
@@ -101,19 +148,38 @@ def release_bump(
             raise ReleaseVersionError(
                 "conflicting_flags",
                 "Use either --dry-run or --apply, not both.",
-                remediation=[{"description": "Preview the bump.", "command": ["ta", "release", "bump", "--dry-run", "--agent"]}],
+                remediation=[
+                    {
+                        "description": "Preview the bump.",
+                        "command": ["ta", "release", "bump", "--dry-run", "--agent"],
+                    }
+                ],
             )
-        plan = build_version_bump_plan(project_file, part=part, target_version=target_version)
+        plan = build_version_bump_plan(
+            project_file, part=part, target_version=target_version
+        )
         if apply_changes:
             if confirm != plan.next_version:
-                code = "confirmation_required" if confirm is None else "confirmation_mismatch"
+                code = (
+                    "confirmation_required"
+                    if confirm is None
+                    else "confirmation_mismatch"
+                )
                 raise ReleaseVersionError(
                     code,
                     f"Applying this bump requires --confirm {plan.next_version}.",
                     remediation=[
                         {
                             "description": "Apply the planned bump with explicit confirmation.",
-                            "command": ["ta", "release", "bump", "--apply", "--confirm", plan.next_version, "--agent"],
+                            "command": [
+                                "ta",
+                                "release",
+                                "bump",
+                                "--apply",
+                                "--confirm",
+                                plan.next_version,
+                                "--agent",
+                            ],
                         }
                     ],
                 )
@@ -161,10 +227,14 @@ def data_backup(
     output_json = state.json_mode or json_mode
     output_no_color = state.no_color or no_color
     try:
-        backup = create_data_backup(database_url, output_dir, label, transaction_id=transaction_id)
+        backup = create_data_backup(
+            database_url, output_dir, label, transaction_id=transaction_id
+        )
         outcome = build_outcome("data.backup", 200, {"backup": backup})
     except RuntimeError as exc:
-        outcome = build_outcome("data.backup", 400, {"detail": str(exc)}, exit_code=EXIT_VALIDATION)
+        outcome = build_outcome(
+            "data.backup", 400, {"detail": str(exc)}, exit_code=EXIT_VALIDATION
+        )
     emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
     return outcome.exit_code
 
@@ -174,7 +244,11 @@ def data_backup(
 @pass_state
 def version_command(state: ClickState, json_mode: bool, no_color: bool) -> int:
     outcome = build_outcome("version", 200, version_payload())
-    emit_outcome(outcome, json_mode=state.json_mode or json_mode, no_color=state.no_color or no_color)
+    emit_outcome(
+        outcome,
+        json_mode=state.json_mode or json_mode,
+        no_color=state.no_color or no_color,
+    )
     return outcome.exit_code
 
 
@@ -183,7 +257,11 @@ def version_command(state: ClickState, json_mode: bool, no_color: bool) -> int:
 @pass_state
 def capabilities_command(state: ClickState, json_mode: bool, no_color: bool) -> int:
     outcome = build_outcome("capabilities", 200, capabilities_payload(cli))
-    emit_outcome(outcome, json_mode=state.json_mode or json_mode, no_color=state.no_color or no_color)
+    emit_outcome(
+        outcome,
+        json_mode=state.json_mode or json_mode,
+        no_color=state.no_color or no_color,
+    )
     return outcome.exit_code
 
 
@@ -191,7 +269,9 @@ def capabilities_command(state: ClickState, json_mode: bool, no_color: bool) -> 
 @click.argument("command_path", required=False)
 @output_options
 @pass_state
-def schema_command(state: ClickState, json_mode: bool, no_color: bool, command_path: str | None) -> int:
+def schema_command(
+    state: ClickState, json_mode: bool, no_color: bool, command_path: str | None
+) -> int:
     try:
         payload = schema_payload(cli, command_path)
         outcome = build_outcome("schema", 200, payload)
@@ -206,17 +286,31 @@ def schema_command(state: ClickState, json_mode: bool, no_color: bool, command_p
                     "category": "not_found",
                     "message": f"Unknown command path: {command_path}",
                     "retryable": False,
-                    "remediation": [{"description": "List known command schemas.", "command": ["ta", "schema", "--agent"]}],
+                    "remediation": [
+                        {
+                            "description": "List known command schemas.",
+                            "command": ["ta", "schema", "--agent"],
+                        }
+                    ],
                 },
             },
         )
-    emit_outcome(outcome, json_mode=state.json_mode or json_mode, no_color=state.no_color or no_color)
+    emit_outcome(
+        outcome,
+        json_mode=state.json_mode or json_mode,
+        no_color=state.no_color or no_color,
+    )
     return outcome.exit_code
 
 
 def run(argv: list[str] | None = None, *, requester: Requester = request_json) -> int:
     try:
-        result = cli.main(args=argv, prog_name="ta", obj={"requester": requester}, standalone_mode=False)
+        result = cli.main(
+            args=argv,
+            prog_name="ta",
+            obj={"requester": requester},
+            standalone_mode=False,
+        )
     except click.ClickException as exc:
         if _wants_machine_output(argv):
             outcome = build_outcome(
@@ -229,7 +323,12 @@ def run(argv: list[str] | None = None, *, requester: Requester = request_json) -
                         "category": "usage",
                         "message": exc.format_message(),
                         "retryable": False,
-                        "remediation": [{"description": "Inspect command syntax.", "command": ["ta", "--help", "--agent"]}],
+                        "remediation": [
+                            {
+                                "description": "Inspect command syntax.",
+                                "command": ["ta", "--help", "--agent"],
+                            }
+                        ],
                     },
                 },
                 exit_code=exc.exit_code,
@@ -266,11 +365,17 @@ def _env_truthy(name: str) -> bool:
 
 def _wants_machine_output(argv: list[str] | None) -> bool:
     args = argv if argv is not None else sys.argv[1:]
-    return _env_truthy("TRACK_ANYWHERE_AGENT") or any(arg in {"--json", "--agent"} for arg in args) or _format_json_requested(args)
+    return (
+        _env_truthy("TRACK_ANYWHERE_AGENT")
+        or any(arg in {"--json", "--agent"} for arg in args)
+        or _format_json_requested(args)
+    )
 
 
 def _format_json_requested(args: list[str]) -> bool:
-    return any(arg == "--format=json" for arg in args) or any(left == "--format" and right == "json" for left, right in zip(args, args[1:]))
+    return any(arg == "--format=json" for arg in args) or any(
+        left == "--format" and right == "json" for left, right in zip(args, args[1:])
+    )
 
 
 def _click_error_code(exc: click.ClickException) -> str:
@@ -290,7 +395,6 @@ def _click_error_code(exc: click.ClickException) -> str:
 
 register_auth(cli)
 register_catalog(cli)
-register_counterparties(cli)
 register_investment(cli)
 register_ledger(cli)
 register_payment(cli)

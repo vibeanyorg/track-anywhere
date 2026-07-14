@@ -1,19 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 BASE_URL=${TRACK_ANYWHERE_STABLE_BASE_URL:-http://127.0.0.1:12306}
-STABLE_DIR=${TRACK_ANYWHERE_STABLE_DIR:-/Users/xuyanyue/Documents/track-anywhere-stable-backend}
-TOKEN_FILE=${TRACK_ANYWHERE_TOKEN_FILE:-$STABLE_DIR/secrets/ta-token}
-CLI_BUDGET_SECONDS=${TRACK_ANYWHERE_CLI_BUDGET_SECONDS:-2.0}
 HTTP_TIMEOUT_SECONDS=${TRACK_ANYWHERE_HTTP_TIMEOUT_SECONDS:-5}
-CLI_TIMEOUT_SECONDS=${TRACK_ANYWHERE_CLI_TIMEOUT_SECONDS:-10}
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
-
-export TRACK_ANYWHERE_API="$BASE_URL"
-export TRACK_ANYWHERE_SERVICE_URL="$BASE_URL"
-export TRACK_ANYWHERE_TOKEN_FILE="$TOKEN_FILE"
 
 run_with_timeout() {
   timeout_seconds=$1
@@ -35,92 +26,44 @@ except subprocess.TimeoutExpired:
 PY
 }
 
-run_ta_with_timeout() {
-  if [ -n "${TRACK_ANYWHERE_TA_BIN:-}" ]; then
-    run_with_timeout "$CLI_TIMEOUT_SECONDS" "$TRACK_ANYWHERE_TA_BIN" "$@"
-  elif command -v uv >/dev/null 2>&1 && [ -f "$ROOT/pyproject.toml" ]; then
-    (
-      cd "$ROOT"
-      PYTHONPATH="$ROOT/backend/app:$ROOT/cli${PYTHONPATH:+:$PYTHONPATH}" \
-        run_with_timeout "$CLI_TIMEOUT_SECONDS" uv run python -m track_anywhere_cli.main "$@"
-    )
-  else
-    run_with_timeout "$CLI_TIMEOUT_SECONDS" ta "$@"
-  fi
+run_http() {
+  label=$1
+  path=$2
+  run_with_timeout "$HTTP_TIMEOUT_SECONDS" curl -fsS "$BASE_URL$path" \
+    >"$TMP_DIR/$label.json"
+  printf 'ok http %-18s\n' "$label"
 }
 
-elapsed_seconds() {
-  python3 - "$1" <<'PY'
+python3 - "$BASE_URL" <<'PY'
 import sys
-import time
+from urllib.parse import urlparse
 
-print(f"{time.monotonic() - float(sys.argv[1]):.3f}")
+parsed = urlparse(sys.argv[1])
+if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    raise SystemExit("TRACK_ANYWHERE_STABLE_BASE_URL must be an absolute HTTP URL")
 PY
-}
 
-assert_budget() {
-  python3 - "$1" "$CLI_BUDGET_SECONDS" <<'PY'
-import sys
+run_http health /api/v2/health
+run_http ready /api/v2/ready
 
-elapsed = float(sys.argv[1])
-budget = float(sys.argv[2])
-raise SystemExit(0 if elapsed <= budget else 1)
-PY
-}
-
-check_cli_json() {
-  python3 - "$1" <<'PY'
+python3 - "$TMP_DIR/health.json" "$TMP_DIR/ready.json" <<'PY'
 import json
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as handle:
-    payload = json.load(handle)
-if not payload.get("ok"):
-    raise SystemExit(f"CLI command failed: {payload}")
+    health = json.load(handle)
+with open(sys.argv[2], encoding="utf-8") as handle:
+    ready = json.load(handle)
+
+if health != {"status": "ok", "api_version": "v2"}:
+    raise SystemExit(f"unexpected V2 health response: {health}")
+if (
+    ready.get("status") != "ok"
+    or ready.get("api_version") != "v2"
+    or ready.get("checks") != {"database": "ok", "schema": "ok"}
+):
+    raise SystemExit(f"unexpected V2 readiness response: {ready}")
 PY
-}
 
-run_http() {
-  label=$1
-  path=$2
-  start=$(python3 -c 'import time; print(time.monotonic())')
-  run_with_timeout "$HTTP_TIMEOUT_SECONDS" curl -fsS "$BASE_URL$path" > "$TMP_DIR/$label.json"
-  elapsed=$(elapsed_seconds "$start")
-  printf 'ok http %-18s %ss\n' "$label" "$elapsed"
-}
-
-run_cli() {
-  label=$1
-  shift
-  start=$(python3 -c 'import time; print(time.monotonic())')
-  run_ta_with_timeout --base-url "$BASE_URL" "$@" --json > "$TMP_DIR/$label.json"
-  elapsed=$(elapsed_seconds "$start")
-  check_cli_json "$TMP_DIR/$label.json"
-  if ! assert_budget "$elapsed"; then
-    printf 'slow cli %-18s %ss > %ss\n' "$label" "$elapsed" "$CLI_BUDGET_SECONDS" >&2
-    exit 1
-  fi
-  printf 'ok cli  %-18s %ss\n' "$label" "$elapsed"
-}
-
-if [ ! -s "$TOKEN_FILE" ]; then
-  printf 'Stable token file is missing or empty: %s\n' "$TOKEN_FILE" >&2
-  exit 1
-fi
-
-run_http health /api/v1/health
-run_http ready /api/v1/ready
-
-run_cli auth-status auth status
-run_cli account-list account list
-run_cli category-list category list
-run_cli tx-list tx list --limit 5
-run_cli summary-accounts summary accounts
-run_cli summary-categories summary categories
-run_cli user-list user list
-run_cli credit-card-list credit-card list
-run_cli payment-instrument-list payment instrument list
-run_cli payment-profile-list payment profile list
-run_cli recurring-list recurring list
-
-printf 'Stable smoke passed for %s\n' "$BASE_URL"
+printf 'Stable V2 health/readiness smoke passed for %s\n' "$BASE_URL"
+printf 'Ledger post/query/classify/reverse coverage: scripts/e2e-docker-postgres.sh\n'

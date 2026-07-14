@@ -13,7 +13,9 @@ def _json_from_output(captured):
     return json.loads(captured.out or captured.err)
 
 
-def test_token_store_keyring_write_failure_falls_back_to_structured_warning(monkeypatch, tmp_path):
+def test_token_store_keyring_write_failure_falls_back_to_structured_warning(
+    monkeypatch, tmp_path
+):
     class FailingKeyring:
         @staticmethod
         def set_password(*args, **kwargs):
@@ -58,7 +60,7 @@ def test_explicit_token_file_takes_precedence_over_keyring(monkeypatch, tmp_path
 
 def test_auth_status_fails_when_server_rejects_stored_token(monkeypatch, capsys):
     def fake_request(config, method, path, payload=None, key=None):
-        assert path == "/api/v1/auth/token-status"
+        assert path == "/api/v2/auth/token-status"
         return 401, {"detail": "credential is missing, expired, or revoked"}
 
     monkeypatch.setattr(cli_main, "request_json", fake_request)

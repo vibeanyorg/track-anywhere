@@ -95,7 +95,7 @@ WEB_PORT=$(ssh "$HOST" "awk -F= '\$1 == \"TRACK_ANYWHERE_PROD_WEB_PORT\" { value
 API_PORT=${API_PORT:-8000}
 WEB_PORT=${WEB_PORT:-3000}
 
-while ! ssh "$HOST" "curl -fsS http://127.0.0.1:$API_PORT/api/v1/health"; do
+while ! ssh "$HOST" "curl -fsS http://127.0.0.1:$API_PORT/api/v2/health"; do
   if [ "$attempt" -ge 30 ]; then
     ssh "$HOST" "docker logs --tail 80 track-anywhere-prod-api" || true
     exit 1
@@ -104,7 +104,7 @@ while ! ssh "$HOST" "curl -fsS http://127.0.0.1:$API_PORT/api/v1/health"; do
   sleep 2
 done
 attempt=1
-while ! ssh "$HOST" "curl -fsS http://127.0.0.1:$WEB_PORT/api/v1/health"; do
+while ! ssh "$HOST" "curl -fsS http://127.0.0.1:$WEB_PORT/api/v2/health"; do
   if [ "$attempt" -ge 30 ]; then
     ssh "$HOST" "docker logs --tail 80 track-anywhere-prod-web" || true
     exit 1

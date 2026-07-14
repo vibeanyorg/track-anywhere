@@ -2,125 +2,202 @@ from __future__ import annotations
 
 from argparse import Namespace
 from typing import Any
+from uuid import uuid4
 
 from track_anywhere_cli.commands import dispatch_api_command
 from track_anywhere_cli.config import CliConfig
 
 from .api_clients import BackendApiClient
 from .cli_clients import requester_for_backend
-from .helpers import issue_dev_token, unique
+from .helpers import issue_contract_token, unique
 
 
 def cli_config(client: BackendApiClient) -> CliConfig:
-    return CliConfig(base_url=f"contract://{client.name}", token=issue_dev_token(client))
+    return CliConfig(
+        base_url=f"contract://{client.name}",
+        token=issue_contract_token(client),
+    )
 
 
-def run_cli_command(client: BackendApiClient, args: Namespace) -> tuple[int, Any]:
-    result = dispatch_api_command(args, cli_config(client), requester_for_backend(client))
+def run_cli_command(
+    client: BackendApiClient,
+    args: Namespace,
+) -> tuple[int, Any]:
+    result = dispatch_api_command(
+        args,
+        cli_config(client),
+        requester_for_backend(client),
+    )
     assert result is not None
     return result
 
 
-def account_create_args(
-    *,
-    name: str,
-    account_type: str = "asset",
-    currency: str = "CNY",
-    opening_balance: str | None = "0",
-    key: str,
-) -> Namespace:
-    return Namespace(
-        command="account",
-        account_command="create",
-        name=name,
-        type=account_type,
-        currency=currency,
-        opening_balance=opening_balance,
-        institution_type=None,
-        subtype=None,
-        institution=None,
-        idempotency_key=key,
+def test_cli_v2_catalog_post_and_query_contract(
+    backend_client: BackendApiClient,
+) -> None:
+    book_id = str(uuid4())
+    debit_account_id = str(uuid4())
+    credit_account_id = str(uuid4())
+    transaction_id = str(uuid4())
+
+    assert (
+        run_cli_command(
+            backend_client,
+            Namespace(
+                command="book",
+                book_command="create",
+                book_id=book_id,
+                name="CLI Contract",
+                base_asset_code=None,
+            ),
+        )[0]
+        == 201
     )
-
-
-def test_cli_core_ledger_workflow_contract(backend_client: BackendApiClient):
-    suffix = unique(f"{backend_client.name}-cli")
-    status, cash_data = run_cli_command(
-        backend_client,
-        account_create_args(name=f"{suffix} Cash", opening_balance="100", key=f"{suffix}-cash"),
+    assert (
+        run_cli_command(
+            backend_client,
+            Namespace(
+                command="asset",
+                asset_command="create",
+                book_id=book_id,
+                asset_code="USD",
+                kind="fiat",
+                ledger_scale=2,
+                input_scale=2,
+                display_scale=2,
+                name="US Dollar",
+            ),
+        )[0]
+        == 201
     )
-    assert status == 200
-    cash_id = cash_data["account"]["account_id"]
+    for account_id, account_type, name in (
+        (debit_account_id, "expense", "Food"),
+        (credit_account_id, "asset", "Cash"),
+    ):
+        assert (
+            run_cli_command(
+                backend_client,
+                Namespace(
+                    command="account",
+                    account_command="create",
+                    book_id=book_id,
+                    account_id=account_id,
+                    asset_code="USD",
+                    account_type=account_type,
+                    name=name,
+                    system_role=None,
+                ),
+            )[0]
+            == 201
+        )
 
-    status, expense_data = run_cli_command(
-        backend_client,
-        account_create_args(
-            name=f"{suffix} Food",
-            account_type="expense",
-            opening_balance=None,
-            key=f"{suffix}-food",
-        ),
-    )
-    assert status == 200
-    expense_id = expense_data["account"]["account_id"]
-
-    status, tx_data = run_cli_command(
+    status, posted = run_cli_command(
         backend_client,
         Namespace(
             command="tx",
             tx_command="record",
-            amount="25",
-            currency="CNY",
-            from_account_id=cash_id,
-            to_account_id=expense_id,
-            purpose=f"{suffix} lunch",
-            occurred_at=None,
-            category_id=None,
-            idempotency_key=f"{suffix}-tx",
+            book_id=book_id,
+            command_id=str(uuid4()),
+            transaction_id=transaction_id,
+            expected_stream_version=0,
+            kind="standard",
+            effective_at="2026-07-14T12:30:00Z",
+            description_ref=None,
+            external_reference=[],
+            posting=[
+                f"{uuid4()}:{debit_account_id}:USD:debit:25.00",
+                f"{uuid4()}:{credit_account_id}:USD:credit:25.00",
+            ],
+            idempotency_key=unique("cli-post"),
+        ),
+    )
+    assert status == 201
+    assert posted == {
+        "transaction_id": transaction_id,
+        "as_of_book_position": 1,
+    }
+
+    status, journal = run_cli_command(
+        backend_client,
+        Namespace(
+            command="tx",
+            tx_command="list",
+            book_id=book_id,
+            limit=10,
+            cursor=None,
+            as_of_book_position=1,
         ),
     )
     assert status == 200
-    transaction_id = tx_data["transaction"]["transaction_id"]
-
-    status, tx_list = run_cli_command(
-        backend_client,
-        Namespace(command="tx", tx_command="list", account_id=cash_id, category_id=None, limit=10),
-    )
-    assert status == 200
-    assert any(tx["transaction_id"] == transaction_id for tx in tx_list["transactions"])
-
-    status, balance = run_cli_command(
-        backend_client,
-        Namespace(command="account", account_command="balance", account_id=cash_id, include_drafts=False),
-    )
-    assert status == 200
-    assert balance["official_balance"]["amount"] == "75"
-
-def test_cli_explicit_idempotency_contract(backend_client: BackendApiClient):
-    suffix = unique(f"{backend_client.name}-cli-idem")
-    key = f"{suffix}-account"
-    args = account_create_args(name=f"{suffix} Cash", currency="USD", opening_balance="10", key=key)
-
-    first_status, first_data = run_cli_command(backend_client, args)
-    replay_status, replay_data = run_cli_command(backend_client, args)
-    conflict_status, conflict_data = run_cli_command(
-        backend_client,
-        account_create_args(name=f"{suffix} Different", currency="USD", opening_balance="10", key=key),
-    )
-
-    assert first_status == 200
-    assert replay_status == 200
-    assert replay_data["idempotent_replay"] is True
-    assert replay_data["account"]["account_id"] == first_data["account"]["account_id"]
-    assert conflict_status == 409
-    assert "idempotency" in str(conflict_data).lower()
+    assert journal["items"][0]["transaction_id"] == transaction_id
+    assert [posting["units"] for posting in journal["items"][0]["postings"]] == [
+        "2500",
+        "2500",
+    ]
 
 
-def test_cli_requester_auth_contract(backend_client: BackendApiClient):
-    suffix = unique(f"{backend_client.name}-cli-auth")
-    args = account_create_args(name=f"{suffix} Cash", key=f"{suffix}-cash")
+def test_cli_preserves_amount_strings_and_explicit_idempotency_keys() -> None:
+    calls: list[tuple[str, str, dict[str, Any] | None, str | None]] = []
+
+    def requester(
+        _config: CliConfig,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None,
+        key: str | None,
+    ) -> tuple[int, Any]:
+        calls.append((method, path, payload, key))
+        return 201, {"ok": True}
+
+    amount = "00012.3400"
+    key = "caller-owned-idempotency-key"
+    book_id = str(uuid4())
     result = dispatch_api_command(
-        args,
+        Namespace(
+            command="tx",
+            tx_command="record",
+            book_id=book_id,
+            command_id=str(uuid4()),
+            transaction_id=str(uuid4()),
+            expected_stream_version=0,
+            kind="standard",
+            effective_at="2026-07-14T12:30:00Z",
+            description_ref=None,
+            external_reference=[],
+            posting=[
+                f"{uuid4()}:{uuid4()}:USD:debit:{amount}",
+                f"{uuid4()}:{uuid4()}:USD:credit:{amount}",
+            ],
+            idempotency_key=key,
+        ),
+        CliConfig(base_url="http://testserver", token="credential"),
+        requester,
+    )
+
+    assert result == (201, {"ok": True})
+    assert calls[0][0:2] == (
+        "POST",
+        f"/api/v2/books/{book_id}/journal/transactions",
+    )
+    assert calls[0][2] is not None
+    assert [posting["amount"] for posting in calls[0][2]["postings"]] == [
+        amount,
+        amount,
+    ]
+    assert calls[0][3] == key
+
+
+def test_cli_requester_auth_contract(
+    backend_client: BackendApiClient,
+) -> None:
+    result = dispatch_api_command(
+        Namespace(
+            command="book",
+            book_command="create",
+            book_id=str(uuid4()),
+            name="Unauthenticated",
+            base_asset_code=None,
+        ),
         CliConfig(base_url=f"contract://{backend_client.name}", token=None),
         requester_for_backend(backend_client),
     )
@@ -128,4 +205,4 @@ def test_cli_requester_auth_contract(backend_client: BackendApiClient):
     assert result is not None
     status, data = result
     assert status == 401
-    assert "detail" in data
+    assert data == {"detail": "authentication is required"}

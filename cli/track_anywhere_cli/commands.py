@@ -4,10 +4,13 @@ from argparse import Namespace
 from typing import Any, Callable
 
 from .command_catalog import CATALOG_COMMAND_HANDLERS, infer_catalog_command_path
-from .command_investment import INVESTMENT_COMMAND_HANDLERS, infer_investment_command_path
+from .command_investment import (
+    INVESTMENT_COMMAND_HANDLERS,
+    infer_investment_command_path,
+)
 from .command_ledger import LEDGER_COMMAND_HANDLERS, infer_ledger_command_path
-from .command_payment import PAYMENT_COMMAND_HANDLERS, infer_payment_command_path
-from .command_recurring import RECURRING_COMMAND_HANDLERS, infer_recurring_command_path
+from .command_payment import PAYMENT_COMMAND_HANDLERS
+from .command_recurring import RECURRING_COMMAND_HANDLERS
 from .command_system import SYSTEM_COMMAND_HANDLERS, infer_system_command_path
 from .config import CliConfig
 from .output import CommandResult
@@ -16,108 +19,83 @@ from .runtime import CliCommandSpec, Requester, RuntimeContext
 
 DispatcherResult = tuple[int, Any]
 ApiCommandHandler = Callable[[Namespace, CliConfig, Requester], DispatcherResult]
+
 PUBLIC_COMMAND_PATHS = (
-    "account.adjust",
-    "account.balance",
+    "account.close",
     "account.create",
-    "account.find",
-    "account.list",
-    "account.show",
-    "account.update",
-    "auth.dev_token",
+    "asset.create",
     "auth.login",
     "auth.status",
-    "balance",
-    "balance.adjust",
-    "capture",
-    "category.create",
-    "category.ensure",
-    "category.find",
-    "category.list",
-    "category.show",
-    "category.update",
-    "counterparty.create",
-    "counterparty.ensure",
-    "counterparty.list",
-    "counterparty.show",
-    "credit_card.list",
-    "credit_card.show",
-    "credit_card.update",
-    "data.backup",
-    "draft.confirm",
-    "expense.record",
-    "financial_account.balance",
-    "financial_account.list",
-    "financial_account.show",
-    "income.record",
-    "investment.event",
-    "investment.performance",
+    "book.balances",
+    "book.create",
+    "book.reporting_lines",
     "capabilities",
-    "payment.instrument.create",
-    "payment.instrument.list",
-    "payment.instrument.show",
-    "payment.profile.create",
-    "payment.profile.list",
-    "payment.profile.status",
-    "recurring.create",
-    "recurring.draft_due",
-    "recurring.list",
-    "recurring.reminders",
-    "recurring.show",
-    "recurring.update",
+    "category.create",
+    "investment.acquire",
+    "investment.dispose",
     "release.bump",
-    "summary.accounts",
-    "summary.categories",
-    "system.posting_semantics.audit",
-    "system.posting_semantics.cutover_plan",
-    "system.posting_semantics.resolve",
-    "system.posting_semantics.rewrite",
-    "system.status",
+    "schema",
+    "system.health",
+    "system.ready",
+    "tx.classify",
+    "tx.clear_classification",
+    "tx.correct",
+    "tx.correct_reference",
+    "tx.fx",
     "tx.list",
     "tx.record",
-    "tx.reclassify",
     "tx.reverse",
-    "tx.show",
-    "tx.snapshot",
-    "user.create",
-    "user.list",
-    "schema",
     "version",
 )
-LOCAL_COMMAND_PATHS = frozenset({"auth.dev_token", "auth.login", "auth.status", "capabilities", "data.backup", "release.bump", "schema", "version"})
-API_COMMAND_PATHS = tuple(command_path for command_path in PUBLIC_COMMAND_PATHS if command_path not in LOCAL_COMMAND_PATHS)
-MUTATING_COMMAND_PATHS = frozenset(
+
+LOCAL_COMMAND_PATHS = frozenset(
     {
-        "account.adjust",
-        "account.create",
-        "account.update",
-        "balance.adjust",
-        "capture",
-        "category.create",
-        "category.ensure",
-        "category.update",
-        "counterparty.create",
-        "counterparty.ensure",
-        "credit_card.update",
-        "draft.confirm",
-        "expense.record",
-        "income.record",
-        "investment.event",
-        "payment.instrument.create",
-        "payment.profile.create",
-        "recurring.create",
-        "recurring.draft_due",
-        "recurring.update",
+        "auth.login",
+        "auth.status",
+        "capabilities",
         "release.bump",
-        "system.posting_semantics.resolve",
-        "system.posting_semantics.rewrite",
-        "tx.record",
-        "tx.reclassify",
-        "tx.reverse",
-        "user.create",
+        "schema",
+        "version",
     }
 )
-
+UNAUTHENTICATED_COMMAND_PATHS = frozenset({"system.health", "system.ready"})
+API_COMMAND_PATHS = tuple(
+    command_path
+    for command_path in PUBLIC_COMMAND_PATHS
+    if command_path not in LOCAL_COMMAND_PATHS
+)
+MUTATING_COMMAND_PATHS = frozenset(
+    {
+        "account.close",
+        "account.create",
+        "asset.create",
+        "book.create",
+        "category.create",
+        "investment.acquire",
+        "investment.dispose",
+        "release.bump",
+        "tx.classify",
+        "tx.clear_classification",
+        "tx.correct",
+        "tx.correct_reference",
+        "tx.fx",
+        "tx.record",
+        "tx.reverse",
+    }
+)
+IDEMPOTENCY_KEY_COMMAND_PATHS = frozenset(
+    {
+        "investment.acquire",
+        "investment.dispose",
+        "tx.classify",
+        "tx.clear_classification",
+        "tx.correct",
+        "tx.correct_reference",
+        "tx.fx",
+        "tx.record",
+        "tx.reverse",
+    }
+)
 
 API_COMMAND_HANDLERS: dict[str, ApiCommandHandler] = {
     **SYSTEM_COMMAND_HANDLERS,
@@ -128,7 +106,6 @@ API_COMMAND_HANDLERS: dict[str, ApiCommandHandler] = {
     **RECURRING_COMMAND_HANDLERS,
 }
 
-
 missing_api_handlers = sorted(set(API_COMMAND_PATHS) - set(API_COMMAND_HANDLERS))
 if missing_api_handlers:
     missing_list = ", ".join(missing_api_handlers)
@@ -136,11 +113,23 @@ if missing_api_handlers:
 
 
 def _command_not_found(command_path: str) -> CommandResult:
-    return CommandResult(status=404, data={"detail": f"No command handler found for '{command_path}'."})
+    return CommandResult(
+        status=404,
+        data={"detail": f"No command handler found for '{command_path}'."},
+    )
 
 
-def _execute_api_command(command_path: str, args: Namespace, context: RuntimeContext) -> CommandResult:
-    result = dispatch_api_command(args, context.config, context.requester, command_path=command_path)
+def _execute_api_command(
+    command_path: str,
+    args: Namespace,
+    context: RuntimeContext,
+) -> CommandResult:
+    result = dispatch_api_command(
+        args,
+        context.config,
+        context.requester,
+        command_path=command_path,
+    )
     if result is None:
         return _command_not_found(command_path)
     status, data = result
@@ -150,16 +139,16 @@ def _execute_api_command(command_path: str, args: Namespace, context: RuntimeCon
 def _api_command_spec(command_path: str) -> CliCommandSpec[Namespace]:
     return CliCommandSpec(
         command_path=command_path,
-        requires_auth=True,
-        execute=lambda args, context, _path=command_path: _execute_api_command(_path, args, context),
+        requires_auth=command_path not in UNAUTHENTICATED_COMMAND_PATHS,
+        execute=lambda args, context, _path=command_path: _execute_api_command(
+            _path, args, context
+        ),
     )
 
 
-def _build_public_command_specs() -> dict[str, CliCommandSpec[Namespace]]:
-    return {command_path: _api_command_spec(command_path) for command_path in API_COMMAND_PATHS}
-
-
-PUBLIC_COMMAND_SPECS = _build_public_command_specs()
+PUBLIC_COMMAND_SPECS = {
+    command_path: _api_command_spec(command_path) for command_path in API_COMMAND_PATHS
+}
 
 
 def infer_command_path(args: Namespace) -> str | None:
@@ -171,8 +160,6 @@ def infer_command_path(args: Namespace) -> str | None:
         infer_catalog_command_path,
         infer_investment_command_path,
         infer_ledger_command_path,
-        infer_payment_command_path,
-        infer_recurring_command_path,
     ):
         command_path = inferer(args)
         if command_path is not None:

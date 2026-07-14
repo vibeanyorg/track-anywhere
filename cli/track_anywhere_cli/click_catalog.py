@@ -6,359 +6,168 @@ from .click_common import common_args, output_options, pass_state, run_api
 
 
 def register(root: click.Group) -> None:
-    _register_summary(root)
-    _register_user(root)
-    _register_category(root)
-    _register_credit_card(root)
-    _register_financial_account(root)
-    _register_account(root)
+    _register_books(root)
+    _register_assets(root)
+    _register_accounts(root)
+    _register_categories(root)
 
 
-def _register_summary(root: click.Group) -> None:
+def _register_books(root: click.Group) -> None:
     @root.group()
-    def summary():
-        """Show account and category summaries."""
+    def book() -> None:
+        """Create and query V2 Books."""
 
-    @summary.command("accounts")
-    @click.option("--group-by", default="subtype")
-    @click.option("--currency")
-    @click.option("--institution-type")
-    @click.option("--include-system", is_flag=True)
+    @book.command("create")
+    @click.argument("book_id")
+    @click.option("--name", required=True)
+    @click.option("--base-asset-code")
     @output_options
     @pass_state
-    def accounts(state, json_mode, no_color, **kwargs):
-        args = common_args(state, json_mode, no_color, command="summary", summary_command="accounts", **kwargs)
-        return run_api(args, state=state, command_path="summary.accounts")
+    def create_book(state, json_mode, no_color, book_id, name, base_asset_code):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="book",
+            book_command="create",
+            book_id=book_id,
+            name=name,
+            base_asset_code=base_asset_code,
+        )
+        return run_api(args, state=state, command_path="book.create")
 
-    @summary.command("categories")
-    @click.option("--kind", type=click.Choice(["income", "expense"]))
-    @click.option("--currency")
+    @book.command("balances")
+    @click.argument("book_id")
+    @click.option("--as-of-book-position", type=int)
     @output_options
     @pass_state
-    def categories(state, json_mode, no_color, kind, currency):
-        args = common_args(state, json_mode, no_color, command="summary", summary_command="categories", kind=kind, currency=currency)
-        return run_api(args, state=state, command_path="summary.categories")
+    def balances(state, json_mode, no_color, book_id, as_of_book_position):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="book",
+            book_command="balances",
+            book_id=book_id,
+            as_of_book_position=as_of_book_position,
+        )
+        return run_api(args, state=state, command_path="book.balances")
+
+    @book.command("reporting-lines")
+    @click.argument("book_id")
+    @click.option("--as-of-book-position", type=int, required=True)
+    @output_options
+    @pass_state
+    def reporting_lines(
+        state,
+        json_mode,
+        no_color,
+        book_id,
+        as_of_book_position,
+    ):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="book",
+            book_command="reporting-lines",
+            book_id=book_id,
+            as_of_book_position=as_of_book_position,
+        )
+        return run_api(args, state=state, command_path="book.reporting_lines")
 
 
-def _register_user(root: click.Group) -> None:
+def _register_assets(root: click.Group) -> None:
     @root.group()
-    def user():
-        """Manage users."""
+    def asset() -> None:
+        """Create V2 assets."""
 
-    @user.command("create")
-    @click.argument("username")
-    @click.option("--display-name")
-    @click.option("--idempotency-key")
+    @asset.command("create")
+    @click.argument("book_id")
+    @click.argument("asset_code")
+    @click.option("--kind", required=True)
+    @click.option("--ledger-scale", type=int, required=True)
+    @click.option("--input-scale", type=int, required=True)
+    @click.option("--display-scale", type=int, required=True)
+    @click.option("--name", required=True)
     @output_options
     @pass_state
-    def create_user(state, json_mode, no_color, username, display_name, idempotency_key):
-        args = common_args(state, json_mode, no_color, command="user", user_command="create", username=username, display_name=display_name, idempotency_key=idempotency_key)
-        return run_api(args, state=state, command_path="user.create")
+    def create_asset(state, json_mode, no_color, **values):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="asset",
+            asset_command="create",
+            **values,
+        )
+        return run_api(args, state=state, command_path="asset.create")
 
-    @user.command("list")
-    @output_options
-    @pass_state
-    def list_users(state, json_mode, no_color):
-        args = common_args(state, json_mode, no_color, command="user", user_command="list")
-        return run_api(args, state=state, command_path="user.list")
 
-
-def _register_category(root: click.Group) -> None:
+def _register_accounts(root: click.Group) -> None:
     @root.group()
-    def category():
-        """Manage categories."""
+    def account() -> None:
+        """Create and close V2 accounts."""
 
-    for name in ("list", "find"):
-        _category_query_command(category, name)
-
-    @category.command("ensure")
-    @click.option("--kind", type=click.Choice(["income", "expense"]), required=True)
-    @click.option("--path", "category_path", required=True)
-    @click.option("--idempotency-key")
+    @account.command("create")
+    @click.argument("book_id")
+    @click.argument("account_id")
+    @click.option("--asset-code", required=True)
+    @click.option("--type", "account_type", required=True)
+    @click.option("--name", required=True)
+    @click.option("--system-role")
     @output_options
     @pass_state
-    def ensure_category(state, json_mode, no_color, kind, category_path, idempotency_key):
-        args = common_args(state, json_mode, no_color, command="category", category_command="ensure", kind=kind, path=category_path, idempotency_key=idempotency_key)
-        return run_api(args, state=state, command_path="category.ensure")
+    def create_account(state, json_mode, no_color, **values):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="account",
+            account_command="create",
+            **values,
+        )
+        return run_api(args, state=state, command_path="account.create")
+
+    @account.command("close")
+    @click.argument("book_id")
+    @click.argument("account_id")
+    @output_options
+    @pass_state
+    def close_account(state, json_mode, no_color, book_id, account_id):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="account",
+            account_command="close",
+            book_id=book_id,
+            account_id=account_id,
+        )
+        return run_api(args, state=state, command_path="account.close")
+
+
+def _register_categories(root: click.Group) -> None:
+    @root.group()
+    def category() -> None:
+        """Create V2 reporting categories."""
 
     @category.command("create")
-    @click.argument("name")
-    @click.option("--kind", type=click.Choice(["income", "expense"]), required=True)
-    @click.option("--parent-id")
-    @click.option("--idempotency-key")
-    @output_options
-    @pass_state
-    def create_category(state, json_mode, no_color, name, kind, parent_id, idempotency_key):
-        args = common_args(state, json_mode, no_color, command="category", category_command="create", name=name, kind=kind, parent_id=parent_id, idempotency_key=idempotency_key)
-        return run_api(args, state=state, command_path="category.create")
-
-    @category.command("show")
+    @click.argument("book_id")
     @click.argument("category_id")
+    @click.option("--category-version-id", required=True)
+    @click.option("--name", required=True)
+    @click.option("--parent-category-id")
+    @click.option("--change-reason-code", required=True)
     @output_options
     @pass_state
-    def show_category(state, json_mode, no_color, category_id):
-        args = common_args(state, json_mode, no_color, command="category", category_command="show", category_id=category_id)
-        return run_api(args, state=state, command_path="category.show")
-
-    @category.command("update")
-    @click.argument("category_id")
-    @click.option("--name")
-    @click.option("--parent-id")
-    @click.option("--icon")
-    @click.option("--color")
-    @click.option("--sort-order", type=int)
-    @click.option("--status", type=click.Choice(["active", "hidden", "archived"]))
-    @click.option("--idempotency-key")
-    @output_options
-    @pass_state
-    def update_category(state, json_mode, no_color, category_id, **kwargs):
+    def create_category(state, json_mode, no_color, **values):
         args = common_args(
             state,
             json_mode,
             no_color,
             command="category",
-            category_command="update",
-            category_id=category_id,
-            **kwargs,
+            category_command="create",
+            **values,
         )
-        return run_api(args, state=state, command_path="category.update")
-
-
-def _category_query_command(group: click.Group, command_name: str) -> None:
-    @group.command(command_name)
-    @click.option("--kind", type=click.Choice(["income", "expense"]), required=command_name == "find")
-    @click.option("--name")
-    @click.option("--path", "category_path")
-    @click.option("--parent-id")
-    @output_options
-    @pass_state
-    def query_category(state, json_mode, no_color, kind, name, category_path, parent_id):
-        if command_name == "find" and not name and not category_path:
-            raise click.UsageError("category find requires --name or --path")
-        args = common_args(state, json_mode, no_color, command="category", category_command=command_name, kind=kind, name=name, path=category_path, parent_id=parent_id)
-        return run_api(args, state=state, command_path=f"category.{command_name}")
-
-
-def _register_credit_card(root: click.Group) -> None:
-    @root.group("credit-card")
-    def credit_card():
-        """Manage credit card profiles."""
-
-    @credit_card.command("list")
-    @output_options
-    @pass_state
-    def list_cards(state, json_mode, no_color):
-        args = common_args(state, json_mode, no_color, command="credit-card", credit_card_command="list")
-        return run_api(args, state=state, command_path="credit_card.list")
-
-    @credit_card.command("show")
-    @click.argument("account_id")
-    @output_options
-    @pass_state
-    def show_card(state, json_mode, no_color, account_id):
-        args = common_args(state, json_mode, no_color, command="credit-card", credit_card_command="show", account_id=account_id)
-        return run_api(args, state=state, command_path="credit_card.show")
-
-    @credit_card.command("update")
-    @click.argument("account_id")
-    @click.option("--credit-limit")
-    @click.option("--available-credit")
-    @click.option("--statement-day", type=int)
-    @click.option("--due-day", type=int)
-    @click.option("--annual-fee")
-    @click.option("--idempotency-key")
-    @output_options
-    @pass_state
-    def update_card(state, json_mode, no_color, account_id, **kwargs):
-        args = common_args(state, json_mode, no_color, command="credit-card", credit_card_command="update", account_id=account_id, **kwargs)
-        return run_api(args, state=state, command_path="credit_card.update")
-
-
-def _register_financial_account(root: click.Group) -> None:
-    @root.group("financial-account")
-    def financial_account():
-        """Query user-visible financial accounts."""
-
-    @financial_account.command("list")
-    @click.option("--q")
-    @click.option("--type", "financial_account_type")
-    @click.option("--currency")
-    @click.option("--institution-type")
-    @click.option("--subtype")
-    @click.option("--institution")
-    @click.option("--status", type=click.Choice(["active"]))
-    @click.option("--include-balance", is_flag=True)
-    @output_options
-    @pass_state
-    def list_financial_accounts(state, json_mode, no_color, financial_account_type, include_balance, **kwargs):
-        args = common_args(
-            state,
-            json_mode,
-            no_color,
-            command="financial-account",
-            financial_account_command="list",
-            type=financial_account_type,
-            include_balance=include_balance,
-            **kwargs,
-        )
-        return run_api(args, state=state, command_path="financial_account.list")
-
-    @financial_account.command("show")
-    @click.argument("account_id")
-    @click.option("--include-balance", is_flag=True)
-    @output_options
-    @pass_state
-    def show_financial_account(state, json_mode, no_color, account_id, include_balance):
-        args = common_args(
-            state,
-            json_mode,
-            no_color,
-            command="financial-account",
-            financial_account_command="show",
-            account_id=account_id,
-            include_balance=include_balance,
-        )
-        return run_api(args, state=state, command_path="financial_account.show")
-
-    @financial_account.command("balance")
-    @click.argument("account_id")
-    @output_options
-    @pass_state
-    def financial_account_balance(state, json_mode, no_color, account_id):
-        args = common_args(
-            state,
-            json_mode,
-            no_color,
-            command="financial-account",
-            financial_account_command="balance",
-            account_id=account_id,
-        )
-        return run_api(args, state=state, command_path="financial_account.balance")
-
-
-def _register_account(root: click.Group) -> None:
-    @root.group()
-    def account():
-        """Manage accounts."""
-
-    _account_create_command(account)
-    _account_query_command(account, "list")
-    _account_query_command(account, "find")
-    _account_show_update_balance(account)
-    _account_create_command(root, name="account-create", command_value="account-create")
-
-
-def _account_create_command(group: click.Group, name: str = "create", command_value: str = "account") -> None:
-    @group.command(name)
-    @click.argument("name")
-    @click.option("--type", "account_type", default="asset")
-    @click.option("--currency", default="CNY")
-    @click.option(
-        "--opening-balance",
-        default="0",
-        help=(
-            "Signed natural opening balance. For liability accounts, positive means initial debt; "
-            "negative means initial overpayment. Stored as debit/credit postings."
-        ),
-    )
-    @click.option("--institution-type")
-    @click.option("--subtype")
-    @click.option("--institution")
-    @click.option("--idempotency-key")
-    @output_options
-    @pass_state
-    def create_account(state, json_mode, no_color, account_type, **kwargs):
-        account_command = "create" if command_value == "account" else None
-        args = common_args(
-            state,
-            json_mode,
-            no_color,
-            command=command_value,
-            account_command=account_command,
-            type=account_type,
-            **kwargs,
-        )
-        return run_api(args, state=state, command_path="account.create")
-
-
-def _account_query_command(group: click.Group, command_name: str) -> None:
-    @group.command(command_name)
-    @click.option("--name", required=command_name == "find")
-    @click.option("--type", "account_type")
-    @click.option("--currency")
-    @click.option("--institution-type")
-    @click.option("--subtype")
-    @click.option("--institution")
-    @output_options
-    @pass_state
-    def query_accounts(state, json_mode, no_color, account_type, **kwargs):
-        args = common_args(
-            state,
-            json_mode,
-            no_color,
-            command="account",
-            account_command=command_name,
-            type=account_type,
-            **kwargs,
-        )
-        return run_api(args, state=state, command_path=f"account.{command_name}")
-
-
-def _account_show_update_balance(group: click.Group) -> None:
-    @group.command("show")
-    @click.argument("account_id")
-    @output_options
-    @pass_state
-    def show_account(state, json_mode, no_color, account_id):
-        args = common_args(state, json_mode, no_color, command="account", account_command="show", account_id=account_id)
-        return run_api(args, state=state, command_path="account.show")
-
-    @group.command("update")
-    @click.argument("account_id")
-    @click.option("--institution-type")
-    @click.option("--subtype")
-    @click.option("--institution")
-    @click.option("--idempotency-key")
-    @output_options
-    @pass_state
-    def update_account(state, json_mode, no_color, account_id, **kwargs):
-        args = common_args(state, json_mode, no_color, command="account", account_command="update", account_id=account_id, **kwargs)
-        return run_api(args, state=state, command_path="account.update")
-
-    @group.command("balance")
-    @click.argument("account_id")
-    @click.option("--include-drafts", is_flag=True)
-    @output_options
-    @pass_state
-    def account_balance(state, json_mode, no_color, account_id, include_drafts):
-        args = common_args(
-            state,
-            json_mode,
-            no_color,
-            command="account",
-            account_command="balance",
-            account_id=account_id,
-            include_drafts=include_drafts,
-        )
-        return run_api(args, state=state, command_path="account.balance")
-
-    @group.command("adjust")
-    @click.argument("account_id")
-    @click.option(
-        "--amount",
-        required=True,
-        help=(
-            "Signed natural balance delta. For liability accounts, positive increases debt; "
-            "negative decreases debt or creates overpayment. Stored as debit/credit postings."
-        ),
-    )
-    @click.option("--purpose", required=True)
-    @click.option("--memo", default="")
-    @click.option("--occurred-at")
-    @click.option("--currency", default="CNY")
-    @click.option("--idempotency-key")
-    @output_options
-    @pass_state
-    def adjust_account(state, json_mode, no_color, account_id, **kwargs):
-        args = common_args(state, json_mode, no_color, command="account", account_command="adjust", account_id=account_id, **kwargs)
-        return run_api(args, state=state, command_path="account.adjust")
+        return run_api(args, state=state, command_path="category.create")

@@ -20,7 +20,7 @@ export function CliCallback() {
     return `/auth/login?next=${encodeURIComponent(path)}`;
   }, [searchParams]);
 
-  const displayName = session.identity?.display_name || session.identity?.email || "You";
+  const displayName = session.identity?.display_name || "You";
 
   useEffect(() => {
     if (hasCode && typeof window !== "undefined") {
@@ -33,7 +33,7 @@ export function CliCallback() {
     setError("");
     try {
       const payload = buildAuthorizationPayload(searchParams);
-      const response = await fetch("/api/v1/oauth/authorize", {
+      const response = await fetch("/api/v2/oauth/authorize", {
         method: "POST",
         credentials: "include",
         headers: {
@@ -108,13 +108,7 @@ export function CliCallback() {
         ) : (
           <div className="auth-form-switch">
             <Link className="text-button text-button-strong" href={loginNext}>
-              Sign in
-            </Link>
-            <Link
-              className="text-button"
-              href={`/auth/signup?next=${encodeURIComponent(`/auth/callback?${searchParams.toString()}`)}`}
-            >
-              Create account
+              Sign in with an API key
             </Link>
           </div>
         )}

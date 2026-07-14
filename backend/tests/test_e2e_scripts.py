@@ -14,15 +14,25 @@ def test_docker_postgres_e2e_fails_fast_when_docker_cli_hangs():
     assert "def test_docker_postgres_e2e_fails_fast" not in source
     assert "subprocess.run(command, timeout=timeout_seconds)" in source
     assert 'run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker version' in source
-    assert 'run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" up' in source
-    assert 'run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" down' in source
+    assert (
+        'run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" up'
+        in source
+    )
+    assert (
+        'run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" down' in source
+    )
 
 
-def test_stable_smoke_bounds_http_and_cli_commands():
+def test_stable_smoke_is_pure_http_v2_and_points_to_full_e2e_coverage():
     source = (REPO_ROOT / "scripts/stable-smoke.sh").read_text()
 
     assert "HTTP_TIMEOUT_SECONDS" in source
-    assert "CLI_TIMEOUT_SECONDS" in source
     assert "subprocess.run(command, timeout=timeout_seconds)" in source
     assert 'run_with_timeout "$HTTP_TIMEOUT_SECONDS" curl' in source
-    assert "run_ta_with_timeout --base-url" in source
+    assert "CLI_TIMEOUT_SECONDS" not in source
+    assert "run_ta_with_timeout" not in source
+    assert "ta --base-url" not in source
+    assert "run_http health /api/v2/health" in source
+    assert "run_http ready /api/v2/ready" in source
+    assert "post/query/classify/reverse" in source
+    assert "scripts/e2e-docker-postgres.sh" in source

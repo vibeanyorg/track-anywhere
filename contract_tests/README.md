@@ -1,26 +1,21 @@
-# Contract Conformance Tests
+# V2 contract conformance tests
 
-These tests prove the supported backend and CLI preserve the same external
-behavior as the public contract evolves.
+These tests exercise the public V2 HTTP contract and the supported CLI
+transport against an isolated PostgreSQL 17 database.
 
 Current scope:
 
-- `/api/v1` HTTP behavior for the FastAPI backend.
-- CLI command behavior through the same command handler layer used by `ta`.
-- Route/method contract against the public API snapshot.
-- Auth, logout, session cookies, idempotency, validation errors, and core
-  ledger flows.
-
-Planned extension points:
-
-- MCP conformance: snapshot tool schemas and run the same golden workflows
-  through each MCP adapter once MCP exists in this repository.
+- health/readiness and the reviewed V2 OpenAPI route snapshot;
+- catalog creation plus journal post/query/classify/reverse behavior;
+- exact decimal-string and explicit idempotency-key transport;
+- API-key browser-session exchange and token status;
+- supported CLI handlers through the same request/response adapter used by
+  `ta`.
 
 Rules:
 
-- Tests in this directory must not import route handlers directly.
-- Tests should use the `BackendApiClient` interface from `api_clients.py`.
-- CLI tests should use `requester_for_backend` so command handlers exercise the
-  selected backend through the same request/response contract.
-- Assertions should compare observable contract behavior, not implementation
-  internals such as generated IDs or framework-specific exception classes.
+- the fixture creates a fresh V2 database through `PostgresDatabaseFactory`;
+- it installs the database's runtime-role URL before importing the app/client;
+- there is no SQLite or in-memory database fallback;
+- tests use `BackendApiClient` rather than importing route handlers;
+- assertions cover observable contract behavior, not framework internals.

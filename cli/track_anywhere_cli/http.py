@@ -20,8 +20,26 @@ from .exit_codes import (
     EXIT_VALIDATION,
 )
 
+V2_API_PREFIX = "/api/v2/"
 
-def request_json(config: CliConfig, method: str, path: str, payload: dict[str, Any] | None = None, key: str | None = None) -> tuple[int, Any]:
+
+def request_json(
+    config: CliConfig,
+    method: str,
+    path: str,
+    payload: dict[str, Any] | None = None,
+    key: str | None = None,
+) -> tuple[int, Any]:
+    if not path.startswith(V2_API_PREFIX):
+        return 400, {
+            "detail": "The CLI only permits API V2 routes.",
+            "error": {
+                "code": "unsupported_api_route",
+                "category": "security",
+                "message": "The CLI only permits API V2 routes.",
+                "retryable": False,
+            },
+        }
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Accept": "application/json"}
     if body is not None:
@@ -30,7 +48,9 @@ def request_json(config: CliConfig, method: str, path: str, payload: dict[str, A
         headers["Authorization"] = f"Bearer {config.token}"
     if key:
         headers["X-Idempotency-Key"] = key
-    req = urllib.request.Request(f"{config.base_url}{path}", data=body, headers=headers, method=method)
+    req = urllib.request.Request(
+        f"{config.base_url}{path}", data=body, headers=headers, method=method
+    )
     try:
         with urllib.request.urlopen(req, timeout=10) as response:
             try:
@@ -50,7 +70,9 @@ def request_json(config: CliConfig, method: str, path: str, payload: dict[str, A
         return exc.code, parsed
     except (TimeoutError, socket.timeout) as exc:
         return 504, _external_error_payload(
-            code="write_outcome_unknown" if method.upper() not in {"GET", "HEAD", "OPTIONS"} else "api_timeout",
+            code="write_outcome_unknown"
+            if method.upper() not in {"GET", "HEAD", "OPTIONS"}
+            else "api_timeout",
             message=(
                 "API write request timed out before a response; outcome is unknown. "
                 "Do not retry with a new idempotency key."
@@ -64,7 +86,9 @@ def request_json(config: CliConfig, method: str, path: str, payload: dict[str, A
         reason = getattr(exc, "reason", None)
         if isinstance(reason, socket.timeout):
             return 504, _external_error_payload(
-                code="write_outcome_unknown" if method.upper() not in {"GET", "HEAD", "OPTIONS"} else "api_timeout",
+                code="write_outcome_unknown"
+                if method.upper() not in {"GET", "HEAD", "OPTIONS"}
+                else "api_timeout",
                 message=(
                     "API write request timed out before a response; outcome is unknown. "
                     "Do not retry with a new idempotency key."
@@ -83,7 +107,9 @@ def request_json(config: CliConfig, method: str, path: str, payload: dict[str, A
 
 
 def with_query(path: str, params: dict[str, Any]) -> str:
-    query = urllib.parse.urlencode({key: value for key, value in params.items() if value not in (None, "")})
+    query = urllib.parse.urlencode(
+        {key: value for key, value in params.items() if value not in (None, "")}
+    )
     return f"{path}?{query}" if query else path
 
 
@@ -108,7 +134,9 @@ def exit_for_status(status: int, detail: Any) -> int:
     return EXIT_VALIDATION
 
 
-def _external_error_payload(*, code: str, message: str, retryable: bool, detail: dict[str, Any]) -> dict[str, Any]:
+def _external_error_payload(
+    *, code: str, message: str, retryable: bool, detail: dict[str, Any]
+) -> dict[str, Any]:
     return {
         "detail": message,
         "error": {

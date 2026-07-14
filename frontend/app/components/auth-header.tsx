@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { useAuth } from "./auth-provider";
-import { accountUrl } from "./auth-links";
 import { readJson, responseError } from "../lib/http";
 
 export function AuthHeader() {
@@ -13,7 +12,7 @@ export function AuthHeader() {
 
   const displayName = useMemo(() => {
     const identity = session.identity;
-    return identity?.display_name || identity?.name || identity?.email || "You";
+    return identity?.display_name || "You";
   }, [session]);
 
   async function signInWithKey() {
@@ -25,7 +24,7 @@ export function AuthHeader() {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch("/api/v1/auth/session/api-key", {
+      const response = await fetch("/api/v2/auth/session/api-key", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -44,31 +43,21 @@ export function AuthHeader() {
     }
   }
 
-  async function tryItOut() {
-    setBusy(true);
-    setError("");
-    try {
-      const response = await fetch("/api/v1/session/dev-local", {
-        method: "POST",
-        credentials: "include"
-      });
-      if (!response.ok) {
-        const payload = await readJson<{ detail?: string }>(response);
-        throw new Error(responseError(payload, "Couldn't open a guest session."));
-      }
-      notifyChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't open a guest session.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function signOut() {
     setBusy(true);
     setError("");
     try {
-      await fetch("/api/v1/auth/logout", { method: "POST", credentials: "include" });
+      const response = await fetch("/api/v2/auth/logout", {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-CSRF-Token": readCookie("ta_csrf") }
+      });
+      if (!response.ok) {
+        const payload = await readJson<{ detail?: string }>(response);
+        throw new Error(responseError(payload, "Couldn't sign out."));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't sign out.");
     } finally {
       notifyChanged();
       setBusy(false);
@@ -88,10 +77,7 @@ export function AuthHeader() {
 
         {session.authenticated ? (
           <>
-            <span className="identity-chip">
-              {displayName}
-              {session.identity?.role ? <small>{session.identity.role}</small> : null}
-            </span>
+            <span className="identity-chip">{displayName}</span>
             <button className="text-button" type="button" onClick={signOut} disabled={busy}>
               Sign out
             </button>
@@ -100,12 +86,6 @@ export function AuthHeader() {
           <span className="auth-state">Loading…</span>
         ) : (
           <>
-            <a className="text-button text-button-strong" href={accountUrl("login")}>
-              Sign in
-            </a>
-            <a className="text-button" href={accountUrl("signup")}>
-              Create account
-            </a>
             <input
               className="auth-input"
               aria-label="API key"
@@ -125,12 +105,17 @@ export function AuthHeader() {
             <button className="text-button" type="button" onClick={signInWithKey} disabled={busy}>
               Use key
             </button>
-            <button className="text-button" type="button" onClick={tryItOut} disabled={busy}>
-              Try without signing up
-            </button>
           </>
         )}
       </div>
     </header>
   );
+}
+
+function readCookie(name: string) {
+  const value = document.cookie
+    .split("; ")
+    .find((item) => item.startsWith(`${name}=`))
+    ?.split("=")[1];
+  return value ? decodeURIComponent(value) : "";
 }

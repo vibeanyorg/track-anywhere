@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  normalizeSameSiteRequestHeaders,
+  rewriteUpstreamJsonUrls,
+  rewriteUpstreamLocation
+} from "../../../lib/proxy-origin.mjs";
 
 const HOP_BY_HOP = new Set([
   "connection",
@@ -39,15 +44,20 @@ export async function HEAD(request: NextRequest, context: RouteContext) {
 async function proxy(request: NextRequest, context: RouteContext) {
   const backendUrl = process.env.TRACK_ANYWHERE_BACKEND_URL ?? "http://127.0.0.1:8000";
   const { path } = await context.params;
-  const target = new URL(`/api/v1/${path.map(encodeURIComponent).join("/")}`, backendUrl);
+  const target = new URL(`/api/v2/${path.map(encodeURIComponent).join("/")}`, backendUrl);
   target.search = request.nextUrl.search;
 
-  const headers = new Headers();
+  const forwardedHeaders = new Headers();
   request.headers.forEach((value, key) => {
     const lower = key.toLowerCase();
     if (HOP_BY_HOP.has(lower) || lower === "host") return;
-    headers.set(key, value);
+    forwardedHeaders.set(key, value);
   });
+  const headers = normalizeSameSiteRequestHeaders(
+    forwardedHeaders,
+    request.nextUrl.origin,
+    target.origin
+  );
   headers.set("x-forwarded-host", request.headers.get("host") ?? "");
   headers.set("x-forwarded-proto", request.nextUrl.protocol.replace(":", ""));
 
@@ -63,14 +73,30 @@ async function proxy(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ detail: "Can't reach the server." }, { status: 502 });
   }
 
-  const responseHeaders = new Headers();
+  let responseHeaders = new Headers();
   upstream.headers.forEach((value, key) => {
     const lower = key.toLowerCase();
     if (HOP_BY_HOP.has(lower) || lower === "set-cookie") return;
     responseHeaders.set(key, value);
   });
+  responseHeaders = rewriteUpstreamLocation(
+    responseHeaders,
+    request.nextUrl.origin,
+    target.origin
+  );
 
-  const body = upstream.status === 204 || upstream.status === 304 ? null : await upstream.arrayBuffer();
+  let body: ArrayBuffer | string | null = null;
+  if (upstream.status !== 204 && upstream.status !== 304) {
+    const rawBody = await upstream.arrayBuffer();
+    const contentType = upstream.headers.get("content-type") ?? "";
+    body = contentType.toLowerCase().includes("application/json")
+      ? rewriteUpstreamJsonUrls(
+          new TextDecoder().decode(rawBody),
+          request.nextUrl.origin,
+          target.origin
+        )
+      : rawBody;
+  }
   const response = new NextResponse(body, {
     status: upstream.status,
     statusText: upstream.statusText,

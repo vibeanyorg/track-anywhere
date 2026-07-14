@@ -139,7 +139,7 @@ def test_post_requires_plain_decimal_strings_and_returns_book_position(
     assert posted.headers["Idempotency-Replayed"] == "false"
 
 
-def test_openapi_lists_every_implemented_financial_command_and_no_query_routes(
+def test_openapi_lists_every_implemented_financial_command_and_query_routes(
     pg_engine,
 ) -> None:
     from track_anywhere.api.v2.router import create_v2_router
@@ -166,4 +166,8 @@ def test_openapi_lists_every_implemented_financial_command_and_no_query_routes(
         "/api/v2/books/{book_id}/investments/lots/acquire",
         "/api/v2/books/{book_id}/investments/lots/dispose",
     } <= paths
-    assert "/api/v2/books/{book_id}/balances" not in paths
+    assert {
+        "/api/v2/books/{book_id}/balances",
+        "/api/v2/books/{book_id}/journal",
+        "/api/v2/books/{book_id}/reporting-lines",
+    } <= paths

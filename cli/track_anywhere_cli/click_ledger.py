@@ -5,311 +5,292 @@ import click
 from .click_common import common_args, output_options, pass_state, run_api
 
 
+TRANSACTION_KINDS = (
+    "standard",
+    "opening",
+    "adjustment",
+    "transfer",
+    "fx",
+    "investment_cash",
+)
+REVERSAL_REASONS = (
+    "user_correction",
+    "duplicate",
+    "import_correction",
+    "provider_reversal",
+)
+
+
 def register(root: click.Group) -> None:
-    _capture(root)
-    _draft_confirm(root)
-    _transactions(root)
-    _expense_income(root)
-    _balances(root)
+    @root.group()
+    def tx() -> None:
+        """Post and query V2 journal transactions."""
+
+    _register_record(tx)
+    _register_list(tx)
+    _register_reverse(tx)
+    _register_correct(tx)
+    _register_correct_reference(tx)
+    _register_fx(tx)
+    _register_classification(tx)
 
 
-def _capture(root: click.Group) -> None:
-    @root.command("capture")
-    @click.argument("memo")
-    @click.option("--amount")
-    @click.option("--source-account-id")
-    @click.option("--expense-account-id")
-    @click.option("--currency", default="CNY")
-    @click.option("--idempotency-key")
-    @click.option("--dry-run", is_flag=True)
-    @output_options
-    @pass_state
-    def capture(state, json_mode, no_color, **kwargs):
-        if kwargs["dry_run"]:
-            payload = {
-                "memo": kwargs["memo"],
-                "amount": kwargs["amount"],
-                "currency": kwargs["currency"],
-                "source_account_id": kwargs["source_account_id"],
-                "expense_account_id": kwargs["expense_account_id"],
-            }
-            from .renderers import emit_result
-
-            emit_result(
-                {"dry_run": True, "policy_decision": "would_create_draft", "payload": payload},
-                json_mode=state.json_mode or json_mode,
-                no_color=state.no_color or no_color,
-                command_path="capture",
-            )
-            return 0
-        args = common_args(state, json_mode, no_color, command="capture", **kwargs)
-        return run_api(args, state=state, command_path="capture")
-
-
-def _draft_confirm(root: click.Group) -> None:
-    @root.command("draft-confirm")
-    @click.argument("draft_id")
-    @click.option("--expected-version", type=int, required=True)
+def _register_record(tx: click.Group) -> None:
+    @tx.command("record")
+    @click.argument("book_id")
+    @click.argument("transaction_id")
+    @click.option("--command-id", required=True)
+    @click.option("--expected-stream-version", type=int, required=True)
+    @click.option("--kind", type=click.Choice(TRANSACTION_KINDS), required=True)
+    @click.option("--effective-at", required=True)
+    @click.option("--description-ref")
+    @click.option(
+        "--external-reference",
+        multiple=True,
+        metavar="PROVIDER:KIND:REFERENCE",
+    )
+    @click.option(
+        "--posting",
+        multiple=True,
+        required=True,
+        metavar="POSTING_ID:ACCOUNT_ID:ASSET:SIDE:AMOUNT",
+        help="Repeat for each posting. AMOUNT is sent as the exact input string.",
+    )
     @click.option("--idempotency-key")
     @output_options
     @pass_state
-    def draft_confirm(state, json_mode, no_color, draft_id, expected_version, idempotency_key):
+    def record(state, json_mode, no_color, **values):
         args = common_args(
             state,
             json_mode,
             no_color,
-            command="draft-confirm",
-            draft_id=draft_id,
-            expected_version=expected_version,
-            idempotency_key=idempotency_key,
+            command="tx",
+            tx_command="record",
+            **values,
         )
-        return run_api(args, state=state, command_path="draft.confirm")
+        return run_api(args, state=state, command_path="tx.record")
 
 
-def _transactions(root: click.Group) -> None:
-    @root.group()
-    def tx():
-        """Manage transactions."""
-
-    _record_command(tx, command="tx", tx_command="record")
-    _fx_exchange_command(tx)
-
+def _register_list(tx: click.Group) -> None:
     @tx.command("list")
-    @click.option("--account-id")
-    @click.option("--category-id")
-    @click.option("--limit", type=int, default=20)
-    @click.option("--counterparty")
+    @click.argument("book_id")
+    @click.option("--limit", type=click.IntRange(1, 100), default=50)
+    @click.option("--cursor")
+    @click.option("--as-of-book-position", type=int)
     @output_options
     @pass_state
-    def list_tx(state, json_mode, no_color, account_id, category_id, limit, counterparty):
+    def list_transactions(state, json_mode, no_color, **values):
         args = common_args(
             state,
             json_mode,
             no_color,
             command="tx",
             tx_command="list",
-            account_id=account_id,
-            category_id=category_id,
-            counterparty=counterparty,
-            limit=limit,
+            **values,
         )
         return run_api(args, state=state, command_path="tx.list")
 
-    @tx.command("show")
-    @click.argument("transaction_id")
-    @output_options
-    @pass_state
-    def show_tx(state, json_mode, no_color, transaction_id):
-        args = common_args(state, json_mode, no_color, command="tx", tx_command="show", transaction_id=transaction_id)
-        return run_api(args, state=state, command_path="tx.show")
 
-    @tx.command("snapshot")
-    @click.argument("transaction_id")
-    @click.option("--output", type=click.Path(dir_okay=False))
-    @output_options
-    @pass_state
-    def snapshot_tx(state, json_mode, no_color, transaction_id, output):
-        args = common_args(
-            state,
-            json_mode,
-            no_color,
-            command="tx",
-            tx_command="snapshot",
-            transaction_id=transaction_id,
-            output=output,
-        )
-        return run_api(args, state=state, command_path="tx.snapshot")
-
+def _register_reverse(tx: click.Group) -> None:
     @tx.command("reverse")
+    @click.argument("book_id")
     @click.argument("transaction_id")
-    @click.option("--memo", required=True)
+    @click.option("--command-id", required=True)
+    @click.option("--reversal-transaction-id", required=True)
+    @click.option("--expected-stream-version", type=int, default=0)
+    @click.option(
+        "--reason-code",
+        type=click.Choice(REVERSAL_REASONS),
+        required=True,
+    )
+    @click.option("--effective-at", required=True)
+    @click.option("--description-ref")
     @click.option("--idempotency-key")
     @output_options
     @pass_state
-    def reverse_tx(state, json_mode, no_color, transaction_id, memo, idempotency_key):
+    def reverse(state, json_mode, no_color, **values):
         args = common_args(
             state,
             json_mode,
             no_color,
             command="tx",
             tx_command="reverse",
-            transaction_id=transaction_id,
-            memo=memo,
-            idempotency_key=idempotency_key,
+            **values,
         )
         return run_api(args, state=state, command_path="tx.reverse")
 
-    @tx.command("reclassify")
+
+def _register_correct(tx: click.Group) -> None:
+    @tx.command("correct")
+    @click.argument("book_id")
     @click.argument("transaction_id")
-    @click.option("--category-id", required=True)
-    @click.option("--line-id")
-    @click.option("--memo", default="")
-    @click.option("--backup-before", is_flag=True)
-    @click.option("--backup-dir", type=click.Path(file_okay=False))
-    @click.option("--backup-label")
+    @click.option("--command-id", required=True)
+    @click.option("--reversal-transaction-id", required=True)
+    @click.option("--expected-reversal-stream-version", type=int, default=0)
+    @click.option(
+        "--reason-code",
+        type=click.Choice(REVERSAL_REASONS),
+        required=True,
+    )
+    @click.option("--reversal-effective-at", required=True)
+    @click.option("--reversal-description-ref")
+    @click.option("--replacement-transaction-id", required=True)
+    @click.option("--replacement-expected-stream-version", type=int, default=0)
+    @click.option(
+        "--replacement-kind",
+        type=click.Choice(TRANSACTION_KINDS),
+        required=True,
+    )
+    @click.option("--replacement-effective-at", required=True)
+    @click.option("--replacement-description-ref")
+    @click.option(
+        "--replacement-external-reference",
+        multiple=True,
+        metavar="PROVIDER:KIND:REFERENCE",
+    )
+    @click.option(
+        "--replacement-posting",
+        multiple=True,
+        required=True,
+        metavar="POSTING_ID:ACCOUNT_ID:ASSET:SIDE:AMOUNT",
+    )
     @click.option("--idempotency-key")
     @output_options
     @pass_state
-    def reclassify_tx(
-        state,
-        json_mode,
-        no_color,
-        transaction_id,
-        category_id,
-        line_id,
-        memo,
-        backup_before,
-        backup_dir,
-        backup_label,
-        idempotency_key,
-    ):
+    def correct(state, json_mode, no_color, **values):
         args = common_args(
             state,
             json_mode,
             no_color,
             command="tx",
-            tx_command="reclassify",
-            transaction_id=transaction_id,
-            category_id=category_id,
-            line_id=line_id,
-            memo=memo,
-            backup_before=backup_before,
-            backup_dir=backup_dir,
-            backup_label=backup_label,
-            idempotency_key=idempotency_key,
+            tx_command="correct",
+            **values,
         )
-        return run_api(args, state=state, command_path="tx.reclassify")
-
-    _record_command(root, name="record", command="record")
+        return run_api(args, state=state, command_path="tx.correct")
 
 
-def _record_command(group: click.Group, name: str = "record", command: str = "tx", tx_command: str | None = None) -> None:
-    @group.command(name)
+def _register_correct_reference(tx: click.Group) -> None:
+    @tx.command("correct-reference")
+    @click.argument("book_id")
+    @click.argument("transaction_id")
+    @click.option("--command-id", required=True)
+    @click.option("--provider-code", required=True)
     @click.option(
-        "--amount",
+        "--reference-kind",
+        type=click.Choice(
+            (
+                "provider_transaction",
+                "bank_transaction",
+                "card_transaction",
+                "broker_trade",
+            )
+        ),
         required=True,
-        help=(
-            "Signed natural balance delta. For liability accounts, positive increases debt; "
-            "negative decreases debt or creates overpayment. Stored as debit/credit postings."
+    )
+    @click.option("--corrected-reference", required=True)
+    @click.option("--expected-stream-version", type=int, required=True)
+    @click.option("--effective-at", required=True)
+    @click.option("--idempotency-key")
+    @output_options
+    @pass_state
+    def correct_reference(state, json_mode, no_color, **values):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="tx",
+            tx_command="correct-reference",
+            **values,
+        )
+        return run_api(args, state=state, command_path="tx.correct_reference")
+
+
+def _register_fx(tx: click.Group) -> None:
+    @tx.command("fx")
+    @click.argument("book_id")
+    @click.argument("transaction_id")
+    @click.option("--command-id", required=True)
+    @click.option("--expected-stream-version", type=int, required=True)
+    @click.option("--source-account-id", required=True)
+    @click.option("--source-trading-account-id", required=True)
+    @click.option("--source-asset-code", required=True)
+    @click.option("--source-amount", required=True)
+    @click.option("--target-trading-account-id", required=True)
+    @click.option("--target-account-id", required=True)
+    @click.option("--target-asset-code", required=True)
+    @click.option("--target-amount", required=True)
+    @click.option("--effective-at", required=True)
+    @click.option("--description-ref")
+    @click.option(
+        "--external-reference",
+        multiple=True,
+        metavar="PROVIDER:KIND:REFERENCE",
+    )
+    @click.option("--idempotency-key")
+    @output_options
+    @pass_state
+    def fx(state, json_mode, no_color, **values):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="tx",
+            tx_command="fx",
+            **values,
+        )
+        return run_api(args, state=state, command_path="tx.fx")
+
+
+def _register_classification(tx: click.Group) -> None:
+    @tx.command("classify")
+    @click.argument("book_id")
+    @click.argument("transaction_id")
+    @click.option("--command-id", required=True)
+    @click.option("--expected-revision", type=int, required=True)
+    @click.option("--effective-at", required=True)
+    @click.option(
+        "--line",
+        multiple=True,
+        required=True,
+        metavar=(
+            "LINE_ID:LINE_VERSION_ID:CATALOG_ID:ASSET:UNITS:"
+            "LINE_KIND:DIMENSION[:DIMENSION_ID[:DESCRIPTION_REF]]"
         ),
     )
-    @click.option("--from-account-id", "--from", "from_account_id", required=True)
-    @click.option("--to-account-id", "--to", "to_account_id", required=True)
-    @click.option("--purpose", required=True)
-    @click.option("--memo", default="")
-    @click.option("--occurred-at")
-    @click.option("--currency", default="CNY")
-    @click.option("--category-id")
-    @click.option("--counterparty")
     @click.option("--idempotency-key")
     @output_options
     @pass_state
-    def record_tx(state, json_mode, no_color, **kwargs):
-        args = common_args(state, json_mode, no_color, command=command, tx_command=tx_command, **kwargs)
-        return run_api(args, state=state, command_path="tx.record")
+    def classify(state, json_mode, no_color, **values):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="tx",
+            tx_command="classify",
+            **values,
+        )
+        return run_api(args, state=state, command_path="tx.classify")
 
-
-def _fx_exchange_command(group: click.Group) -> None:
-    @group.command("fx-exchange")
-    @click.option("--from-account-id", "--from", "from_account_id", required=True)
-    @click.option("--from-amount", required=True)
-    @click.option("--from-currency", required=True)
-    @click.option("--to-account-id", "--to", "to_account_id", required=True)
-    @click.option("--to-amount", required=True)
-    @click.option("--to-currency", required=True)
-    @click.option("--purpose", default="fx_exchange")
-    @click.option("--memo", default="")
-    @click.option("--occurred-at")
-    @click.option("--rate-source", default="manual")
-    @click.option("--fee-account-id")
-    @click.option("--fee-amount")
+    @tx.command("clear-classification")
+    @click.argument("book_id")
+    @click.argument("transaction_id")
+    @click.option("--command-id", required=True)
+    @click.option("--expected-revision", type=int, required=True)
+    @click.option("--effective-at", required=True)
     @click.option("--idempotency-key")
     @output_options
     @pass_state
-    def fx_exchange(state, json_mode, no_color, **kwargs):
-        args = common_args(state, json_mode, no_color, command="tx", tx_command="fx-exchange", **kwargs)
-        return run_api(args, state=state, command_path="tx.fx-exchange")
-
-
-def _expense_income(root: click.Group) -> None:
-    _expense_group(root)
-    _category_money_group(root, "income", "to_account_id", ["--to-account-id", "--to"])
-
-
-def _expense_group(root: click.Group) -> None:
-    @root.group("expense")
-    def group():
-        pass
-
-    @group.command("record")
-    @click.option("--amount", required=True)
-    @click.option("--from-account-id", "--from", "from_account_id")
-    @click.option("--payment")
-    @click.option("--category-id", required=True)
-    @click.option("--purpose", required=True)
-    @click.option("--memo", default="")
-    @click.option("--occurred-at")
-    @click.option("--currency", default="CNY")
-    @click.option("--counterparty")
-    @click.option("--idempotency-key")
-    @output_options
-    @pass_state
-    def record_expense(state, json_mode, no_color, **kwargs):
-        if bool(kwargs.get("payment")) == bool(kwargs.get("from_account_id")):
-            raise click.UsageError("expense record requires exactly one of --payment or --from-account-id")
-        args = common_args(state, json_mode, no_color, command="expense", expense_command="record", **kwargs)
-        return run_api(args, state=state, command_path="expense.record")
-
-
-def _category_money_group(root: click.Group, group_name: str, account_dest: str, aliases: list[str]) -> None:
-    @root.group(group_name)
-    def group():
-        pass
-
-    @group.command("record")
-    @click.option("--amount", required=True)
-    @click.option(*aliases, account_dest, required=True)
-    @click.option("--category-id", required=True)
-    @click.option("--purpose", required=True)
-    @click.option("--memo", default="")
-    @click.option("--occurred-at")
-    @click.option("--currency", default="CNY")
-    @click.option("--counterparty")
-    @click.option("--idempotency-key")
-    @output_options
-    @pass_state
-    def record_category_money(state, json_mode, no_color, **kwargs):
-        args = common_args(state, json_mode, no_color, command=group_name, **{f"{group_name}_command": "record"}, **kwargs)
-        return run_api(args, state=state, command_path=f"{group_name}.record")
-
-
-def _balances(root: click.Group) -> None:
-    @root.command("balance-adjust")
-    @click.argument("account_id")
-    @click.option(
-        "--amount",
-        required=True,
-        help=(
-            "Signed natural balance delta. For liability accounts, positive increases debt; "
-            "negative decreases debt or creates overpayment. Stored as debit/credit postings."
-        ),
-    )
-    @click.option("--purpose", required=True)
-    @click.option("--memo", default="")
-    @click.option("--occurred-at")
-    @click.option("--currency", default="CNY")
-    @click.option("--idempotency-key")
-    @output_options
-    @pass_state
-    def balance_adjust(state, json_mode, no_color, account_id, **kwargs):
-        args = common_args(state, json_mode, no_color, command="balance-adjust", account_id=account_id, **kwargs)
-        return run_api(args, state=state, command_path="balance.adjust")
-
-    @root.command("balance")
-    @click.argument("account_id")
-    @click.option("--include-drafts", is_flag=True)
-    @output_options
-    @pass_state
-    def balance(state, json_mode, no_color, account_id, include_drafts):
-        args = common_args(state, json_mode, no_color, command="balance", account_id=account_id, include_drafts=include_drafts)
-        return run_api(args, state=state, command_path="balance")
+    def clear_classification(state, json_mode, no_color, **values):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="tx",
+            tx_command="clear-classification",
+            **values,
+        )
+        return run_api(
+            args,
+            state=state,
+            command_path="tx.clear_classification",
+        )

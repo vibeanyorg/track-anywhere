@@ -2,11 +2,15 @@
   "name": "track-anywhere-frontend",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:proxy": "node --test tests/proxy-origin.test.mjs"
   },
   "dependencies": {
     "next": "^16.0.0",

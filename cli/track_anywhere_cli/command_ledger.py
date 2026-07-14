@@ -1,21 +1,26 @@
 from __future__ import annotations
 
-import json
 from argparse import Namespace
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Callable
-import urllib.parse
+from urllib.parse import quote
 
-from .config import CliConfig, command_idempotency_key, safe_backup_label
+from .command_catalog import compact_payload
+from .config import CliConfig, command_idempotency_key
 from .http import with_query
 
 
-Requester = Callable[[CliConfig, str, str, dict[str, Any] | None, str | None], tuple[int, Any]]
+Requester = Callable[
+    [CliConfig, str, str, dict[str, Any] | None, str | None],
+    tuple[int, Any],
+]
 CommandHandler = Callable[[Namespace, CliConfig, Requester], tuple[int, Any]]
 
 
-def handle_ledger_command(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any] | None:
+def handle_ledger_command(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any] | None:
     command_path = infer_ledger_command_path(args)
     if command_path is None:
         return None
@@ -26,255 +31,330 @@ def handle_ledger_command(args: Namespace, config: CliConfig, requester: Request
 
 
 def infer_ledger_command_path(args: Namespace) -> str | None:
-    command = getattr(args, "command", None)
-    if command == "capture":
-        return "capture"
-    if command == "draft-confirm":
-        return "draft.confirm"
-    if command == "record":
-        return "tx.record"
-    if command == "tx":
-        tx_command = getattr(args, "tx_command", None)
-        if tx_command in {"record", "list", "show", "snapshot", "reverse", "reclassify"}:
-            return f"tx.{tx_command}"
-        if tx_command == "fx-exchange":
-            return "tx.fx-exchange"
-    if command == "expense" and getattr(args, "expense_command", None) == "record":
-        return "expense.record"
-    if command == "income" and getattr(args, "income_command", None) == "record":
-        return "income.record"
-    if command == "balance-adjust":
-        return "balance.adjust"
-    if command == "balance":
-        return "balance"
-    if command == "account" and getattr(args, "account_command", None) in {"adjust", "balance"}:
-        return f"account.{args.account_command}"
+    if getattr(args, "command", None) != "tx":
+        return None
+    subcommand = getattr(args, "tx_command", None)
+    if subcommand in {
+        "record",
+        "list",
+        "reverse",
+        "correct",
+        "correct-reference",
+        "fx",
+        "classify",
+        "clear-classification",
+    }:
+        return f"tx.{subcommand.replace('-', '_')}"
     return None
 
 
-def request_capture_draft(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    capture_payload = {
-        "memo": args.memo,
-        "amount": args.amount,
-        "currency": args.currency,
-        "source_account_id": args.source_account_id,
-        "expense_account_id": args.expense_account_id,
-    }
-    if args.dry_run:
-        return 200, {"dry_run": True, "policy_decision": "would_create_draft", "payload": capture_payload}
-    return requester(config, "POST", "/api/v1/drafts/capture", capture_payload, key=command_idempotency_key(args, "draft-capture"))
-
-
-def request_confirm_draft(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
+def request_record_transaction(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    try:
+        postings = [_posting(value) for value in args.posting]
+        references = [_external_reference(value) for value in args.external_reference]
+    except ValueError as error:
+        return _invalid_input(error)
+    payload = compact_payload(
+        {
+            "command_id": args.command_id,
+            "transaction_id": args.transaction_id,
+            "expected_stream_version": args.expected_stream_version,
+            "kind": args.kind,
+            "effective_at": args.effective_at,
+            "description_ref": args.description_ref,
+            "external_references": references,
+            "postings": postings,
+        }
+    )
     return requester(
         config,
         "POST",
-        "/api/v1/drafts/confirm",
-        {"draft_id": args.draft_id, "expected_version": args.expected_version},
-        key=command_idempotency_key(args, "draft-confirm"),
+        f"/api/v2/books/{_path(args.book_id)}/journal/transactions",
+        payload,
+        command_idempotency_key(args, "v2-tx-record"),
     )
 
 
-def request_record_transaction(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    return requester(config, "POST", "/api/v1/ledger/transactions", _transaction_payload(args), key=command_idempotency_key(args, "tx-record"))
-
-
-def request_record_fx_exchange(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    return requester(config, "POST", "/api/v1/ledger/fx-exchanges", _fx_exchange_payload(args), key=command_idempotency_key(args, "tx-fx-exchange"))
-
-
-def request_record_expense(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    uses_payment_profile = bool(getattr(args, "payment", None))
-    uses_source_account = bool(getattr(args, "from_account_id", None))
-    if uses_payment_profile == uses_source_account:
-        return 400, {"detail": "expense record requires exactly one of --payment or --from-account-id"}
-
-    expense_payload = _category_money_payload(args)
-    if uses_payment_profile:
-        payment_profile_ref = urllib.parse.quote(args.payment)
-        return requester(
-            config,
-            "POST",
-            f"/api/v1/payment-profiles/{payment_profile_ref}/expenses",
-            expense_payload,
-            key=command_idempotency_key(args, "payment-profile-expense"),
-        )
-
-    expense_payload["from_account_id"] = args.from_account_id
-    return requester(config, "POST", "/api/v1/expenses", expense_payload, key=command_idempotency_key(args, "expense-record"))
-
-
-def request_record_income(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    income_payload = _category_money_payload(args)
-    income_payload["to_account_id"] = args.to_account_id
-    return requester(config, "POST", "/api/v1/incomes", income_payload, key=command_idempotency_key(args, "income-record"))
-
-
-def request_list_transactions(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    transaction_query = with_query(
-        "/api/v1/ledger/transactions",
-        {"account_id": args.account_id, "category_id": args.category_id, "counterparty": getattr(args, "counterparty", None), "limit": args.limit},
+def request_list_transactions(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    path = with_query(
+        f"/api/v2/books/{_path(args.book_id)}/journal",
+        {
+            "limit": args.limit,
+            "cursor": args.cursor,
+            "as_of_book_position": args.as_of_book_position,
+        },
     )
-    return requester(config, "GET", transaction_query)
+    return requester(config, "GET", path, None, None)
 
 
-def request_show_transaction(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    return requester(config, "GET", f"/api/v1/ledger/transactions/{urllib.parse.quote(args.transaction_id)}")
-
-
-def request_transaction_snapshot(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    status, snapshot_data = requester(config, "GET", f"/api/v1/ledger/transactions/{urllib.parse.quote(args.transaction_id)}/snapshot")
-    if status < 400 and getattr(args, "output", None):
-        snapshot_file = _write_json_file(snapshot_data, Path(args.output))
-        snapshot_data = {**snapshot_data, "snapshot_file": str(snapshot_file)}
-    return status, snapshot_data
-
-
-def request_reverse_transaction(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    reversal_payload = {"transaction_id": args.transaction_id, "memo": args.memo}
-    return requester(config, "POST", "/api/v1/ledger/reverse", reversal_payload, key=command_idempotency_key(args, "tx-reverse"))
-
-
-def request_reclassify_transaction(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    backup_info = _snapshot_backup_before_reclassification(args, config, requester) if getattr(args, "backup_before", False) else None
-    if isinstance(backup_info, tuple):
-        return backup_info
-
-    reclassification_payload = {
-        key: value
-        for key, value in {"transaction_id": args.transaction_id, "category_id": args.category_id, "line_id": args.line_id, "memo": args.memo}.items()
-        if value not in (None, "")
-    }
-    status, response_data = requester(
+def request_reverse_transaction(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    payload = compact_payload(
+        {
+            "command_id": args.command_id,
+            "reversal_transaction_id": args.reversal_transaction_id,
+            "expected_stream_version": args.expected_stream_version,
+            "reason_code": args.reason_code,
+            "effective_at": args.effective_at,
+            "description_ref": args.description_ref,
+        }
+    )
+    return requester(
         config,
         "POST",
-        "/api/v1/ledger/reclassify",
-        reclassification_payload,
-        key=command_idempotency_key(args, "tx-reclassify"),
+        (
+            f"/api/v2/books/{_path(args.book_id)}/journal/transactions/"
+            f"{_path(args.transaction_id)}/reverse"
+        ),
+        payload,
+        command_idempotency_key(args, "v2-tx-reverse"),
     )
-    if status < 400 and backup_info is not None and isinstance(response_data, dict):
-        response_data = {**response_data, "backup": backup_info}
-    return status, response_data
 
 
-def request_adjust_account_balance(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    adjustment_payload = {"account_id": args.account_id, "amount": args.amount, "currency": args.currency, "purpose": args.purpose}
-    if getattr(args, "memo", ""):
-        adjustment_payload["memo"] = args.memo
-    if args.occurred_at:
-        adjustment_payload["occurred_at"] = args.occurred_at
-    return requester(config, "POST", "/api/v1/ledger/adjustments", adjustment_payload, key=command_idempotency_key(args, "balance-adjust"))
-
-
-def request_get_account_balance(args: Namespace, config: CliConfig, requester: Requester) -> tuple[int, Any]:
-    include_drafts_suffix = "?include_drafts=true" if args.include_drafts else ""
-    return requester(config, "GET", f"/api/v1/query/accounts/{args.account_id}/balance{include_drafts_suffix}")
-
-
-def _transaction_payload(args: Namespace) -> dict[str, Any]:
-    transaction_payload = {
-        "amount": args.amount,
-        "currency": args.currency,
-        "from_account_id": args.from_account_id,
-        "to_account_id": args.to_account_id,
-        "purpose": args.purpose,
-    }
-    _add_optional_ledger_fields(transaction_payload, args)
-    if args.category_id:
-        transaction_payload["category_id"] = args.category_id
-    return transaction_payload
-
-
-def _fx_exchange_payload(args: Namespace) -> dict[str, Any]:
-    fx_payload = {
-        "from_account_id": args.from_account_id,
-        "from_amount": args.from_amount,
-        "from_currency": args.from_currency,
-        "to_account_id": args.to_account_id,
-        "to_amount": args.to_amount,
-        "to_currency": args.to_currency,
-        "purpose": args.purpose,
-        "rate_source": args.rate_source,
-    }
-    _add_optional_ledger_fields(fx_payload, args)
-    if args.fee_account_id:
-        fx_payload["fee_account_id"] = args.fee_account_id
-    if args.fee_amount:
-        fx_payload["fee_amount"] = args.fee_amount
-    return fx_payload
-
-
-def _category_money_payload(args: Namespace) -> dict[str, Any]:
-    money_payload = {"amount": args.amount, "currency": args.currency, "category_id": args.category_id, "purpose": args.purpose}
-    _add_optional_ledger_fields(money_payload, args)
-    return money_payload
-
-
-def _add_optional_ledger_fields(payload: dict[str, Any], args: Namespace) -> None:
-    if getattr(args, "memo", ""):
-        payload["memo"] = args.memo
-    if args.occurred_at:
-        payload["occurred_at"] = args.occurred_at
-    if getattr(args, "counterparty", None):
-        payload["counterparty"] = args.counterparty
-
-
-def _snapshot_backup_before_reclassification(args: Namespace, config: CliConfig, requester: Requester) -> dict[str, Any] | tuple[int, Any]:
-    snapshot_status, snapshot_data = requester(
+def request_correct_transaction(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    try:
+        postings = [_posting(value) for value in args.replacement_posting]
+        references = [
+            _external_reference(value) for value in args.replacement_external_reference
+        ]
+    except ValueError as error:
+        return _invalid_input(error)
+    replacement = compact_payload(
+        {
+            "transaction_id": args.replacement_transaction_id,
+            "expected_stream_version": args.replacement_expected_stream_version,
+            "kind": args.replacement_kind,
+            "effective_at": args.replacement_effective_at,
+            "description_ref": args.replacement_description_ref,
+            "external_references": references,
+            "postings": postings,
+        }
+    )
+    payload = compact_payload(
+        {
+            "command_id": args.command_id,
+            "reversal_transaction_id": args.reversal_transaction_id,
+            "expected_reversal_stream_version": (args.expected_reversal_stream_version),
+            "reason_code": args.reason_code,
+            "reversal_effective_at": args.reversal_effective_at,
+            "replacement": replacement,
+            "reversal_description_ref": args.reversal_description_ref,
+        }
+    )
+    return requester(
         config,
-        "GET",
-        f"/api/v1/ledger/transactions/{urllib.parse.quote(args.transaction_id)}/snapshot",
-    )
-    if snapshot_status >= 400:
-        return snapshot_status, snapshot_data
-    return _write_snapshot_backup(
-        snapshot_data,
-        transaction_id=args.transaction_id,
-        output_dir=getattr(args, "backup_dir", None),
-        label=getattr(args, "backup_label", None),
+        "POST",
+        (
+            f"/api/v2/books/{_path(args.book_id)}/journal/transactions/"
+            f"{_path(args.transaction_id)}/correct"
+        ),
+        payload,
+        command_idempotency_key(args, "v2-tx-correct"),
     )
 
 
-def _write_snapshot_backup(data: Any, *, transaction_id: str, output_dir: str | None, label: str | None) -> dict[str, Any]:
-    created_at = datetime.now(timezone.utc).replace(microsecond=0)
-    backup_dir = Path(output_dir).expanduser() if output_dir else Path.cwd() / "backups"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    filename_parts = ["tx", transaction_id, "before-reclassify", created_at.strftime("%Y%m%d-%H%M%S")]
-    label_part = safe_backup_label(label)
-    if label_part:
-        filename_parts.append(label_part)
-    backup_path = backup_dir / ("-".join(filename_parts) + ".json")
-    _write_json_file(data, backup_path)
+def request_correct_external_reference(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    payload = {
+        "command_id": args.command_id,
+        "provider_code": args.provider_code,
+        "reference_kind": args.reference_kind,
+        "corrected_reference": args.corrected_reference,
+        "expected_stream_version": args.expected_stream_version,
+        "effective_at": args.effective_at,
+    }
+    return requester(
+        config,
+        "POST",
+        (
+            f"/api/v2/books/{_path(args.book_id)}/journal/transactions/"
+            f"{_path(args.transaction_id)}/external-references/correct"
+        ),
+        payload,
+        command_idempotency_key(args, "v2-tx-correct-reference"),
+    )
+
+
+def request_record_fx(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    try:
+        references = [_external_reference(value) for value in args.external_reference]
+    except ValueError as error:
+        return _invalid_input(error)
+    payload = compact_payload(
+        {
+            "command_id": args.command_id,
+            "transaction_id": args.transaction_id,
+            "expected_stream_version": args.expected_stream_version,
+            "source_account_id": args.source_account_id,
+            "source_trading_account_id": args.source_trading_account_id,
+            "source_asset_code": args.source_asset_code,
+            "source_amount": args.source_amount,
+            "target_trading_account_id": args.target_trading_account_id,
+            "target_account_id": args.target_account_id,
+            "target_asset_code": args.target_asset_code,
+            "target_amount": args.target_amount,
+            "effective_at": args.effective_at,
+            "description_ref": args.description_ref,
+            "external_references": references,
+        }
+    )
+    return requester(
+        config,
+        "POST",
+        f"/api/v2/books/{_path(args.book_id)}/journal/fx",
+        payload,
+        command_idempotency_key(args, "v2-tx-fx"),
+    )
+
+
+def request_assign_reporting_lines(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    try:
+        lines = [_reporting_line(value) for value in args.line]
+    except ValueError as error:
+        return _invalid_input(error)
+    payload = {
+        "command_id": args.command_id,
+        "expected_revision": args.expected_revision,
+        "lines": lines,
+        "effective_at": args.effective_at,
+    }
+    return requester(
+        config,
+        "POST",
+        (
+            f"/api/v2/books/{_path(args.book_id)}/journal/transactions/"
+            f"{_path(args.transaction_id)}/reporting-lines/assign"
+        ),
+        payload,
+        command_idempotency_key(args, "v2-tx-classify"),
+    )
+
+
+def request_clear_reporting_lines(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    payload = {
+        "command_id": args.command_id,
+        "expected_revision": args.expected_revision,
+        "effective_at": args.effective_at,
+    }
+    return requester(
+        config,
+        "POST",
+        (
+            f"/api/v2/books/{_path(args.book_id)}/journal/transactions/"
+            f"{_path(args.transaction_id)}/reporting-lines/clear"
+        ),
+        payload,
+        command_idempotency_key(args, "v2-tx-clear-classification"),
+    )
+
+
+def _posting(raw: str) -> dict[str, str]:
+    parts = raw.split(":", 4)
+    if len(parts) != 5 or any(not value for value in parts):
+        raise ValueError(
+            "--posting must be POSTING_ID:ACCOUNT_ID:ASSET_CODE:SIDE:AMOUNT"
+        )
+    posting_id, account_id, asset_code, side, amount = parts
+    if side not in {"debit", "credit"}:
+        raise ValueError("posting SIDE must be debit or credit")
     return {
-        "backup_path": str(backup_path),
-        "bytes": backup_path.stat().st_size,
-        "created_at": created_at.isoformat(),
-        "backup_type": "transaction_snapshot",
-        "transaction_id": transaction_id,
+        "posting_id": posting_id,
+        "account_id": account_id,
+        "asset_code": asset_code,
+        "side": side,
+        "amount": amount,
     }
 
 
-def _write_json_file(data: Any, path: Path) -> Path:
-    output_path = path.expanduser()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-    return output_path
+def _external_reference(raw: str) -> dict[str, str]:
+    parts = raw.split(":", 2)
+    if len(parts) != 3 or any(not value for value in parts):
+        raise ValueError("--external-reference must be PROVIDER_CODE:KIND:REFERENCE")
+    provider_code, kind, reference = parts
+    return {
+        "provider_code": provider_code,
+        "kind": kind,
+        "reference": reference,
+    }
+
+
+def _reporting_line(raw: str) -> dict[str, str]:
+    parts = raw.split(":", 8)
+    if len(parts) < 7 or any(not value for value in parts[:7]):
+        raise ValueError(
+            "--line must be LINE_ID:LINE_VERSION_ID:CATALOG_ID:ASSET_CODE:"
+            "UNITS:LINE_KIND:DIMENSION[:DIMENSION_ID[:DESCRIPTION_REF]]"
+        )
+    values = parts + [""] * (9 - len(parts))
+    payload = {
+        "line_id": values[0],
+        "line_version_id": values[1],
+        "catalog_id": values[2],
+        "asset_code": values[3],
+        "units": values[4],
+        "line_kind": values[5],
+        "dimension": values[6],
+    }
+    if values[7]:
+        payload["dimension_id"] = values[7]
+    if values[8]:
+        payload["description_ref"] = values[8]
+    return payload
+
+
+def _invalid_input(error: ValueError) -> tuple[int, dict[str, Any]]:
+    return 422, {
+        "detail": str(error),
+        "error": {
+            "code": "invalid_v2_cli_input",
+            "category": "validation",
+            "message": str(error),
+            "retryable": False,
+        },
+    }
+
+
+def _path(value: object) -> str:
+    return quote(str(value), safe="")
 
 
 LEDGER_COMMAND_HANDLERS: dict[str, CommandHandler] = {
-    "capture": request_capture_draft,
-    "draft.confirm": request_confirm_draft,
     "tx.record": request_record_transaction,
-    "tx.fx-exchange": request_record_fx_exchange,
     "tx.list": request_list_transactions,
-    "tx.show": request_show_transaction,
-    "tx.snapshot": request_transaction_snapshot,
     "tx.reverse": request_reverse_transaction,
-    "tx.reclassify": request_reclassify_transaction,
-    "expense.record": request_record_expense,
-    "income.record": request_record_income,
-    "balance.adjust": request_adjust_account_balance,
-    "account.adjust": request_adjust_account_balance,
-    "balance": request_get_account_balance,
-    "account.balance": request_get_account_balance,
+    "tx.correct": request_correct_transaction,
+    "tx.correct_reference": request_correct_external_reference,
+    "tx.fx": request_record_fx,
+    "tx.classify": request_assign_reporting_lines,
+    "tx.clear_classification": request_clear_reporting_lines,
 }

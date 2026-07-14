@@ -1,0 +1,97 @@
+{
+  "paths": {
+    "/api/v2/auth/device": [
+      "post"
+    ],
+    "/api/v2/auth/logout": [
+      "post"
+    ],
+    "/api/v2/auth/session": [
+      "get"
+    ],
+    "/api/v2/auth/session/api-key": [
+      "post"
+    ],
+    "/api/v2/auth/token-status": [
+      "get"
+    ],
+    "/api/v2/books": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/accounts": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/accounts/{account_id}/close": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/assets": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/balances": [
+      "get"
+    ],
+    "/api/v2/books/{book_id}/categories": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/investments/lots/acquire": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/investments/lots/dispose": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/journal": [
+      "get"
+    ],
+    "/api/v2/books/{book_id}/journal/fx": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/journal/transactions": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/journal/transactions/{transaction_id}/correct": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/journal/transactions/{transaction_id}/external-references/correct": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/journal/transactions/{transaction_id}/reporting-lines/assign": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/journal/transactions/{transaction_id}/reporting-lines/clear": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/journal/transactions/{transaction_id}/reverse": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/reporting-lines": [
+      "get"
+    ],
+    "/api/v2/health": [
+      "get"
+    ],
+    "/api/v2/oauth/authorization-server": [
+      "get"
+    ],
+    "/api/v2/oauth/authorize": [
+      "post"
+    ],
+    "/api/v2/oauth/device/authorize": [
+      "post"
+    ],
+    "/api/v2/oauth/protected-resource": [
+      "get"
+    ],
+    "/api/v2/oauth/register": [
+      "post"
+    ],
+    "/api/v2/oauth/revoke": [
+      "post"
+    ],
+    "/api/v2/oauth/token": [
+      "post"
+    ],
+    "/api/v2/ready": [
+      "get"
+    ]
+  }
+}

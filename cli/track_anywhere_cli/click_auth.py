@@ -5,10 +5,11 @@ from argparse import Namespace
 import click
 
 from .click_common import ClickState, output_options, pass_state
+from .command_payment import unsupported_capability
 from .config import CliConfig, TokenStore, resolve_token_with_diagnostics
 from .device_login import run_device_login
 from .exit_codes import EXIT_VALIDATION
-from .interaction import ClickInteraction, Interaction, inform
+from .interaction import ClickInteraction, Interaction
 from .browser_login import capture_browser_callback
 from .oauth_login import DEFAULT_CLI_SCOPE, DEFAULT_WEB_URL, exchange_callback_for_token
 from .output import CliDiagnostic
@@ -104,14 +105,8 @@ def _register_auth_group(root: click.Group) -> None:
     def auth_dev_token(state: ClickState, json_mode: bool, no_color: bool) -> int:
         output_json = state.json_mode or json_mode
         output_no_color = state.no_color or no_color
-        config = CliConfig(base_url=state.base_url, token=None, insecure_automation=state.insecure_automation)
-        status, data = state.requester(config, "POST", "/api/v1/auth/dev-token")
-        diagnostics: list[CliDiagnostic] = []
-        if status < 400 and isinstance(data, dict):
-            token = data.get("token")
-            if isinstance(token, str):
-                diagnostics = _save_token(token)
-        outcome = build_outcome("auth.dev_token", status, data, diagnostics=diagnostics)
+        status, data = unsupported_capability("auth.dev_token")
+        outcome = build_outcome("auth.dev_token", status, data)
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
 
@@ -119,7 +114,9 @@ def _register_auth_group(root: click.Group) -> None:
     @output_options
     @pass_state
     def auth_status(state: ClickState, json_mode: bool, no_color: bool) -> int:
-        args = Namespace(token=state.token, insecure_automation=state.insecure_automation)
+        args = Namespace(
+            token=state.token, insecure_automation=state.insecure_automation
+        )
         output_json = state.json_mode or json_mode
         output_no_color = state.no_color or no_color
         try:
@@ -136,21 +133,41 @@ def _register_auth_group(root: click.Group) -> None:
         }
         if token:
             status, status_data = state.requester(
-                CliConfig(base_url=state.base_url, token=token, insecure_automation=state.insecure_automation),
+                CliConfig(
+                    base_url=state.base_url,
+                    token=token,
+                    insecure_automation=state.insecure_automation,
+                ),
                 "GET",
-                "/api/v1/auth/token-status",
+                "/api/v2/auth/token-status",
                 None,
                 None,
             )
             if status < 400 and isinstance(status_data, dict):
                 data.update(status_data)
             else:
-                detail = status_data.get("detail") if isinstance(status_data, dict) else status_data
-                data.update({"authenticated": False, "detail": detail or "token validation failed"})
-                outcome = build_outcome("auth.status", status, data, diagnostics=token_resolution.diagnostics)
+                detail = (
+                    status_data.get("detail")
+                    if isinstance(status_data, dict)
+                    else status_data
+                )
+                data.update(
+                    {
+                        "authenticated": False,
+                        "detail": detail or "token validation failed",
+                    }
+                )
+                outcome = build_outcome(
+                    "auth.status",
+                    status,
+                    data,
+                    diagnostics=token_resolution.diagnostics,
+                )
                 emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
                 return outcome.exit_code
-        outcome = build_outcome("auth.status", 200, data, diagnostics=token_resolution.diagnostics)
+        outcome = build_outcome(
+            "auth.status", 200, data, diagnostics=token_resolution.diagnostics
+        )
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
 
@@ -175,7 +192,12 @@ def run_login(
 
     if token:
         diagnostics = _save_token(token)
-        outcome = build_outcome("auth.login", 200, {"authenticated": True, "token_saved": True}, diagnostics=diagnostics)
+        outcome = build_outcome(
+            "auth.login",
+            200,
+            {"authenticated": True, "token_saved": True},
+            diagnostics=diagnostics,
+        )
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
 
@@ -203,8 +225,21 @@ def run_login(
                     "message": "auth login requires a token or --callback in non-interactive mode.",
                     "retryable": False,
                     "remediation": [
-                        {"description": "Use an existing bearer token.", "command": ["ta", "auth", "login", "<token>", "--agent"]},
-                        {"description": "Complete browser login outside agent mode and pass the callback.", "command": ["ta", "auth", "login", "--callback", "<url>", "--agent"]},
+                        {
+                            "description": "Use an existing bearer token.",
+                            "command": ["ta", "auth", "login", "<token>", "--agent"],
+                        },
+                        {
+                            "description": "Complete browser login outside agent mode and pass the callback.",
+                            "command": [
+                                "ta",
+                                "auth",
+                                "login",
+                                "--callback",
+                                "<url>",
+                                "--agent",
+                            ],
+                        },
                     ],
                 },
             },
@@ -224,11 +259,19 @@ def run_login(
         status, data = exchange_callback_for_token(
             request=callback_capture.request,
             callback_value=callback_capture.callback_value,
-            config=CliConfig(base_url=state.base_url, token=None, insecure_automation=state.insecure_automation),
+            config=CliConfig(
+                base_url=state.base_url,
+                token=None,
+                insecure_automation=state.insecure_automation,
+            ),
             requester=state.requester,
         )
     except ValueError as exc:
-        code = "security_precondition" if "state" in str(exc).lower() else "validation_error"
+        code = (
+            "security_precondition"
+            if "state" in str(exc).lower()
+            else "validation_error"
+        )
         outcome = build_outcome(
             "auth.login",
             400,
@@ -236,7 +279,9 @@ def run_login(
                 "detail": str(exc),
                 "error": {
                     "code": code,
-                    "category": "security" if code == "security_precondition" else "usage",
+                    "category": "security"
+                    if code == "security_precondition"
+                    else "usage",
                     "message": str(exc),
                     "retryable": False,
                 },
@@ -246,7 +291,9 @@ def run_login(
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
     except Exception as exc:
-        outcome = build_outcome("auth.login", 500, {"detail": f"token exchange failed: {exc}"})
+        outcome = build_outcome(
+            "auth.login", 500, {"detail": f"token exchange failed: {exc}"}
+        )
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
     if status >= 400:
@@ -255,12 +302,22 @@ def run_login(
         return outcome.exit_code
     access_token = data.get("access_token") if isinstance(data, dict) else None
     if not isinstance(access_token, str) or not access_token:
-        outcome = build_outcome("auth.login", 400, {"detail": "token endpoint did not return an access token"}, exit_code=EXIT_VALIDATION)
+        outcome = build_outcome(
+            "auth.login",
+            400,
+            {"detail": "token endpoint did not return an access token"},
+            exit_code=EXIT_VALIDATION,
+        )
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
     diagnostics = _save_token(access_token)
     scope_value = data.get("scope") if isinstance(data, dict) else None
-    outcome = build_outcome("auth.login", status, {"authenticated": True, "token_saved": True, "scope": scope_value}, diagnostics=diagnostics)
+    outcome = build_outcome(
+        "auth.login",
+        status,
+        {"authenticated": True, "token_saved": True, "scope": scope_value},
+        diagnostics=diagnostics,
+    )
     emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
     return outcome.exit_code
 
