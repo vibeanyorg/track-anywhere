@@ -13,6 +13,9 @@ from .errors import AuthPolicyDenied, AuthSecurityError
 
 PASSWORD_HASH_ALGORITHM = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 390_000
+PASSWORD_SALT_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
+)
 
 
 def secret_digest(value: str) -> bytes:
@@ -33,7 +36,9 @@ def verify_password_hash(password: str, encoded: str) -> bool:
         return False
     if iterations != PASSWORD_HASH_ITERATIONS:
         return False
-    if not 1 <= len(salt) <= 128 or "$" in salt:
+    if len(salt) != 24 or any(
+        character not in PASSWORD_SALT_ALPHABET for character in salt
+    ):
         return False
     if len(digest) != 64 or digest.casefold() != digest:
         return False

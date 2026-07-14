@@ -1207,6 +1207,7 @@ def test_password_hash_must_match_the_current_pbkdf2_verifier_contract(
         f"pbkdf2_sha256$390000${'界' * 24}${digest}",
     )
     for index, password_hash in enumerate(malformed_hashes):
+        assert not verify_password_hash(_PASSWORD, password_hash)
         user_id = f"user:password-invalid-{index}"
         _insert_user(pg_engine, user_id)
         _rejects_integrity(

@@ -46,7 +46,7 @@ def test_auth_login_auto_listens_for_pkce_callback(monkeypatch, capsys):
         assert path == "/api/v2/oauth/token"
         assert payload["code"] == "code_cli"
         assert payload["redirect_uri"] == FakeListener.redirect_uri
-        return 200, {"access_token": "ta_cli_access", "scope": "account:read"}
+        return 200, {"access_token": "ta_cli_access", "scope": "book:read"}
 
     monkeypatch.setattr(browser_login, "BrowserCallbackListener", FakeListener)
     monkeypatch.setattr(
