@@ -8,11 +8,11 @@ def authorization_server_metadata(issuer: str) -> dict[str, object]:
     base = issuer.rstrip("/")
     return {
         "issuer": base,
-        "authorization_endpoint": f"{base}/api/v1/oauth/authorize",
-        "token_endpoint": f"{base}/api/v1/oauth/token",
-        "device_authorization_endpoint": f"{base}/api/v1/oauth/device/authorize",
-        "registration_endpoint": f"{base}/api/v1/oauth/register",
-        "revocation_endpoint": f"{base}/api/v1/oauth/revoke",
+        "authorization_endpoint": f"{base}/api/v2/oauth/authorize",
+        "token_endpoint": f"{base}/api/v2/oauth/token",
+        "device_authorization_endpoint": f"{base}/api/v2/oauth/device/authorize",
+        "registration_endpoint": f"{base}/api/v2/oauth/register",
+        "revocation_endpoint": f"{base}/api/v2/oauth/revoke",
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", DEVICE_GRANT_TYPE],
         "code_challenge_methods_supported": ["S256"],
@@ -24,7 +24,7 @@ def authorization_server_metadata(issuer: str) -> dict[str, object]:
 def protected_resource_metadata(issuer: str) -> dict[str, object]:
     base = issuer.rstrip("/")
     return {
-        "resource": f"{base}/api/v1",
+        "resource": f"{base}/api/v2",
         "authorization_servers": [base],
         "bearer_methods_supported": ["header"],
         "scopes_supported": sorted(AGENT_ALLOWED_SCOPES),

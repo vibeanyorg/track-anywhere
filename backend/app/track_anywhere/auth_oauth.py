@@ -110,7 +110,7 @@ def build_oauth_registry(settings: AuthSettings) -> OAuth:
 
 def oauth_callback_url(request: Request, settings: AuthSettings, provider: str) -> str:
     if settings.public_base_url:
-        return f"{settings.public_base_url}/api/v1/auth/oauth/{provider}/callback"
+        return f"{settings.public_base_url}/api/v2/auth/oauth/{provider}/callback"
     return str(request.url_for("oauth_callback", provider=provider))
 
 

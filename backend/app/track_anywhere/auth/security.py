@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import base64
+from hashlib import sha256
+import secrets
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+from .contracts import AGENT_ALLOWED_SCOPES, DEVICE_GRANT_TYPE
+from .errors import AuthPolicyDenied, AuthSecurityError
+
+
+def secret_digest(value: str) -> bytes:
+    if type(value) is not str or not value:
+        raise ValueError("secret must be a non-empty string")
+    return sha256(value.encode("utf-8")).digest()
+
+
+def new_secret(prefix: str) -> str:
+    if type(prefix) is not str or not prefix:
+        raise ValueError("secret prefix must be non-empty")
+    return f"{prefix}_{secrets.token_urlsafe(32)}"
+
+
+def new_user_code() -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    token = "".join(secrets.choice(alphabet) for _ in range(8))
+    return f"{token[:4]}-{token[4:]}"
+
+
+def normalize_user_code(value: str) -> str:
+    return value.strip().upper().replace(" ", "").replace("-", "")
+
+
+def require_same_origin(
+    *,
+    origin: str | None,
+    referer: str | None,
+    allowed_origin: str,
+) -> None:
+    if origin == allowed_origin:
+        return
+    if referer:
+        parsed = urlparse(referer)
+        referer_origin = f"{parsed.scheme}://{parsed.netloc}"
+        if referer_origin == allowed_origin:
+            return
+    raise AuthSecurityError("missing or invalid Origin/Referer")
+
+
+def parse_requested_scopes(scope: str) -> tuple[str, ...]:
+    scopes = tuple(dict.fromkeys(item for item in scope.split() if item))
+    if not scopes:
+        raise AuthSecurityError("at least one OAuth scope is required")
+    unknown = set(scopes) - AGENT_ALLOWED_SCOPES
+    if unknown:
+        raise AuthSecurityError(f"unknown OAuth scopes: {sorted(unknown)}")
+    return scopes
+
+
+def require_scope_subset(requested: tuple[str, ...], available: set[str]) -> None:
+    if not set(requested).issubset(available):
+        raise AuthPolicyDenied("requested OAuth scope is not available")
+
+
+def validate_redirect_uri(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise AuthSecurityError("redirect_uri must be an absolute http(s) URL")
+    if parsed.scheme == "http" and parsed.hostname not in {
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise AuthSecurityError("http redirect_uri is only allowed on loopback")
+    return value
+
+
+def redirect_with_params(value: str, params: dict[str, str | None]) -> str:
+    parsed = urlparse(value)
+    query = parse_qs(parsed.query)
+    for key, item in params.items():
+        if item is not None:
+            query[key] = [item]
+    return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
+
+
+def pkce_challenge(verifier: str) -> str:
+    digest = sha256(verifier.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def authorization_server_metadata(issuer: str) -> dict[str, object]:
+    base = issuer.rstrip("/")
+    return {
+        "issuer": base,
+        "authorization_endpoint": f"{base}/api/v2/oauth/authorize",
+        "token_endpoint": f"{base}/api/v2/oauth/token",
+        "device_authorization_endpoint": f"{base}/api/v2/oauth/device/authorize",
+        "registration_endpoint": f"{base}/api/v2/oauth/register",
+        "revocation_endpoint": f"{base}/api/v2/oauth/revoke",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", DEVICE_GRANT_TYPE],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "scopes_supported": sorted(AGENT_ALLOWED_SCOPES),
+    }
+
+
+def protected_resource_metadata(issuer: str) -> dict[str, object]:
+    base = issuer.rstrip("/")
+    return {
+        "resource": f"{base}/api/v2",
+        "authorization_servers": [base],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": sorted(AGENT_ALLOWED_SCOPES),
+    }
+
+
+__all__ = [
+    "authorization_server_metadata",
+    "new_secret",
+    "new_user_code",
+    "normalize_user_code",
+    "parse_requested_scopes",
+    "pkce_challenge",
+    "protected_resource_metadata",
+    "redirect_with_params",
+    "require_scope_subset",
+    "require_same_origin",
+    "secret_digest",
+    "validate_redirect_uri",
+]

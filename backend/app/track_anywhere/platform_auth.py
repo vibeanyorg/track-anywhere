@@ -7,8 +7,6 @@ from .platform_auth_models import (
     AUTHORIZATION_CODE_TTL,
     DEFAULT_PLATFORM_CLIENT_ID,
     DEVICE_CODE_TTL,
-    DEVICE_GRANT_TYPE,
-    ApiKeySessionCommand,
     OAuthAuthorizeCommand,
     OAuthDeviceAuthorizeCommand,
     OAuthDeviceTokenCommand,
@@ -123,7 +121,7 @@ class PlatformKeyExchange:
             created_at=utcnow(),
         )
         grant_store.save_device_grant(grant)
-        verification_uri = f"{base}/api/v1/auth/device"
+        verification_uri = f"{base}/api/v2/auth/device"
         return {
             "device_code": device_code,
             "user_code": user_code,
