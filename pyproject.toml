@@ -46,3 +46,6 @@ include = ["track_anywhere*", "track_anywhere_cli*"]
 pythonpath = ["backend/app", "cli"]
 testpaths = ["backend/tests", "cli/tests", "contract_tests"]
 addopts = "-q"
+markers = [
+  "frozen_dump: local-only contract for the fixed V1 dump and an already restored read-only source",
+]

@@ -21,6 +21,8 @@ from backend.tests.v2.postgres_factory import (
     RUNTIME_URL_ENV,
     ClusterConfig,
     PostgresDatabaseFactory,
+    render_libpq_url,
+    render_read_only_url,
 )
 
 
@@ -210,6 +212,78 @@ def test_cluster_config_requires_exact_psycopg_driver(
         ClusterConfig.from_env()
 
 
+def test_libpq_url_uses_sqlalchemy_rendering_and_preserves_encoded_values() -> None:
+    source = (
+        "postgresql+psycopg://ledger:p%40ss%2Fword@127.0.0.1:15543/"
+        "db%2Fencoded?application_name=backfill%2Fv2&options=-c%20lock_timeout%3D5s"
+    )
+
+    rendered = render_libpq_url(source, host="postgres", port=5432)
+    parsed = make_url(rendered)
+
+    assert parsed.drivername == "postgresql"
+    assert (parsed.host, parsed.port) == ("postgres", 5432)
+    assert (parsed.username, parsed.password, parsed.database) == (
+        "ledger",
+        "p@ss/word",
+        "db%2Fencoded",
+    )
+    assert dict(parsed.query) == {
+        "application_name": "backfill/v2",
+        "options": "-c lock_timeout=5s",
+    }
+    assert "p%40ss%2Fword" in rendered
+    assert "db%2Fencoded" in rendered
+    assert "backfill%2Fv2" in rendered
+
+
+@pytest.mark.parametrize(
+    ("source", "host", "port", "message"),
+    (
+        (
+            "postgresql+psycopg://u:p@203.0.113.9/db",
+            "postgres",
+            5432,
+            "loopback",
+        ),
+        (
+            "postgresql+psycopg://u:p@127.0.0.1/db",
+            "not-postgres",
+            5432,
+            "fixed postgres:5432",
+        ),
+        (
+            "postgresql+psycopg://u:p@127.0.0.1/db",
+            "postgres",
+            15432,
+            "fixed postgres:5432",
+        ),
+        (
+            "postgresql+psycopg://u:p@127.0.0.1/db?host=203.0.113.9",
+            "postgres",
+            5432,
+            "must not override connection identity",
+        ),
+    ),
+)
+def test_libpq_url_rejects_untrusted_source_or_target(
+    source: str, host: str, port: int, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        render_libpq_url(source, host=host, port=port)
+
+
+def test_read_only_url_sets_server_enforced_transaction_default() -> None:
+    rendered = render_read_only_url(
+        "postgresql+psycopg://ledger:p%40ss@localhost:15543/source"
+    )
+    parsed = make_url(rendered)
+
+    assert parsed.drivername == "postgresql+psycopg"
+    assert parsed.password == "p@ss"
+    assert parsed.query["options"] == "-c default_transaction_read_only=on"
+
+
 def test_malformed_cluster_dsn_is_redacted_and_has_no_cli_traceback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -284,6 +358,24 @@ def test_drop_cli_rejects_64_byte_name_without_truncating_a_63_byte_database(
                 f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)'
             )
         admin_engine.dispose()
+
+
+def test_assert_absent_cli_fails_closed_until_factory_database_is_dropped(
+    postgres_database_factory,
+) -> None:
+    database = postgres_database_factory.create(purpose="absence")
+
+    present = _run_factory_cli("assert-absent", "--url", database.runtime_url)
+    assert present.returncode == 2
+    assert "still exists" in present.stderr
+    assert "Traceback" not in present.stderr
+    assert database.runtime_url not in present.stderr
+
+    postgres_database_factory.drop(database)
+    absent = _run_factory_cli("assert-absent", "--url", database.runtime_url)
+    assert absent.returncode == 0
+    assert absent.stdout == ""
+    assert absent.stderr == ""
 
 
 def test_factory_creates_empty_database_with_isolated_name(

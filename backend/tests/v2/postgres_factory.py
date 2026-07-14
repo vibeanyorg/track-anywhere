@@ -36,6 +36,23 @@ _IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
 _IDENTIFIER_COMPONENT = re.compile(r"^[a-z0-9_]+$")
 _DATABASE_PREFIX = "ta_v2_"
 _POSTGRES_DRIVER = "postgresql+psycopg"
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+_COMPOSE_POSTGRES_HOST = "postgres"
+_COMPOSE_POSTGRES_PORT = 5432
+_LIBPQ_IDENTITY_QUERY_KEYS = frozenset(
+    {
+        "database",
+        "dbname",
+        "host",
+        "hostaddr",
+        "passfile",
+        "password",
+        "port",
+        "service",
+        "servicefile",
+        "user",
+    }
+)
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 _ALEMBIC_INI = _REPOSITORY_ROOT / "alembic.ini"
 _V2_BASELINE_REVISION = "v2_0001_schema_guard"
@@ -104,9 +121,58 @@ def _validate_identifier_component(value: str, *, label: str) -> str:
 
 
 def _cluster_address(url: URL) -> tuple[str, int]:
-    if url.host not in {"127.0.0.1", "localhost", "::1"}:
+    if url.host not in _LOOPBACK_HOSTS:
         raise ValueError("PostgreSQL 17 test URLs must use a loopback host")
     return url.host, url.port or 5432
+
+
+def render_libpq_url(
+    value: str,
+    *,
+    host: str = _COMPOSE_POSTGRES_HOST,
+    port: int = _COMPOSE_POSTGRES_PORT,
+) -> str:
+    """Render a test SQLAlchemy URL for the pinned Compose libpq clients.
+
+    Parsing and rendering deliberately go through SQLAlchemy's URL API.  This
+    preserves encoded credentials, database names, and query values without
+    ever doing a scheme/host string replacement.
+    """
+
+    try:
+        url = make_url(value)
+    except (ArgumentError, TypeError, ValueError) as error:
+        raise ValueError("libpq source must be a valid PostgreSQL test URL") from error
+    if url.drivername != _POSTGRES_DRIVER:
+        raise ValueError("libpq source must use the exact postgresql+psycopg driver")
+    if url.host not in _LOOPBACK_HOSTS:
+        raise ValueError("libpq source must use a loopback host")
+    if not url.username or url.password is None or not url.database:
+        raise ValueError(
+            "libpq source must include login, password, and database identity"
+        )
+    if _LIBPQ_IDENTITY_QUERY_KEYS.intersection(url.query):
+        raise ValueError("libpq source query must not override connection identity")
+    if host != _COMPOSE_POSTGRES_HOST or port != _COMPOSE_POSTGRES_PORT:
+        raise ValueError("libpq target must be the fixed postgres:5432 Compose service")
+    return _render_url(
+        url.set(
+            drivername="postgresql",
+            host=_COMPOSE_POSTGRES_HOST,
+            port=_COMPOSE_POSTGRES_PORT,
+        )
+    )
+
+
+def render_read_only_url(value: str) -> str:
+    """Add a server-enforced default read-only transaction option."""
+
+    url = _parse_postgres_url(value, label="read-only source URL")
+    options = dict(url.query)
+    if "options" in options:
+        raise ValueError("read-only source URL must not override connection options")
+    options["options"] = "-c default_transaction_read_only=on"
+    return _render_url(url.set(query=options))
 
 
 @dataclass(frozen=True)
@@ -205,6 +271,28 @@ class ClusterConfig:
             )
         _validate_identifier(database_name, label="drop database name")
         return database_name
+
+    def assert_database_absent(self, value: str) -> None:
+        database_name = self.database_name_from_drop_url(value)
+        engine = create_engine(
+            self.admin_url, isolation_level="AUTOCOMMIT", pool_pre_ping=True
+        )
+        try:
+            with engine.connect() as connection:
+                exists = bool(
+                    connection.execute(
+                        text(
+                            "select exists("
+                            "select 1 from pg_catalog.pg_database where datname = :name"
+                            ")"
+                        ),
+                        {"name": database_name},
+                    ).scalar_one()
+                )
+        finally:
+            engine.dispose()
+        if exists:
+            raise RuntimeError("factory database still exists after strict cleanup")
 
 
 @dataclass(frozen=True)
@@ -544,6 +632,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
     drop = commands.add_parser("drop")
     drop.add_argument("--url", required=True)
+
+    assert_absent = commands.add_parser("assert-absent")
+    assert_absent.add_argument("--url", required=True)
+
+    libpq_url = commands.add_parser("libpq-url")
+    libpq_url.add_argument("--url", required=True)
+    libpq_url.add_argument("--host", required=True)
+    libpq_url.add_argument("--port", required=True, type=int)
+
+    read_only_url = commands.add_parser("read-only-url")
+    read_only_url.add_argument("--url", required=True)
     return parser
 
 
@@ -576,6 +675,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not delivered:
             factory.drop(database)
             return 1
+        return 0
+
+    if arguments.command == "libpq-url":
+        converted = render_libpq_url(
+            arguments.url,
+            host=arguments.host,
+            port=arguments.port,
+        )
+        return 0 if _emit_stdout(converted) else 1
+    if arguments.command == "read-only-url":
+        converted = render_read_only_url(arguments.url)
+        return 0 if _emit_stdout(converted) else 1
+
+    if arguments.command == "assert-absent":
+        factory.config.assert_database_absent(arguments.url)
         return 0
 
     database_name = factory.config.database_name_from_drop_url(arguments.url)

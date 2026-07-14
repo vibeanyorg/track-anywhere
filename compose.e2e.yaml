@@ -21,6 +21,11 @@ services:
       timeout: 3s
       retries: 12
 
+  pg17-client:
+    image: postgres:17-alpine
+    profiles: ["tools"]
+    command: ["psql", "--version"]
+
   api:
     build:
       context: .
