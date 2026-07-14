@@ -5,8 +5,12 @@ from typing import Protocol
 from fastapi import APIRouter
 from sqlalchemy import Engine
 
-from ..dependencies import SessionDependency
+from ..dependencies import SessionDependency, build_engine_dependencies
 from .auth import create_auth_router
+from .catalogs import create_catalog_router
+from .investments import create_investment_router
+from .journal import create_journal_router
+from .reporting import create_reporting_router
 from .system import create_system_router
 
 
@@ -48,6 +52,39 @@ def create_v2_router(
             expected_runtime_role=expected_runtime_role,
         )
     )
+    if engine is not None:
+        runtime = build_engine_dependencies(
+            engine,
+            expected_runtime_role=expected_runtime_role,
+        )
+        versioned_router.include_router(
+            create_catalog_router(
+                get_session=get_session,
+                uow_factory=runtime.uow_factory,
+                ledger_committer=runtime.ledger_committer,
+            )
+        )
+        versioned_router.include_router(
+            create_journal_router(
+                get_session=get_session,
+                uow_factory=runtime.uow_factory,
+                ledger_committer=runtime.ledger_committer,
+            )
+        )
+        versioned_router.include_router(
+            create_reporting_router(
+                get_session=get_session,
+                uow_factory=runtime.uow_factory,
+                ledger_committer=runtime.ledger_committer,
+            )
+        )
+        versioned_router.include_router(
+            create_investment_router(
+                get_session=get_session,
+                uow_factory=runtime.uow_factory,
+                ledger_committer=runtime.ledger_committer,
+            )
+        )
     router.include_router(versioned_router)
     router.include_router(
         auth_factory(
