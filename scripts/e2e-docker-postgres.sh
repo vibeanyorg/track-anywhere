@@ -204,7 +204,8 @@ if [[ "$EXISTING_STACK" == "1" ]]; then
   fi
 else
   printf 'Starting isolated PostgreSQL 17 on port %s\n' "$TRACK_ANYWHERE_E2E_POSTGRES_PORT"
-  run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" up -d postgres
+  run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" \
+    "${COMPOSE[@]}" up -d --wait postgres
   run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
     "${COMPOSE[@]}" exec -T postgres \
     psql --username track_anywhere --dbname postgres --set ON_ERROR_STOP=1 \
