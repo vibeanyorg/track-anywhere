@@ -188,6 +188,42 @@ def _insert_authorization_grant(
     )
 
 
+def _insert_device_grant(
+    engine: Engine,
+    *,
+    device_hash: bytes,
+    user_hash: bytes,
+    client_id: str,
+    scopes: str,
+    created_at: datetime,
+    expires_at: datetime,
+    interval_seconds: int = 5,
+) -> None:
+    _execute(
+        engine,
+        """
+        insert into oauth_device_grants (
+            device_code_hash, user_code_hash, client_id, scopes, resource,
+            status, created_at, expires_at, interval_seconds, last_poll_at,
+            poll_count, approved_actor_subject_id, approved_at, consumed_at
+        ) values (
+            :device_hash, :user_hash, :client_id, cast(:scopes as jsonb),
+            'https://ledger.example', 'pending', :created_at, :expires_at,
+            :interval_seconds, null, 0, null, null, null
+        )
+        """,
+        {
+            "device_hash": device_hash,
+            "user_hash": user_hash,
+            "client_id": client_id,
+            "scopes": scopes,
+            "created_at": created_at,
+            "expires_at": expires_at,
+            "interval_seconds": interval_seconds,
+        },
+    )
+
+
 def _insert_browser_session(
     engine: Engine,
     *,
@@ -1381,11 +1417,9 @@ def test_device_grants_freeze_issuance_approval_and_polling_state(pg_engine) -> 
         ("device_code_hash = :value", {"value": b"x" * 32}),
         ("user_code_hash = :value", {"value": b"y" * 32}),
         ("client_id = 'device-lifecycle-other'", {}),
-        ("scopes = '[\"ledger:write\"]'::jsonb", {}),
         ("resource = 'https://other.example'", {}),
         ("created_at = :value", {"value": created_at - timedelta(seconds=1)}),
         ("expires_at = :value", {"value": expires_at + timedelta(seconds=1)}),
-        ("interval_seconds = 10", {}),
     ):
         _rejects_integrity(
             pg_engine,
@@ -1487,6 +1521,133 @@ def test_device_grants_freeze_issuance_approval_and_polling_state(pg_engine) -> 
             "device_hash": device_hash,
         },
     )
+
+
+def test_device_grant_scopes_only_narrow_during_pending_approval(pg_engine) -> None:
+    created_at, expires_at = _times()
+    _insert_user(pg_engine, "user:scope-approver")
+    _insert_oauth_client(pg_engine, client_id="device-scope-client")
+    device_hash = b"7" * 32
+    _insert_device_grant(
+        pg_engine,
+        device_hash=device_hash,
+        user_hash=b"8" * 32,
+        client_id="device-scope-client",
+        scopes='["book:read", "ledger:write"]',
+        created_at=created_at,
+        expires_at=expires_at,
+    )
+
+    _rejects_integrity(
+        pg_engine,
+        """
+        update oauth_device_grants
+           set scopes = '["book:read"]'::jsonb
+         where device_code_hash = :device_hash
+        """,
+        {"device_hash": device_hash},
+    )
+    for invalid_scopes in (
+        '["book:read", "ledger:write", "book:admin"]',
+        '["book:read", "book:unknown"]',
+    ):
+        _rejects_integrity(
+            pg_engine,
+            """
+            update oauth_device_grants
+               set status = 'approved', scopes = cast(:scopes as jsonb),
+                   approved_actor_subject_id = 'user:scope-approver',
+                   approved_at = :approved_at
+             where device_code_hash = :device_hash
+            """,
+            {
+                "scopes": invalid_scopes,
+                "approved_at": created_at + timedelta(minutes=1),
+                "device_hash": device_hash,
+            },
+        )
+
+    _execute(
+        pg_engine,
+        """
+        update oauth_device_grants
+           set status = 'approved', scopes = '["book:read"]'::jsonb,
+               approved_actor_subject_id = 'user:scope-approver',
+               approved_at = :approved_at
+         where device_code_hash = :device_hash
+        """,
+        {
+            "approved_at": created_at + timedelta(minutes=1),
+            "device_hash": device_hash,
+        },
+    )
+    _rejects_integrity(
+        pg_engine,
+        """
+        update oauth_device_grants set scopes = '[]'::jsonb
+         where device_code_hash = :device_hash
+        """,
+        {"device_hash": device_hash},
+    )
+
+
+def test_device_grant_interval_only_stays_or_adds_five_per_poll(pg_engine) -> None:
+    created_at, expires_at = _times()
+    _insert_oauth_client(pg_engine, client_id="device-interval-client")
+    device_hash = b"9" * 32
+    _insert_device_grant(
+        pg_engine,
+        device_hash=device_hash,
+        user_hash=b"0" * 32,
+        client_id="device-interval-client",
+        scopes='["book:read"]',
+        created_at=created_at,
+        expires_at=expires_at,
+    )
+    first_poll = created_at + timedelta(seconds=5)
+    second_poll = created_at + timedelta(seconds=6)
+    for poll_count, last_poll_at, interval_seconds in (
+        (1, first_poll, 5),
+        (2, second_poll, 10),
+    ):
+        _execute(
+            pg_engine,
+            """
+            update oauth_device_grants
+               set poll_count = :poll_count, last_poll_at = :last_poll_at,
+                   interval_seconds = :interval_seconds
+             where device_code_hash = :device_hash
+            """,
+            {
+                "poll_count": poll_count,
+                "last_poll_at": last_poll_at,
+                "interval_seconds": interval_seconds,
+                "device_hash": device_hash,
+            },
+        )
+
+    third_poll = created_at + timedelta(seconds=7)
+    for poll_count, last_poll_at, interval_seconds in (
+        (3, third_poll, 5),
+        (3, third_poll, 20),
+        (2, second_poll, 15),
+        (4, third_poll, 10),
+    ):
+        _rejects_integrity(
+            pg_engine,
+            """
+            update oauth_device_grants
+               set poll_count = :poll_count, last_poll_at = :last_poll_at,
+                   interval_seconds = :interval_seconds
+             where device_code_hash = :device_hash
+            """,
+            {
+                "poll_count": poll_count,
+                "last_poll_at": last_poll_at,
+                "interval_seconds": interval_seconds,
+                "device_hash": device_hash,
+            },
+        )
 
 
 def test_password_email_must_already_be_normalized(pg_engine) -> None:

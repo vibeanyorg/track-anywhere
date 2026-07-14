@@ -994,28 +994,42 @@ def _create_immutability_triggers(runtime_role: str) -> None:
             if new.device_code_hash is distinct from old.device_code_hash
                or new.user_code_hash is distinct from old.user_code_hash
                or new.client_id is distinct from old.client_id
-               or new.scopes is distinct from old.scopes
                or new.resource is distinct from old.resource
                or new.created_at is distinct from old.created_at
-               or new.expires_at is distinct from old.expires_at
-               or new.interval_seconds is distinct from old.interval_seconds then
+               or new.expires_at is distinct from old.expires_at then
                 raise exception using
                     errcode = '23514',
                     message = 'device grant issuance bindings are immutable';
             end if;
-            if new.poll_count < old.poll_count
-               or (old.last_poll_at is not null
-                   and (new.last_poll_at is null
-                        or new.last_poll_at < old.last_poll_at)) then
+            if new.scopes is distinct from old.scopes
+               and not (old.status = 'pending'
+                        and new.status = 'approved'
+                        and new.scopes <@ old.scopes) then
                 raise exception using
                     errcode = '23514',
-                    message = 'device grant polling state must be monotonic';
+                    message = 'device grant scopes may only narrow on approval';
             end if;
-            if (new.poll_count > old.poll_count)
-               <> (new.last_poll_at is distinct from old.last_poll_at) then
+            if new.poll_count = old.poll_count
+               and new.last_poll_at is not distinct from old.last_poll_at then
+                if new.interval_seconds is distinct from old.interval_seconds then
+                    raise exception using
+                        errcode = '23514',
+                        message = 'device grant interval may only change during a poll';
+                end if;
+            elsif new.poll_count = old.poll_count + 1
+                  and new.last_poll_at is not null
+                  and (old.last_poll_at is null
+                       or new.last_poll_at > old.last_poll_at) then
+                if new.interval_seconds <> old.interval_seconds
+                   and new.interval_seconds <> old.interval_seconds + 5 then
+                    raise exception using
+                        errcode = '23514',
+                        message = 'device grant poll interval may only increase by five';
+                end if;
+            else
                 raise exception using
                     errcode = '23514',
-                    message = 'device grant polling count and time must advance together';
+                    message = 'device grant polling state must advance one poll at a time';
             end if;
             if old.approved_at is not null
                and (new.approved_actor_subject_id
