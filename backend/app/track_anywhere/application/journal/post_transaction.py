@@ -266,6 +266,28 @@ def _build_plan(
 ) -> LedgerWritePlan:
     if locked_head.book_id != command.book_id:
         raise IdempotencyValidationError("locked Book does not match command")
+    payload = _build_posted_payload(command, uow)
+    pending = _build_posted_pending(command, payload, actor=actor)
+    return LedgerWritePlan(
+        expected_stream_versions={
+            ("journal_transaction", command.transaction_id): (
+                command.expected_stream_version
+            )
+        },
+        events=(pending,),
+        response_schema_version=1,
+        status_code=201,
+        body={
+            "transaction_id": str(command.transaction_id),
+            "as_of_book_position": locked_head.last_position + 1,
+        },
+    )
+
+
+def _build_posted_payload(
+    command: PostTransactionCommand,
+    uow: UnitOfWork,
+) -> JournalTransactionPosted:
     catalogs = CatalogRepository(uow.session)
 
     db_accounts = {}
@@ -329,7 +351,7 @@ def _build_plan(
         catalog=AccountCatalogSnapshot(accounts=domain_accounts),
     )
 
-    payload = JournalTransactionPosted(
+    return JournalTransactionPosted(
         transaction_id=command.transaction_id,
         kind=command.kind,
         postings=tuple(
@@ -346,30 +368,26 @@ def _build_plan(
         description_ref=command.description_ref,
         external_references=command.external_references,
     )
-    pending = PendingEvent(
-        event_id=uuid5(_POST_EVENT_NAMESPACE, str(command.command_id)),
+
+
+def _build_posted_pending(
+    command: PostTransactionCommand,
+    payload: JournalTransactionPosted,
+    *,
+    actor: CommandActor,
+    event_id: UUID | None = None,
+    causation_event_id: UUID | None = None,
+) -> PendingEvent:
+    return PendingEvent(
+        event_id=event_id or uuid5(_POST_EVENT_NAMESPACE, str(command.command_id)),
         stream_type="journal_transaction",
         stream_id=command.transaction_id,
         payload=payload,
         command_id=command.command_id,
         actor_subject_id=actor.subject_id,
         correlation_id=command.command_id,
-        causation_event_id=None,
+        causation_event_id=causation_event_id,
         effective_at=command.effective_at,
-    )
-    return LedgerWritePlan(
-        expected_stream_versions={
-            ("journal_transaction", command.transaction_id): (
-                command.expected_stream_version
-            )
-        },
-        events=(pending,),
-        response_schema_version=1,
-        status_code=201,
-        body={
-            "transaction_id": str(command.transaction_id),
-            "as_of_book_position": locked_head.last_position + 1,
-        },
     )
 
 
