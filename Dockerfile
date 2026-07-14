@@ -15,7 +15,8 @@ COPY backend ./backend
 COPY cli ./cli
 COPY alembic.ini ./
 
-RUN uv pip install --python /opt/venv/bin/python --no-cache ".[postgres]" \
+RUN VIRTUAL_ENV=/opt/venv uv sync --frozen --no-dev --extra postgres \
+        --active --no-editable --no-cache \
     && find /opt/venv -type d \( -name __pycache__ -o -name test -o -name tests \) -prune -exec rm -rf '{}' + \
     && find /opt/venv -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 

@@ -455,6 +455,17 @@ def test_compose_separates_migration_and_runtime_images_and_roles() -> None:
     assert "0.0.0.0:" not in compose
 
 
+def test_api_image_installs_python_dependencies_from_the_frozen_lock() -> None:
+    dockerfile = _read("Dockerfile")
+
+    assert "uv sync --frozen --no-dev --extra postgres" in dockerfile
+    assert "--active --no-editable --no-cache" in dockerfile
+    assert (
+        'uv pip install --python /opt/venv/bin/python --no-cache ".[postgres]"'
+        not in dockerfile
+    )
+
+
 def test_existing_stack_e2e_is_non_mutating_to_infrastructure() -> None:
     harness = _read("scripts/e2e-docker-postgres.sh")
 

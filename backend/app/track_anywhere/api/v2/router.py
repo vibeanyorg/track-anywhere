@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 from sqlalchemy import Engine
 
 from ..dependencies import SessionDependency, build_engine_dependencies
@@ -95,7 +95,9 @@ def create_v2_router(
             cookie_secure=cookie_secure,
         )
     )
-    if any(not route.path.startswith("/api/v2") for route in router.routes):
+    route_probe = FastAPI()
+    route_probe.include_router(router)
+    if any(not path.startswith("/api/v2") for path in route_probe.openapi()["paths"]):
         raise RuntimeError("V2 composition attempted to mount an unversioned route")
     return router
 
