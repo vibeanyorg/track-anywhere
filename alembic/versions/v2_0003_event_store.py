@@ -380,7 +380,9 @@ def _create_tables() -> None:
             "and last_book_position is null "
             "and completed_at is null) "
             "or (status = 'completed' "
+            "and response_schema_version is not null "
             "and response_schema_version > 0 "
+            "and result_status is not null "
             "and result_status between 100 and 599 "
             "and result_body is not null "
             "and completed_at is not null)",

@@ -208,6 +208,52 @@ def test_receipts_reject_bad_hashes_and_incomplete_completed_shape(pg_engine) ->
             )
 
 
+@pytest.mark.parametrize(
+    "missing_field",
+    (
+        "response_schema_version",
+        "result_status",
+        "result_body",
+        "completed_at",
+    ),
+)
+def test_completed_receipt_requires_every_response_field(
+    pg_engine, missing_field: str
+) -> None:
+    book_id = uuid4()
+    _insert_book(pg_engine, book_id, "USD")
+    values = _receipt_values(book_id)
+    completed_values = {
+        "response_schema_version": "1",
+        "result_status": "201",
+        "result_body": "'{\"ok\": true}'::jsonb",
+        "completed_at": "clock_timestamp()",
+    }
+    completed_values[missing_field] = "null"
+
+    with pytest.raises(IntegrityError):
+        with pg_engine.begin() as connection:
+            _insert_processing(connection, values)
+            connection.execute(
+                text(
+                    f"""
+                    update command_receipts
+                       set status = 'completed',
+                           response_schema_version =
+                               {completed_values["response_schema_version"]},
+                           result_status = {completed_values["result_status"]},
+                           result_body = {completed_values["result_body"]},
+                           completed_at = {completed_values["completed_at"]}
+                     where actor_subject_id = :actor_subject_id
+                       and book_id = :book_id
+                       and operation = :operation
+                       and idempotency_key_hash = :idempotency_key_hash
+                    """
+                ),
+                values,
+            )
+
+
 def test_processing_is_deferred_until_commit_and_rechecks_current_receipt(
     pg_engine,
 ) -> None:
