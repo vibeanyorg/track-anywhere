@@ -15,7 +15,7 @@ def test_auth_login_device_non_interactive_returns_authorization_payload(
         assert path == "/api/v2/oauth/device/authorize"
         assert payload == {
             "client_id": "track-anywhere-web",
-            "scope": "account:read book:read ledger:read",
+            "scope": "book:read ledger:read",
         }
         return 200, {
             "device_code": "device-code-1",

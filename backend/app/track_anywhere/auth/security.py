@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 from hashlib import sha256
 import secrets
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
@@ -9,10 +11,43 @@ from .contracts import AGENT_ALLOWED_SCOPES, DEVICE_GRANT_TYPE
 from .errors import AuthPolicyDenied, AuthSecurityError
 
 
+PASSWORD_HASH_ALGORITHM = "pbkdf2_sha256"
+PASSWORD_HASH_ITERATIONS = 390_000
+
+
 def secret_digest(value: str) -> bytes:
     if type(value) is not str or not value:
         raise ValueError("secret must be a non-empty string")
     return sha256(value.encode("utf-8")).digest()
+
+
+def verify_password_hash(password: str, encoded: str) -> bool:
+    """Verify the one password-hash format accepted by the V2 auth schema."""
+
+    try:
+        algorithm, iterations_text, salt, digest = encoded.split("$", 3)
+        iterations = int(iterations_text)
+    except (AttributeError, ValueError):
+        return False
+    if algorithm != PASSWORD_HASH_ALGORITHM:
+        return False
+    if iterations != PASSWORD_HASH_ITERATIONS:
+        return False
+    if not 1 <= len(salt) <= 128 or "$" in salt:
+        return False
+    if len(digest) != 64 or digest.casefold() != digest:
+        return False
+    try:
+        bytes.fromhex(digest)
+    except ValueError:
+        return False
+    candidate = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        iterations,
+    ).hex()
+    return hmac.compare_digest(candidate, digest)
 
 
 def new_secret(prefix: str) -> str:

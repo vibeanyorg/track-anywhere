@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useAuth } from "./auth-provider";
 import { readJson, responseError } from "../lib/http";
 
-const defaultScope = "account:read book:read ledger:read";
+const defaultScope = "book:read ledger:read";
 const defaultRedirectUri = "http://127.0.0.1:3000/auth/callback";
 
 type OAuthClient = {

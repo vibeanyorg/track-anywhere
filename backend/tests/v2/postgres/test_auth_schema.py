@@ -1176,9 +1176,9 @@ def test_device_grant_terminal_states_cannot_be_reopened(pg_engine) -> None:
 def test_password_hash_must_match_the_current_pbkdf2_verifier_contract(
     pg_engine,
 ) -> None:
-    from track_anywhere.password_auth import _verify_password
+    from track_anywhere.auth.security import verify_password_hash
 
-    assert _verify_password(_PASSWORD, CANONICAL_PASSWORD_HASH)
+    assert verify_password_hash(_PASSWORD, CANONICAL_PASSWORD_HASH)
     _insert_user(pg_engine, "user:password-valid")
     _execute(
         pg_engine,

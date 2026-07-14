@@ -13,7 +13,7 @@ from .config import CliConfig
 
 DEFAULT_PLATFORM_CLIENT_ID = "track-anywhere-web"
 DEFAULT_WEB_URL = "http://127.0.0.1:8000"
-DEFAULT_CLI_SCOPE = "account:read book:read ledger:read"
+DEFAULT_CLI_SCOPE = "book:read ledger:read"
 
 
 @dataclass(frozen=True)

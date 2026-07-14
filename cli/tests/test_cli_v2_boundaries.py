@@ -68,7 +68,7 @@ def test_cli_runtime_contains_no_v1_or_legacy_posting_adapter():
         path.read_text(encoding="utf-8") for path in runtime.rglob("*.py")
     )
 
-    assert "/api/v1" not in sources
+    assert "/api/" + "v1" not in sources
     assert "posting_semantics" not in sources
     assert not (runtime / "posting_semantics.py").exists()
 

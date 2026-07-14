@@ -125,7 +125,7 @@ function buildAuthorizationPayload(searchParams: { get(name: string): string | n
   return {
     client_id: searchParams.get("client_id"),
     redirect_uri: searchParams.get("redirect_uri"),
-    scope: searchParams.get("scope") || "account:read book:read ledger:read",
+    scope: searchParams.get("scope") || "book:read ledger:read",
     state: searchParams.get("state"),
     code_challenge: searchParams.get("code_challenge"),
     code_challenge_method: "S256",

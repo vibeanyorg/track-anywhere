@@ -79,11 +79,18 @@ def test_oauth_discovery_advertises_only_v2_endpoints() -> None:
     )
     assert metadata["registration_endpoint"].endswith("/api/v2/oauth/register")
     assert metadata["revocation_endpoint"].endswith("/api/v2/oauth/revoke")
+    assert metadata["scopes_supported"] == [
+        "book:read",
+        "book:write",
+        "ledger:read",
+        "ledger:write",
+    ]
     assert "/api/v1" not in response.text
 
     protected = TestClient(app).get("/api/v2/oauth/protected-resource")
     assert protected.status_code == 200
     assert protected.json()["resource"].endswith("/api/v2")
+    assert protected.json()["scopes_supported"] == metadata["scopes_supported"]
     assert "/api/v1" not in protected.text
 
 
@@ -173,9 +180,11 @@ def test_pkce_grant_and_access_token_are_persistent_single_use_binary_hashes(
         json={"api_key": raw_api_key},
     )
     verifier = "v" * 64
-    challenge = base64.urlsafe_b64encode(
-        sha256(verifier.encode()).digest()
-    ).rstrip(b"=").decode()
+    challenge = (
+        base64.urlsafe_b64encode(sha256(verifier.encode()).digest())
+        .rstrip(b"=")
+        .decode()
+    )
     authorization = client.post(
         "/api/v2/oauth/authorize",
         json={
@@ -321,10 +330,13 @@ def test_device_grant_is_persistent_approvable_and_single_use(pg_engine) -> None
     )
     assert revocation.status_code == 200
     assert revocation.json() == {"revoked": True}
-    assert client.get(
-        "/api/v2/auth/token-status",
-        headers={"Authorization": f"Bearer {access_token}"},
-    ).status_code == 401
+    assert (
+        client.get(
+            "/api/v2/auth/token-status",
+            headers={"Authorization": f"Bearer {access_token}"},
+        ).status_code
+        == 401
+    )
 
 
 def test_pending_device_poll_returns_oauth_error_and_records_poll(pg_engine) -> None:
