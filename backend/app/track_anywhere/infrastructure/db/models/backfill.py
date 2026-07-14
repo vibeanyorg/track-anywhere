@@ -3,7 +3,17 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, DateTime, LargeBinary, String, Text, text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKeyConstraint,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,6 +22,25 @@ from ..base import V2Base
 
 class BackfillSourceReceiptRecord(V2Base):
     __tablename__ = "backfill_source_receipts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["book_id"],
+            ["books.book_id"],
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
+        UniqueConstraint(
+            "snapshot_id",
+            "source_table",
+            "canonical_source_key",
+            name="uq_backfill_receipts_canonical_key",
+        ),
+        CheckConstraint("btrim(snapshot_id) <> ''", name="snapshot_nonblank"),
+        CheckConstraint("btrim(source_table) <> ''", name="table_nonblank"),
+        CheckConstraint("btrim(source_primary_key) <> ''", name="pk_nonblank"),
+        CheckConstraint("btrim(canonical_source_key) <> ''", name="key_nonblank"),
+        CheckConstraint("octet_length(source_hash) = 32", name="hash_length"),
+    )
 
     snapshot_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     source_table: Mapped[str] = mapped_column(String(96), primary_key=True)
@@ -27,6 +56,13 @@ class BackfillSourceReceiptRecord(V2Base):
 
 class BackfillCheckpointRecord(V2Base):
     __tablename__ = "backfill_checkpoints"
+    __table_args__ = (
+        CheckConstraint("btrim(snapshot_id) <> ''", name="snapshot_nonblank"),
+        CheckConstraint("btrim(source_table) <> ''", name="table_nonblank"),
+        CheckConstraint("octet_length(manifest_hash) = 32", name="hash_length"),
+        CheckConstraint("btrim(last_canonical_source_key) <> ''", name="key_nonblank"),
+        CheckConstraint("processed_count > 0", name="count_positive"),
+    )
 
     snapshot_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     source_table: Mapped[str] = mapped_column(String(96), primary_key=True)
@@ -40,6 +76,30 @@ class BackfillCheckpointRecord(V2Base):
 
 class BackfillQuarantineRecord(V2Base):
     __tablename__ = "backfill_quarantine"
+    __table_args__ = (
+        UniqueConstraint(
+            "snapshot_id",
+            "source_table",
+            "source_primary_key",
+            "reason_code",
+            name="uq_backfill_quarantine_source_reason",
+        ),
+        CheckConstraint("btrim(snapshot_id) <> ''", name="snapshot_nonblank"),
+        CheckConstraint("btrim(source_table) <> ''", name="table_nonblank"),
+        CheckConstraint("btrim(source_primary_key) <> ''", name="pk_nonblank"),
+        CheckConstraint("btrim(reason_code) <> ''", name="reason_nonblank"),
+        CheckConstraint("jsonb_typeof(details) = 'object'", name="details_object"),
+        CheckConstraint(
+            "decision in ('pending','accepted','skipped')",
+            name="decision_valid",
+        ),
+        CheckConstraint(
+            "(decision = 'pending' and decided_by is null and decided_at is null) or "
+            "(decision <> 'pending' and decided_by is not null and "
+            "btrim(decided_by) <> '' and decided_at is not null)",
+            name="decision_shape",
+        ),
+    )
 
     quarantine_id: Mapped[UUID] = mapped_column(primary_key=True)
     snapshot_id: Mapped[str] = mapped_column(String(80))
@@ -59,6 +119,16 @@ class BackfillQuarantineRecord(V2Base):
 
 class BackfillSealRecord(V2Base):
     __tablename__ = "backfill_seals"
+    __table_args__ = (
+        CheckConstraint("btrim(snapshot_id) <> ''", name="snapshot_nonblank"),
+        CheckConstraint("octet_length(manifest_hash) = 32", name="hash_length"),
+        CheckConstraint("jsonb_typeof(source_counts) = 'object'", name="counts_object"),
+        CheckConstraint(
+            "jsonb_typeof(terminal_book_hashes) = 'object'", name="hashes_object"
+        ),
+        CheckConstraint("quarantine_count >= 0", name="quarantine_nonnegative"),
+        CheckConstraint("receipt_count >= 0", name="receipt_nonnegative"),
+    )
 
     snapshot_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     manifest_hash: Mapped[bytes] = mapped_column(LargeBinary)
