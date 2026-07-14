@@ -10,6 +10,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import ArgumentError
@@ -35,6 +37,20 @@ _IDENTIFIER_COMPONENT = re.compile(r"^[a-z0-9_]+$")
 _DATABASE_PREFIX = "ta_v2_"
 _POSTGRES_DRIVER = "postgresql+psycopg"
 _REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+_ALEMBIC_INI = _REPOSITORY_ROOT / "alembic.ini"
+_V2_BASELINE_REVISION = "v2_0001_schema_guard"
+
+
+def current_v2_head() -> str:
+    script = ScriptDirectory.from_config(Config(str(_ALEMBIC_INI)))
+    heads = tuple(script.get_heads())
+    if len(heads) != 1:
+        raise RuntimeError("V2 schema must have exactly one Alembic head")
+    head = heads[0]
+    lineage = {revision.revision for revision in script.iterate_revisions(head, "base")}
+    if _V2_BASELINE_REVISION not in lineage:
+        raise RuntimeError("V2 Alembic head is detached from the schema baseline")
+    return head
 
 
 def _render_url(url: URL) -> str:
@@ -303,6 +319,7 @@ class PostgresDatabaseFactory:
         return handle
 
     def _upgrade_to_v2(self, database: ProvisionedDatabase) -> None:
+        expected_revision = current_v2_head()
         environment = os.environ.copy()
         environment["TRACK_ANYWHERE_DATABASE_URL"] = database.migrator_url
         environment["TRACK_ANYWHERE_DB_RUNTIME_ROLE"] = database.runtime_role
@@ -330,7 +347,7 @@ class PostgresDatabaseFactory:
                     text("select session_user")
                 ).scalar_one()
             if (revision, generation, session_user) != (
-                "v2_0001_schema_guard",
+                expected_revision,
                 2,
                 database.runtime_role,
             ):

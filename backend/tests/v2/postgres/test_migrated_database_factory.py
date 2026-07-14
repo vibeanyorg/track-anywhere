@@ -15,6 +15,7 @@ from backend.tests.v2.postgres.test_database_factory import (
     _database_exists,
     _run_factory_cli,
 )
+from backend.tests.v2.postgres_factory import current_v2_head
 
 
 def _factory_database_names(factory) -> set[str]:
@@ -62,9 +63,12 @@ def test_factory_creates_migrated_v2_database_for_runtime(
             connection.execute(text("select session_user")).scalar_one()
             == database.runtime_role
         )
-        assert connection.execute(
-            text("select version_num from alembic_version")
-        ).scalar_one() == ("v2_0001_schema_guard")
+        assert (
+            connection.execute(
+                text("select version_num from alembic_version")
+            ).scalar_one()
+            == current_v2_head()
+        )
         assert (
             connection.execute(
                 text("select schema_generation from v2_schema_metadata")

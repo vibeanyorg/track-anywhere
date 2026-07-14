@@ -1,0 +1,898 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from hashlib import sha256
+from uuid import UUID, uuid4
+
+import pytest
+from sqlalchemy import Engine, text
+from sqlalchemy.exc import DBAPIError, IntegrityError
+
+
+AUTH_TABLES = (
+    "auth_identities",
+    "book_members",
+    "browser_sessions",
+    "credentials",
+    "oauth_authorization_grants",
+    "oauth_client_redirect_uris",
+    "oauth_clients",
+    "oauth_device_grants",
+    "password_accounts",
+    "users",
+)
+
+
+def _execute(engine: Engine, statement: str, parameters: dict[str, object]) -> None:
+    with engine.begin() as connection:
+        connection.execute(text(statement), parameters)
+
+
+def _rejects_integrity(
+    engine: Engine, statement: str, parameters: dict[str, object]
+) -> None:
+    with pytest.raises(IntegrityError):
+        _execute(engine, statement, parameters)
+
+
+def _insert_user(engine: Engine, user_id: str, *, subject_type: str = "human") -> None:
+    _execute(
+        engine,
+        """
+        insert into users (user_id, subject_type, current_display_name, status)
+        values (:user_id, :subject_type, 'Test user', 'active')
+        """,
+        {"user_id": user_id, "subject_type": subject_type},
+    )
+
+
+def _insert_book(engine: Engine, book_id: UUID) -> None:
+    _execute(
+        engine,
+        """
+        insert into assets (
+            asset_code, kind, ledger_scale, input_scale, display_scale,
+            current_name, status
+        ) values ('USD', 'fiat', 2, 2, 2, 'US Dollar', 'active')
+        on conflict (asset_code) do nothing
+        """,
+        {},
+    )
+    _execute(
+        engine,
+        """
+        insert into books (book_id, current_name, base_asset_code, write_state)
+        values (:book_id, 'Auth book', 'USD', 'active')
+        """,
+        {"book_id": book_id},
+    )
+
+
+def _times() -> tuple[datetime, datetime]:
+    issued_at = datetime.now(UTC)
+    return issued_at, issued_at + timedelta(hours=1)
+
+
+def test_auth_tables_model_metadata_and_secret_column_inventory_are_exact(
+    pg_engine,
+) -> None:
+    from track_anywhere.infrastructure.db.base import V2Base, load_v2_models
+
+    load_v2_models()
+    assert set(AUTH_TABLES).issubset(V2Base.metadata.tables)
+
+    with pg_engine.connect() as connection:
+        relations = {
+            name: connection.execute(
+                text("select to_regclass(:relation)"),
+                {"relation": f"public.{name}"},
+            ).scalar_one()
+            for name in AUTH_TABLES
+        }
+        critical_shapes = {
+            tuple(row)
+            for row in connection.execute(
+                text(
+                    """
+                    select table_name, column_name, data_type,
+                           character_maximum_length
+                      from information_schema.columns
+                     where table_schema = 'public'
+                       and (table_name, column_name) in (
+                           ('users', 'user_id'),
+                           ('auth_identities', 'subject'),
+                           ('credentials', 'actor_subject_id'),
+                           ('credentials', 'token_hash'),
+                           ('oauth_authorization_grants', 'code_hash'),
+                           ('oauth_device_grants', 'device_code_hash'),
+                           ('oauth_device_grants', 'user_code_hash'),
+                           ('browser_sessions', 'session_hash'),
+                           ('browser_sessions', 'csrf_token_hash'),
+                           ('browser_sessions', 'credential_hash')
+                       )
+                    """
+                )
+            )
+        }
+        columns = {
+            (row.table_name, row.column_name)
+            for row in connection.execute(
+                text(
+                    """
+                    select table_name, column_name
+                      from information_schema.columns
+                     where table_schema = 'public'
+                       and table_name = any(:tables)
+                    """
+                ),
+                {"tables": list(AUTH_TABLES)},
+            )
+        }
+
+    assert all(relations.values())
+    assert critical_shapes == {
+        ("auth_identities", "subject", "character varying", 128),
+        ("browser_sessions", "credential_hash", "bytea", None),
+        ("browser_sessions", "csrf_token_hash", "bytea", None),
+        ("browser_sessions", "session_hash", "bytea", None),
+        ("credentials", "actor_subject_id", "character varying", 128),
+        ("credentials", "token_hash", "bytea", None),
+        ("oauth_authorization_grants", "code_hash", "bytea", None),
+        ("oauth_device_grants", "device_code_hash", "bytea", None),
+        ("oauth_device_grants", "user_code_hash", "bytea", None),
+        ("users", "user_id", "character varying", 128),
+    }
+    forbidden = {
+        ("credentials", "token"),
+        ("credentials", "api_key"),
+        ("oauth_clients", "client_secret"),
+        ("oauth_authorization_grants", "code"),
+        ("oauth_authorization_grants", "code_verifier"),
+        ("oauth_device_grants", "device_code"),
+        ("oauth_device_grants", "user_code"),
+        ("browser_sessions", "session_id"),
+        ("browser_sessions", "csrf_token"),
+        ("password_accounts", "password"),
+        ("password_accounts", "role"),
+    }
+    assert columns.isdisjoint(forbidden)
+
+
+def test_membership_identity_and_password_shapes_are_database_enforced(
+    pg_engine,
+) -> None:
+    book_id = uuid4()
+    user_id = "user:alice"
+    _insert_book(pg_engine, book_id)
+    _insert_user(pg_engine, user_id)
+    _execute(
+        pg_engine,
+        """
+        insert into book_members (
+            book_id, user_id, role, status, scopes, revoked_at
+        ) values (
+            :book_id, :user_id, 'owner', 'active',
+            cast(:scopes as jsonb), null
+        )
+        """,
+        {"book_id": book_id, "user_id": user_id, "scopes": '["book:read"]'},
+    )
+    _execute(
+        pg_engine,
+        """
+        insert into auth_identities (
+            identity_id, provider, subject, user_id, email_verified, status
+        ) values (
+            :identity_id, 'oidc', 'provider-subject', :user_id, false, 'active'
+        )
+        """,
+        {"identity_id": uuid4(), "user_id": user_id},
+    )
+    _execute(
+        pg_engine,
+        """
+        insert into password_accounts (
+            user_id, normalized_email, password_hash, status
+        ) values (
+            :user_id, 'alice@example.test', :password_hash, 'active'
+        )
+        """,
+        {
+            "user_id": user_id,
+            "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$encoded",
+        },
+    )
+
+    for statement, parameters in (
+        (
+            """
+            insert into book_members (
+                book_id, user_id, role, status, scopes, revoked_at
+            ) values (
+                :book_id, :user_id, 'superuser', 'active', '[]'::jsonb, null
+            )
+            """,
+            {"book_id": book_id, "user_id": user_id},
+        ),
+        (
+            """
+            update book_members set status = 'revoked', revoked_at = null
+             where book_id = :book_id and user_id = :user_id
+            """,
+            {"book_id": book_id, "user_id": user_id},
+        ),
+        (
+            """
+            update book_members set scopes = '{}'::jsonb
+             where book_id = :book_id and user_id = :user_id
+            """,
+            {"book_id": book_id, "user_id": user_id},
+        ),
+        (
+            """
+            insert into auth_identities (
+                identity_id, provider, subject, user_id, email_verified, status
+            ) values (
+                :identity_id, 'oidc', 'provider-subject', :user_id, false, 'active'
+            )
+            """,
+            {"identity_id": uuid4(), "user_id": user_id},
+        ),
+        (
+            """
+            insert into password_accounts (
+                user_id, normalized_email, password_hash, status
+            ) values (:user_id, 'blank@example.test', ' ', 'active')
+            """,
+            {"user_id": "missing-user"},
+        ),
+    ):
+        _rejects_integrity(pg_engine, statement, parameters)
+
+    _execute(
+        pg_engine,
+        """
+        update book_members
+           set role = 'auditor', status = 'revoked', revoked_at = :revoked_at
+         where book_id = :book_id and user_id = :user_id
+        """,
+        {
+            "book_id": book_id,
+            "user_id": user_id,
+            "revoked_at": datetime.now(UTC),
+        },
+    )
+
+
+def test_credentials_require_sha256_hashes_array_scopes_and_book_bound_machines(
+    pg_engine,
+) -> None:
+    book_id = uuid4()
+    user_id = "machine:worker"
+    _insert_book(pg_engine, book_id)
+    _insert_user(pg_engine, user_id, subject_type="machine")
+    issued_at, expires_at = _times()
+    valid = {
+        "credential_id": uuid4(),
+        "token_hash": b"t" * 32,
+        "jti": uuid4(),
+        "actor_subject_id": user_id,
+        "book_id": book_id,
+        "issued_at": issued_at,
+        "expires_at": expires_at,
+    }
+    statement = """
+        insert into credentials (
+            credential_id, token_hash, jti, actor_subject_id, actor_type,
+            auth_kind, book_id, scopes, issued_at, expires_at, revoked_at
+        ) values (
+            :credential_id, :token_hash, :jti, :actor_subject_id, 'machine',
+            'api_key', :book_id, '["ledger:write"]'::jsonb,
+            :issued_at, :expires_at, null
+        )
+    """
+    _execute(pg_engine, statement, valid)
+
+    for bad_length in (31, 33):
+        _rejects_integrity(
+            pg_engine,
+            statement,
+            {
+                **valid,
+                "credential_id": uuid4(),
+                "jti": uuid4(),
+                "token_hash": b"x" * bad_length,
+            },
+        )
+    _rejects_integrity(
+        pg_engine,
+        statement.replace(":book_id", "null"),
+        {**valid, "credential_id": uuid4(), "jti": uuid4()},
+    )
+    _rejects_integrity(
+        pg_engine,
+        statement.replace("'[\"ledger:write\"]'::jsonb", "'{}'::jsonb"),
+        {**valid, "credential_id": uuid4(), "jti": uuid4()},
+    )
+    _rejects_integrity(
+        pg_engine,
+        statement,
+        {
+            **valid,
+            "credential_id": uuid4(),
+            "jti": uuid4(),
+            "token_hash": b"z" * 32,
+            "expires_at": issued_at,
+        },
+    )
+
+
+def test_oauth_clients_redirects_and_authorization_grants_are_bound_and_hashed(
+    pg_engine,
+) -> None:
+    user_id = "user:oauth"
+    _insert_user(pg_engine, user_id)
+    _execute(
+        pg_engine,
+        """
+        insert into oauth_clients (
+            client_id, client_name, client_type, client_secret_hash,
+            scopes, status
+        ) values (
+            'public-client', 'Public client', 'public', null,
+            '["book:read"]'::jsonb, 'active'
+        )
+        """,
+        {},
+    )
+    _execute(
+        pg_engine,
+        """
+        insert into oauth_client_redirect_uris (client_id, redirect_uri, status)
+        values ('public-client', 'https://client.example/callback', 'active')
+        """,
+        {},
+    )
+    _execute(
+        pg_engine,
+        """
+        insert into oauth_clients (
+            client_id, client_name, client_type, client_secret_hash,
+            scopes, status
+        ) values (
+            'confidential-client', 'Confidential client', 'confidential',
+            :secret_hash, '[]'::jsonb, 'active'
+        )
+        """,
+        {"secret_hash": b"s" * 32},
+    )
+    created_at, expires_at = _times()
+    grant = {
+        "code_hash": b"c" * 32,
+        "actor_subject_id": user_id,
+        "created_at": created_at,
+        "expires_at": expires_at,
+    }
+    grant_statement = """
+        insert into oauth_authorization_grants (
+            code_hash, client_id, redirect_uri, actor_subject_id, scopes,
+            code_challenge, challenge_method, created_at, expires_at,
+            used_at, revoked_at
+        ) values (
+            :code_hash, 'public-client', 'https://client.example/callback',
+            :actor_subject_id, '["book:read"]'::jsonb,
+            'abcdefghijklmnopqrstuvwxyzABCDEFGHJKLMNOPQRSTUVWXYZ0123456789_-',
+            'S256', :created_at, :expires_at, null, null
+        )
+    """
+    _execute(pg_engine, grant_statement, grant)
+
+    for bad_hash in (b"x" * 31, b"x" * 33):
+        _rejects_integrity(pg_engine, grant_statement, {**grant, "code_hash": bad_hash})
+        _rejects_integrity(
+            pg_engine,
+            """
+            insert into oauth_clients (
+                client_id, client_name, client_type, client_secret_hash,
+                scopes, status
+            ) values (
+                :client_id, 'Bad secret', 'confidential', :secret_hash,
+                '[]'::jsonb, 'active'
+            )
+            """,
+            {"client_id": f"bad-{len(bad_hash)}", "secret_hash": bad_hash},
+        )
+    _rejects_integrity(
+        pg_engine,
+        grant_statement.replace(
+            "https://client.example/callback", "https://attacker.example/callback"
+        ),
+        {**grant, "code_hash": b"r" * 32},
+    )
+    _rejects_integrity(
+        pg_engine,
+        grant_statement.replace("'S256'", "'plain'"),
+        {**grant, "code_hash": b"p" * 32},
+    )
+    _rejects_integrity(
+        pg_engine,
+        """
+        update oauth_authorization_grants
+           set used_at = :before_created
+         where code_hash = :code_hash
+        """,
+        {"before_created": created_at - timedelta(seconds=1), "code_hash": b"c" * 32},
+    )
+
+
+def test_device_grants_and_browser_sessions_enforce_hash_and_lifecycle_shapes(
+    pg_engine,
+) -> None:
+    user_id = "user:device"
+    _insert_user(pg_engine, user_id)
+    _execute(
+        pg_engine,
+        """
+        insert into oauth_clients (
+            client_id, client_name, client_type, client_secret_hash,
+            scopes, status
+        ) values ('device-client', 'Device client', 'public', null, '[]'::jsonb, 'active')
+        """,
+        {},
+    )
+    issued_at, expires_at = _times()
+    device_statement = """
+        insert into oauth_device_grants (
+            device_code_hash, user_code_hash, client_id, scopes, status,
+            created_at, expires_at, interval_seconds, poll_count,
+            approved_actor_subject_id, approved_at, consumed_at
+        ) values (
+            :device_hash, :user_hash, 'device-client', '[]'::jsonb, 'pending',
+            :issued_at, :expires_at, 5, 0, null, null, null
+        )
+    """
+    _execute(
+        pg_engine,
+        device_statement,
+        {
+            "device_hash": b"d" * 32,
+            "user_hash": b"u" * 32,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        },
+    )
+    for bad_length in (31, 33):
+        _rejects_integrity(
+            pg_engine,
+            device_statement,
+            {
+                "device_hash": b"d" * bad_length,
+                "user_hash": b"u" * 32,
+                "issued_at": issued_at,
+                "expires_at": expires_at,
+            },
+        )
+        _rejects_integrity(
+            pg_engine,
+            device_statement,
+            {
+                "device_hash": bytes([bad_length]) * 32,
+                "user_hash": b"u" * bad_length,
+                "issued_at": issued_at,
+                "expires_at": expires_at,
+            },
+        )
+    _rejects_integrity(
+        pg_engine,
+        device_statement.replace("null, null, null", ":user_id, :issued_at, null"),
+        {
+            "device_hash": b"a" * 32,
+            "user_hash": b"b" * 32,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+            "user_id": user_id,
+        },
+    )
+
+    # Browser sessions reference a credential only by its fixed hash.
+    _execute(
+        pg_engine,
+        """
+        insert into credentials (
+            credential_id, token_hash, jti, actor_subject_id, actor_type,
+            auth_kind, book_id, scopes, issued_at, expires_at, revoked_at
+        ) values (
+            :credential_id, :credential_hash, :jti, :user_id, 'human',
+            'browser_session', null, '[]'::jsonb, :issued_at, :expires_at, null
+        )
+        """,
+        {
+            "credential_id": uuid4(),
+            "credential_hash": b"k" * 32,
+            "jti": uuid4(),
+            "user_id": user_id,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        },
+    )
+    session_statement = """
+        insert into browser_sessions (
+            session_hash, csrf_token_hash, credential_hash, user_id,
+            issued_at, expires_at, revoked_at
+        ) values (
+            :session_hash, :csrf_hash, :credential_hash, :user_id,
+            :issued_at, :expires_at, null
+        )
+    """
+    session = {
+        "session_hash": b"e" * 32,
+        "csrf_hash": b"f" * 32,
+        "credential_hash": b"k" * 32,
+        "user_id": user_id,
+        "issued_at": issued_at,
+        "expires_at": expires_at,
+    }
+    _execute(pg_engine, session_statement, session)
+    for column in ("session_hash", "csrf_hash", "credential_hash"):
+        for bad_length in (31, 33):
+            _rejects_integrity(
+                pg_engine,
+                session_statement,
+                {
+                    **session,
+                    "session_hash": uuid4().bytes + uuid4().bytes,
+                    column: b"x" * bad_length,
+                },
+            )
+    _rejects_integrity(
+        pg_engine,
+        session_statement,
+        {
+            **session,
+            "session_hash": b"q" * 32,
+            "expires_at": issued_at,
+        },
+    )
+
+
+def test_credential_actor_type_must_match_the_subject_type(pg_engine) -> None:
+    book_id = uuid4()
+    _insert_book(pg_engine, book_id)
+    _insert_user(pg_engine, "machine:bound", subject_type="machine")
+    _insert_user(pg_engine, "user:bound")
+    issued_at, expires_at = _times()
+    statement = """
+        insert into credentials (
+            credential_id, token_hash, jti, actor_subject_id, actor_type,
+            auth_kind, book_id, scopes, issued_at, expires_at, revoked_at
+        ) values (
+            :credential_id, :token_hash, :jti, :actor_subject_id, :actor_type,
+            'api_key', :book_id, '[]'::jsonb, :issued_at, :expires_at, null
+        )
+    """
+    for actor_subject_id, actor_type, scoped_book in (
+        ("machine:bound", "human", None),
+        ("user:bound", "machine", book_id),
+    ):
+        _rejects_integrity(
+            pg_engine,
+            statement,
+            {
+                "credential_id": uuid4(),
+                "token_hash": uuid4().bytes + uuid4().bytes,
+                "jti": uuid4(),
+                "actor_subject_id": actor_subject_id,
+                "actor_type": actor_type,
+                "book_id": scoped_book,
+                "issued_at": issued_at,
+                "expires_at": expires_at,
+            },
+        )
+
+
+def test_browser_session_subject_is_bound_to_the_credential_subject(pg_engine) -> None:
+    _insert_user(pg_engine, "user:credential-owner")
+    _insert_user(pg_engine, "user:session-impostor")
+    issued_at, expires_at = _times()
+    credential_hash = b"b" * 32
+    _execute(
+        pg_engine,
+        """
+        insert into credentials (
+            credential_id, token_hash, jti, actor_subject_id, actor_type,
+            auth_kind, book_id, scopes, issued_at, expires_at, revoked_at
+        ) values (
+            :credential_id, :credential_hash, :jti, 'user:credential-owner',
+            'human', 'browser_session', null, '[]'::jsonb,
+            :issued_at, :expires_at, null
+        )
+        """,
+        {
+            "credential_id": uuid4(),
+            "credential_hash": credential_hash,
+            "jti": uuid4(),
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        },
+    )
+    _rejects_integrity(
+        pg_engine,
+        """
+        insert into browser_sessions (
+            session_hash, csrf_token_hash, credential_hash, user_id,
+            issued_at, expires_at, revoked_at
+        ) values (
+            :session_hash, :csrf_hash, :credential_hash,
+            'user:session-impostor', :issued_at, :expires_at, null
+        )
+        """,
+        {
+            "session_hash": b"s" * 32,
+            "csrf_hash": b"c" * 32,
+            "credential_hash": credential_hash,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        },
+    )
+
+
+def test_scope_arrays_accept_only_nonempty_strings(pg_engine) -> None:
+    book_id = uuid4()
+    _insert_book(pg_engine, book_id)
+    _insert_user(pg_engine, "machine:scope", subject_type="machine")
+    issued_at, expires_at = _times()
+    _rejects_integrity(
+        pg_engine,
+        """
+        insert into book_members (
+            book_id, user_id, role, status, scopes, revoked_at
+        ) values (
+            :book_id, 'machine:scope', 'editor', 'active', '[{}]'::jsonb, null
+        )
+        """,
+        {"book_id": book_id},
+    )
+    _rejects_integrity(
+        pg_engine,
+        """
+        insert into credentials (
+            credential_id, token_hash, jti, actor_subject_id, actor_type,
+            auth_kind, book_id, scopes, issued_at, expires_at, revoked_at
+        ) values (
+            :credential_id, :token_hash, :jti, 'machine:scope', 'machine',
+            'api_key', :book_id, '[1]'::jsonb, :issued_at, :expires_at, null
+        )
+        """,
+        {
+            "credential_id": uuid4(),
+            "token_hash": b"h" * 32,
+            "jti": uuid4(),
+            "book_id": book_id,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        },
+    )
+    _rejects_integrity(
+        pg_engine,
+        """
+        insert into oauth_clients (
+            client_id, client_name, client_type, client_secret_hash,
+            scopes, status
+        ) values ('bad-scopes', 'Bad scopes', 'public', null, '[null]'::jsonb, 'active')
+        """,
+        {},
+    )
+
+
+def test_oauth_grants_retain_the_bound_resource(pg_engine) -> None:
+    _insert_user(pg_engine, "user:resource")
+    _execute(
+        pg_engine,
+        """
+        insert into oauth_clients (
+            client_id, client_name, client_type, client_secret_hash,
+            scopes, status
+        ) values ('resource-client', 'Resource client', 'public', null, '[]'::jsonb, 'active')
+        """,
+        {},
+    )
+    _execute(
+        pg_engine,
+        """
+        insert into oauth_client_redirect_uris (client_id, redirect_uri, status)
+        values ('resource-client', 'https://client.example/resource', 'active')
+        """,
+        {},
+    )
+    created_at, expires_at = _times()
+    code_hash = b"r" * 32
+    _execute(
+        pg_engine,
+        """
+        insert into oauth_authorization_grants (
+            code_hash, client_id, redirect_uri, actor_subject_id, scopes,
+            code_challenge, challenge_method, resource, created_at, expires_at,
+            used_at, revoked_at
+        ) values (
+            :code_hash, 'resource-client', 'https://client.example/resource',
+            'user:resource', '[]'::jsonb, :challenge, 'S256',
+            'https://ledger.example', :created_at, :expires_at, null, null
+        )
+        """,
+        {
+            "code_hash": code_hash,
+            "challenge": "A" * 43,
+            "created_at": created_at,
+            "expires_at": expires_at,
+        },
+    )
+    with pg_engine.connect() as connection:
+        resource = connection.execute(
+            text(
+                "select resource from oauth_authorization_grants where code_hash = :code_hash"
+            ),
+            {"code_hash": code_hash},
+        ).scalar_one()
+    assert resource == "https://ledger.example"
+
+
+def test_device_grant_terminal_states_cannot_be_reopened(pg_engine) -> None:
+    _insert_user(pg_engine, "user:approver")
+    _execute(
+        pg_engine,
+        """
+        insert into oauth_clients (
+            client_id, client_name, client_type, client_secret_hash,
+            scopes, status
+        ) values ('terminal-client', 'Terminal client', 'public', null, '[]'::jsonb, 'active')
+        """,
+        {},
+    )
+    created_at, expires_at = _times()
+    _rejects_integrity(
+        pg_engine,
+        """
+        insert into oauth_device_grants (
+            device_code_hash, user_code_hash, client_id, scopes, status,
+            created_at, expires_at, interval_seconds, poll_count,
+            approved_actor_subject_id, approved_at, consumed_at
+        ) values (
+            :device_hash, :user_hash, 'terminal-client', '[]'::jsonb, 'denied',
+            :created_at, :expires_at, 5, 0, 'user:approver', :created_at, null
+        )
+        """,
+        {
+            "device_hash": b"d" * 32,
+            "user_hash": b"u" * 32,
+            "created_at": created_at,
+            "expires_at": expires_at,
+        },
+    )
+    terminal_hash = b"t" * 32
+    _execute(
+        pg_engine,
+        """
+        insert into oauth_device_grants (
+            device_code_hash, user_code_hash, client_id, scopes, status,
+            created_at, expires_at, interval_seconds, poll_count,
+            approved_actor_subject_id, approved_at, consumed_at
+        ) values (
+            :device_hash, :user_hash, 'terminal-client', '[]'::jsonb, 'denied',
+            :created_at, :expires_at, 5, 0, null, null, null
+        )
+        """,
+        {
+            "device_hash": terminal_hash,
+            "user_hash": b"v" * 32,
+            "created_at": created_at,
+            "expires_at": expires_at,
+        },
+    )
+    with pytest.raises(DBAPIError):
+        _execute(
+            pg_engine,
+            """
+            update oauth_device_grants set status = 'pending'
+             where device_code_hash = :device_hash
+            """,
+            {"device_hash": terminal_hash},
+        )
+
+
+def test_password_email_must_already_be_normalized(pg_engine) -> None:
+    _insert_user(pg_engine, "user:email")
+    _rejects_integrity(
+        pg_engine,
+        """
+        insert into password_accounts (
+            user_id, normalized_email, password_hash, status
+        ) values (
+            'user:email', ' Alice@Example.Test ',
+            '$argon2id$v=19$m=65536,t=3,p=4$encoded', 'active'
+        )
+        """,
+        {},
+    )
+
+
+def test_auth_rows_never_store_raw_sentinels_and_acl_forbids_physical_delete(
+    pg_engine, migrated_postgres_database
+) -> None:
+    sentinel = f"raw-secret-{uuid4()}"
+    digest = sha256(sentinel.encode()).digest()
+    user_id = "user:redaction"
+    issued_at, expires_at = _times()
+    _insert_user(pg_engine, user_id)
+    _execute(
+        pg_engine,
+        """
+        insert into credentials (
+            credential_id, token_hash, jti, actor_subject_id, actor_type,
+            auth_kind, book_id, scopes, issued_at, expires_at, revoked_at
+        ) values (
+            :credential_id, :token_hash, :jti, :user_id, 'human', 'api_key',
+            null, '[]'::jsonb, :issued_at, :expires_at, null
+        )
+        """,
+        {
+            "credential_id": uuid4(),
+            "token_hash": digest,
+            "jti": uuid4(),
+            "user_id": user_id,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        },
+    )
+    with pg_engine.connect() as connection:
+        serialized_rows = []
+        for table_name in AUTH_TABLES:
+            serialized_rows.extend(
+                connection.execute(
+                    text(
+                        f"select to_jsonb(row_record)::text from {table_name} row_record"
+                    )
+                ).scalars()
+            )
+
+        table_list = ", ".join(f"'{name}'" for name in AUTH_TABLES)
+        grants = {
+            (row.table_name, row.grantee, row.privilege_type, row.is_grantable)
+            for row in connection.execute(
+                text(
+                    f"""
+                    select relation.relname as table_name,
+                           coalesce(grantee.rolname, 'PUBLIC') as grantee,
+                           acl.privilege_type,
+                           acl.is_grantable
+                      from pg_catalog.pg_class relation
+                      join pg_catalog.pg_namespace namespace
+                        on namespace.oid = relation.relnamespace
+                      cross join lateral pg_catalog.aclexplode(
+                          coalesce(
+                              relation.relacl,
+                              pg_catalog.acldefault('r', relation.relowner)
+                          )
+                      ) acl
+                      left join pg_catalog.pg_roles grantee
+                        on grantee.oid = acl.grantee
+                     where namespace.nspname = 'public'
+                       and relation.relname in ({table_list})
+                       and (
+                           acl.grantee = 0
+                           or grantee.rolname = :runtime_role
+                       )
+                    """
+                ),
+                {"runtime_role": migrated_postgres_database.runtime_role},
+            )
+        }
+
+    assert all(sentinel not in row for row in serialized_rows)
+    assert grants == {
+        (table_name, migrated_postgres_database.runtime_role, privilege, False)
+        for table_name in AUTH_TABLES
+        for privilege in ("SELECT", "INSERT", "UPDATE")
+    }
+    for table_name in AUTH_TABLES:
+        with pytest.raises(DBAPIError):
+            _execute(pg_engine, f"delete from {table_name} where false", {})

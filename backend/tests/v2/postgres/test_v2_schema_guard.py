@@ -12,13 +12,36 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import ProgrammingError
 
 from backend.tests.v2.postgres.test_database_factory import _temporary_role_config
-from backend.tests.v2.postgres_factory import PostgresDatabaseFactory
+from backend.tests.v2.postgres_factory import (
+    PostgresDatabaseFactory,
+    current_v2_head,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
 ALEMBIC_INI = REPOSITORY_ROOT / "alembic.ini"
 DATABASE_URL_ENV = "TRACK_ANYWHERE_DATABASE_URL"
 RUNTIME_ROLE_ENV = "TRACK_ANYWHERE_DB_RUNTIME_ROLE"
+V2_MODEL_TABLES = {
+    "accounts",
+    "assets",
+    "auth_identities",
+    "book_members",
+    "books",
+    "browser_sessions",
+    "categories",
+    "category_versions",
+    "credentials",
+    "oauth_authorization_grants",
+    "oauth_client_redirect_uris",
+    "oauth_clients",
+    "oauth_device_grants",
+    "password_accounts",
+    "protected_description_sidecars",
+    "users",
+    "v2_schema_metadata",
+}
+V2_RELATION_NAMES = sorted({"alembic_version", *V2_MODEL_TABLES})
 
 
 def _run_alembic(
@@ -215,6 +238,7 @@ def _schema_object_exists(
 
 def test_v2_metadata_uses_naming_convention_and_contains_generation_marker() -> None:
     base = importlib.import_module("track_anywhere.infrastructure.db.base")
+    base.load_v2_models()
 
     assert base.V2Base.metadata.naming_convention == {
         "ix": "ix_%(column_0_label)s",
@@ -223,7 +247,7 @@ def test_v2_metadata_uses_naming_convention_and_contains_generation_marker() -> 
         "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
         "pk": "pk_%(table_name)s",
     }
-    assert set(base.V2Base.metadata.tables) == {"v2_schema_metadata"}
+    assert set(base.V2Base.metadata.tables) == V2_MODEL_TABLES
 
 
 def test_model_loader_ignores_only_the_absent_models_package(
@@ -344,9 +368,12 @@ def test_empty_database_upgrades_to_the_only_v2_head(empty_postgres_database) ->
 
     assert result.returncode == 0, result.stderr
     with create_engine(empty_postgres_database.runtime_url).connect() as connection:
-        assert connection.execute(
-            text("select version_num from alembic_version")
-        ).scalar_one() == ("v2_0001_schema_guard")
+        assert (
+            connection.execute(
+                text("select version_num from alembic_version")
+            ).scalar_one()
+            == current_v2_head()
+        )
         assert (
             connection.execute(
                 text("select schema_generation from v2_schema_metadata")
@@ -371,10 +398,7 @@ def test_empty_database_upgrades_to_the_only_v2_head(empty_postgres_database) ->
         ("alembic_version", empty_postgres_database.owner_role),
         ("v2_schema_metadata", empty_postgres_database.owner_role),
     ]
-    assert _relation_names(empty_postgres_database.migrator_url) == [
-        "alembic_version",
-        "v2_schema_metadata",
-    ]
+    assert _relation_names(empty_postgres_database.migrator_url) == V2_RELATION_NAMES
 
     checked = _run_alembic(
         "check",
@@ -528,10 +552,7 @@ def test_first_revision_allows_only_a_verified_alembic_version_table(
     )
 
     assert result.returncode == 0, result.stderr
-    assert _relation_names(empty_postgres_database.migrator_url) == [
-        "alembic_version",
-        "v2_schema_metadata",
-    ]
+    assert _relation_names(empty_postgres_database.migrator_url) == V2_RELATION_NAMES
 
 
 @pytest.mark.parametrize(
@@ -705,9 +726,9 @@ def test_programmatic_current_rejects_marker_without_version_table(
     )
 
     assert result.returncode != 0
-    assert _relation_names(migrated_postgres_database.migrator_url) == [
-        "v2_schema_metadata"
-    ]
+    assert _relation_names(migrated_postgres_database.migrator_url) == sorted(
+        V2_MODEL_TABLES
+    )
 
 
 def test_programmatic_current_accepts_a_valid_baseline(
@@ -720,7 +741,7 @@ def test_programmatic_current_accepts_a_valid_baseline(
     )
 
     assert result.returncode == 0, result.stderr
-    assert "v2_0001_schema_guard" in result.stdout
+    assert current_v2_head() in result.stdout
 
 
 def test_stamp_base_cannot_detach_an_existing_generation_marker(
@@ -736,9 +757,12 @@ def test_stamp_base_cannot_detach_an_existing_generation_marker(
     assert result.returncode != 0
     assert "generation marker" in result.stderr.lower()
     with create_engine(migrated_postgres_database.runtime_url).connect() as connection:
-        assert connection.execute(
-            text("select version_num from alembic_version")
-        ).scalar_one() == ("v2_0001_schema_guard")
+        assert (
+            connection.execute(
+                text("select version_num from alembic_version")
+            ).scalar_one()
+            == current_v2_head()
+        )
         assert (
             connection.execute(
                 text("select schema_generation from v2_schema_metadata")
@@ -759,9 +783,12 @@ def test_irreversible_downgrade_fails_without_changing_the_baseline(
 
     assert result.returncode != 0
     with create_engine(migrated_postgres_database.runtime_url).connect() as connection:
-        assert connection.execute(
-            text("select version_num from alembic_version")
-        ).scalar_one() == ("v2_0001_schema_guard")
+        assert (
+            connection.execute(
+                text("select version_num from alembic_version")
+            ).scalar_one()
+            == current_v2_head()
+        )
         assert (
             connection.execute(
                 text("select schema_generation from v2_schema_metadata")
@@ -830,10 +857,7 @@ def test_environment_url_wins_over_explicit_config(
 
     assert result.returncode == 0, result.stderr
     assert _relation_names(configured.migrator_url) == []
-    assert _relation_names(environment.migrator_url) == [
-        "alembic_version",
-        "v2_schema_metadata",
-    ]
+    assert _relation_names(environment.migrator_url) == V2_RELATION_NAMES
 
 
 def test_explicit_config_url_is_used_only_when_environment_key_is_absent(
@@ -1043,9 +1067,12 @@ def test_runtime_receives_readiness_only_and_exact_future_dml_privileges(
             ).scalar_one()
             == 2
         )
-        assert connection.execute(
-            text("select version_num from alembic_version")
-        ).scalar_one() == ("v2_0001_schema_guard")
+        assert (
+            connection.execute(
+                text("select version_num from alembic_version")
+            ).scalar_one()
+            == current_v2_head()
+        )
         marker_privileges = {
             privilege: connection.execute(
                 text(
