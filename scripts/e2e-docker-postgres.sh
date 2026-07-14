@@ -4,7 +4,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_NAME="${TRACK_ANYWHERE_E2E_PROJECT:-track-anywhere-e2e-$$}"
 COMPOSE_FILE="$ROOT_DIR/compose.e2e.yaml"
-WORK_DIR="$(mktemp -d)"
+WORK_DIR=""
+NO_BUILD="${TRACK_ANYWHERE_E2E_NO_BUILD:-0}"
+EXISTING_STACK="${TRACK_ANYWHERE_E2E_EXISTING_STACK:-0}"
+RESULT_FILE="${TRACK_ANYWHERE_E2E_RESULT_FILE:-}"
 DOCKER_CLI_TIMEOUT_SECONDS="${TRACK_ANYWHERE_DOCKER_CLI_TIMEOUT_SECONDS:-20}"
 DOCKER_COMPOSE_TIMEOUT_SECONDS="${TRACK_ANYWHERE_DOCKER_COMPOSE_TIMEOUT_SECONDS:-900}"
 HTTP_TIMEOUT_SECONDS="${TRACK_ANYWHERE_HTTP_TIMEOUT_SECONDS:-15}"
@@ -14,6 +17,23 @@ MIGRATOR_PASSWORD="${TRACK_ANYWHERE_MIGRATOR_PASSWORD:-track_anywhere_migrator_t
 RUNTIME_ROLE="${TRACK_ANYWHERE_RUNTIME_ROLE:-track_anywhere_runtime}"
 RUNTIME_PASSWORD="${TRACK_ANYWHERE_RUNTIME_PASSWORD:-track_anywhere_runtime_test}"
 RAW_API_KEY="ta_v2_local_e2e"
+LEGACY_API_PATH='/api/'"v1"
+
+if [[ "$NO_BUILD" == "1" && "$EXISTING_STACK" != "1" ]]; then
+  printf 'NO_BUILD requires TRACK_ANYWHERE_E2E_EXISTING_STACK=1\n' >&2
+  exit 2
+fi
+if [[ "$EXISTING_STACK" == "1" ]]; then
+  : "${TRACK_ANYWHERE_E2E_PROJECT:?existing stack requires TRACK_ANYWHERE_E2E_PROJECT}"
+  : "${TRACK_ANYWHERE_E2E_API_PORT:?existing stack requires TRACK_ANYWHERE_E2E_API_PORT}"
+  : "${TRACK_ANYWHERE_E2E_POSTGRES_PORT:?existing stack requires TRACK_ANYWHERE_E2E_POSTGRES_PORT}"
+  : "${TRACK_ANYWHERE_E2E_API_IMAGE:?existing stack requires TRACK_ANYWHERE_E2E_API_IMAGE}"
+  : "${TRACK_ANYWHERE_E2E_WEB_IMAGE:?existing stack requires TRACK_ANYWHERE_E2E_WEB_IMAGE}"
+fi
+if [[ -n "$RESULT_FILE" && -e "$RESULT_FILE" ]]; then
+  printf 'TRACK_ANYWHERE_E2E_RESULT_FILE must not already exist\n' >&2
+  exit 2
+fi
 
 pick_port() {
   python3 - <<'PY'
@@ -39,8 +59,20 @@ require_identifier "$RUNTIME_ROLE" "runtime role"
 
 export TRACK_ANYWHERE_E2E_API_BIND="${TRACK_ANYWHERE_E2E_API_BIND:-127.0.0.1}"
 export TRACK_ANYWHERE_E2E_POSTGRES_BIND="${TRACK_ANYWHERE_E2E_POSTGRES_BIND:-127.0.0.1}"
+export TRACK_ANYWHERE_E2E_WEB_BIND="${TRACK_ANYWHERE_E2E_WEB_BIND:-127.0.0.1}"
 export TRACK_ANYWHERE_E2E_API_PORT="${TRACK_ANYWHERE_E2E_API_PORT:-$(pick_port)}"
 export TRACK_ANYWHERE_E2E_POSTGRES_PORT="${TRACK_ANYWHERE_E2E_POSTGRES_PORT:-$(pick_port)}"
+export TRACK_ANYWHERE_E2E_WEB_PORT="${TRACK_ANYWHERE_E2E_WEB_PORT:-$(pick_port)}"
+
+for bind in \
+  "$TRACK_ANYWHERE_E2E_API_BIND" \
+  "$TRACK_ANYWHERE_E2E_POSTGRES_BIND" \
+  "$TRACK_ANYWHERE_E2E_WEB_BIND"; do
+  if [[ "$bind" != "127.0.0.1" && "$bind" != "localhost" && "$bind" != "::1" ]]; then
+    printf 'E2E ports must bind to loopback, got %s\n' "$bind" >&2
+    exit 2
+  fi
+done
 
 API_URL="http://${TRACK_ANYWHERE_E2E_API_BIND}:${TRACK_ANYWHERE_E2E_API_PORT}"
 MIGRATOR_URL="postgresql+psycopg://${MIGRATOR_ROLE}:${MIGRATOR_PASSWORD}@${TRACK_ANYWHERE_E2E_POSTGRES_BIND}:${TRACK_ANYWHERE_E2E_POSTGRES_PORT}/track_anywhere?connect_timeout=5"
@@ -53,6 +85,7 @@ else
 fi
 export PYTHONPATH="$ROOT_DIR/backend/app:$ROOT_DIR/cli${PYTHONPATH:+:$PYTHONPATH}"
 cd "$ROOT_DIR"
+WORK_DIR="$(mktemp -d)"
 
 run_with_timeout() {
   local timeout_seconds="$1"
@@ -79,7 +112,9 @@ cleanup() {
   if [[ "$exit_code" -ne 0 ]]; then
     run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" logs --no-color api postgres || true
   fi
-  if [[ "${TRACK_ANYWHERE_E2E_KEEP:-0}" != "1" ]]; then
+  if [[ "$EXISTING_STACK" == "1" ]]; then
+    rm -rf "$WORK_DIR"
+  elif [[ "${TRACK_ANYWHERE_E2E_KEEP:-0}" != "1" ]]; then
     run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$WORK_DIR"
   else
@@ -137,22 +172,52 @@ get_json() {
     >"$output"
 }
 
-printf 'Starting isolated PostgreSQL 17 on port %s\n' "$TRACK_ANYWHERE_E2E_POSTGRES_PORT"
 run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker version --format '{{.Server.Version}}' >/dev/null
-run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" up -d postgres
-run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
-  "${COMPOSE[@]}" exec -T postgres \
-  psql --username track_anywhere --dbname postgres --set ON_ERROR_STOP=1 \
-  --command "ALTER DATABASE track_anywhere OWNER TO \"$OWNER_ROLE\""
+if [[ "$EXISTING_STACK" == "1" ]]; then
+  printf 'existing stack mode: refusing infrastructure mutation; running smoke checks only\n'
+  run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
+    "${COMPOSE[@]}" ps --status running api web postgres >/dev/null
+  EXISTING_API_CONTAINER="$("${COMPOSE[@]}" ps -q api)"
+  EXISTING_WEB_CONTAINER="$("${COMPOSE[@]}" ps -q web)"
+  EXISTING_POSTGRES_CONTAINER="$("${COMPOSE[@]}" ps -q postgres)"
+  if [[ -z "$EXISTING_API_CONTAINER" || -z "$EXISTING_WEB_CONTAINER" || -z "$EXISTING_POSTGRES_CONTAINER" ]]; then
+    printf 'existing stack is missing a required running service\n' >&2
+    exit 1
+  fi
+  EXPECTED_API_IMAGE_ID="$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
+    docker image inspect "$TRACK_ANYWHERE_E2E_API_IMAGE" --format '{{.Id}}')"
+  EXPECTED_WEB_IMAGE_ID="$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
+    docker image inspect "$TRACK_ANYWHERE_E2E_WEB_IMAGE" --format '{{.Id}}')"
+  EXPECTED_POSTGRES_IMAGE_ID="$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
+    docker image inspect postgres:17-alpine --format '{{.Id}}')"
+  if [[ "$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker inspect "$EXISTING_API_CONTAINER" --format '{{.Image}}')" != "$EXPECTED_API_IMAGE_ID" ]]; then
+    printf 'existing stack API image mismatch\n' >&2
+    exit 1
+  fi
+  if [[ "$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker inspect "$EXISTING_WEB_CONTAINER" --format '{{.Image}}')" != "$EXPECTED_WEB_IMAGE_ID" ]]; then
+    printf 'existing stack web image mismatch\n' >&2
+    exit 1
+  fi
+  if [[ "$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker inspect "$EXISTING_POSTGRES_CONTAINER" --format '{{.Image}}')" != "$EXPECTED_POSTGRES_IMAGE_ID" ]]; then
+    printf 'existing stack PostgreSQL image mismatch\n' >&2
+    exit 1
+  fi
+else
+  printf 'Starting isolated PostgreSQL 17 on port %s\n' "$TRACK_ANYWHERE_E2E_POSTGRES_PORT"
+  run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" up -d postgres
+  run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
+    "${COMPOSE[@]}" exec -T postgres \
+    psql --username track_anywhere --dbname postgres --set ON_ERROR_STOP=1 \
+    --command "ALTER DATABASE track_anywhere OWNER TO \"$OWNER_ROLE\""
 
-printf 'Migrating the disposable database with the dedicated migrator role\n'
-TRACK_ANYWHERE_DATABASE_URL="$MIGRATOR_URL" \
-TRACK_ANYWHERE_DB_RUNTIME_ROLE="$RUNTIME_ROLE" \
+  printf 'Building the local API image before the one-shot migration service\n'
+  run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" build api
+  printf 'Migrating the disposable database with the dedicated migrator role\n'
   run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" \
-  "${PY[@]}" -m alembic upgrade head
+    "${COMPOSE[@]}" run --rm --no-deps migrate
 
-printf 'Seeding one disposable V2 API key through the runtime role\n'
-TRACK_ANYWHERE_E2E_RAW_API_KEY="$RAW_API_KEY" "${PY[@]}" - "$RUNTIME_URL" <<'PY'
+  printf 'Seeding one disposable V2 API key through the runtime role\n'
+  TRACK_ANYWHERE_E2E_RAW_API_KEY="$RAW_API_KEY" "${PY[@]}" - "$RUNTIME_URL" <<'PY'
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 import os
@@ -188,8 +253,6 @@ try:
                 auth_kind="api_key",
                 book_id=None,
                 scopes=[
-                    "account:read",
-                    "account:write",
                     "book:read",
                     "book:write",
                     "ledger:read",
@@ -205,8 +268,10 @@ finally:
     engine.dispose()
 PY
 
-printf 'Building and starting the local V2 API at %s\n' "$API_URL"
-run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" up -d --build api
+  printf 'Starting the local V2 API at %s\n' "$API_URL"
+  run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" up -d --no-build api
+fi
+
 for _ in {1..90}; do
   if curl --connect-timeout 2 --max-time 5 -fsS "$API_URL/api/v2/ready" >"$WORK_DIR/ready.json"; then
     break
@@ -220,7 +285,22 @@ curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
 assert_json_expr "$WORK_DIR/health.json" "data == {'status': 'ok', 'api_version': 'v2'}"
 assert_json_expr "$WORK_DIR/ready.json" "data['status'] == 'ok' and data['api_version'] == 'v2' and data['checks'] == {'database': 'ok', 'schema': 'ok'}"
 
-mapfile -t ids < <("${PY[@]}" - <<'PY'
+V1_STATUS="$(curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -sS \
+  -o "$WORK_DIR/v1-response.txt" -w '%{http_code}' "$API_URL$LEGACY_API_PATH/health")"
+if [[ "$V1_STATUS" != "404" ]]; then
+  printf 'expected the legacy API health route to be absent, got HTTP %s\n' "$V1_STATUS" >&2
+  exit 1
+fi
+
+run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+  python -m track_anywhere_cli.main \
+  --base-url http://127.0.0.1:8000 --agent system health \
+  >"$WORK_DIR/cli-health.json"
+
+ids=()
+while IFS= read -r generated_id; do
+  ids+=("$generated_id")
+done < <("${PY[@]}" - <<'PY'
 from uuid import uuid4
 for _ in range(14):
     print(uuid4())
@@ -271,6 +351,35 @@ assert_json_expr "$WORK_DIR/journal-before.json" "data['as_of_book_position'] ==
 get_json "/api/v2/books/$BOOK_ID/balances?as_of_book_position=1" "$WORK_DIR/balances.json"
 assert_json_expr "$WORK_DIR/balances.json" "data['as_of_book_position'] == 1 and sorted(item['units'] for item in data['items']) == ['-1234', '1234'] and all(isinstance(item['units'], str) for item in data['items'])"
 
+"${PY[@]}" - "$RUNTIME_URL" "$BOOK_ID" "$RUNTIME_ROLE" <<'PY'
+import sys
+
+from sqlalchemy import create_engine, text
+
+engine = create_engine(sys.argv[1], pool_pre_ping=True)
+try:
+    with engine.connect() as connection:
+        identity = connection.execute(
+            text(
+                "select session_user, current_user, current_database(), "
+                "current_setting('server_version_num')"
+            )
+        ).one()
+        balances = connection.execute(
+            text(
+                "select balance_units from account_balances "
+                "where book_id = cast(:book_id as uuid) order by balance_units"
+            ),
+            {"book_id": sys.argv[2]},
+        ).scalars().all()
+    assert tuple(identity[:3]) == (sys.argv[3], sys.argv[3], "track_anywhere")
+    assert 170000 <= int(identity[3]) < 180000
+    assert [int(value) for value in balances] == [-1234, 1234]
+    print("fresh_connection_balance_visibility=PASS")
+finally:
+    engine.dispose()
+PY
+
 post_json "/api/v2/books/$BOOK_ID/journal/transactions/$TRANSACTION_ID/reporting-lines/assign" \
   "$WORK_DIR/reporting-assigned.json" "e2e-reporting-$TRANSACTION_ID" \
   "{\"command_id\":\"$REPORTING_COMMAND_ID\",\"expected_revision\":0,\"effective_at\":\"2026-07-14T12:31:00Z\",\"lines\":[{\"line_id\":\"$REPORTING_LINE_ID\",\"line_version_id\":\"$REPORTING_LINE_VERSION_ID\",\"catalog_id\":\"$CATEGORY_VERSION_ID\",\"asset_code\":\"USD\",\"units\":\"1234\",\"line_kind\":\"expense\",\"dimension\":\"category\",\"dimension_id\":\"$CATEGORY_ID\",\"description_ref\":null}]}"
@@ -286,6 +395,22 @@ assert_json_expr "$WORK_DIR/reversed.json" "data['reversal_transaction_id'] == '
 
 get_json "/api/v2/books/$BOOK_ID/journal?limit=10&as_of_book_position=3" "$WORK_DIR/journal-after.json"
 assert_json_expr "$WORK_DIR/journal-after.json" "data['as_of_book_position'] == 3 and len(data['items']) == 2 and any(item['transaction_id'] == '$TRANSACTION_ID' and item['is_reversed'] and item['reversed_by_transaction_id'] == '$REVERSAL_TRANSACTION_ID' for item in data['items']) and any(item['transaction_id'] == '$REVERSAL_TRANSACTION_ID' and item['reverses_transaction_id'] == '$TRANSACTION_ID' for item in data['items'])"
+
+if [[ -n "$RESULT_FILE" ]]; then
+  "${PY[@]}" - "$RESULT_FILE" "$BOOK_ID" "$TRANSACTION_ID" <<'PY'
+import json
+import sys
+
+payload = {
+    "book_id": sys.argv[2],
+    "fresh_connection_balance_visibility": True,
+    "transaction_id": sys.argv[3],
+}
+with open(sys.argv[1], "x", encoding="utf-8") as output:
+    json.dump(payload, output, sort_keys=True, separators=(",", ":"))
+    output.write("\n")
+PY
+fi
 
 printf 'Track Anywhere local V2 E2E passed: api=%s book=%s tx=%s\n' \
   "$API_URL" "$BOOK_ID" "$TRANSACTION_ID"

@@ -26,6 +26,22 @@ services:
     profiles: ["tools"]
     command: ["psql", "--version"]
 
+  migrate:
+    build:
+      context: .
+      target: api-runtime
+    image: ${TRACK_ANYWHERE_E2E_API_IMAGE:-track-anywhere-api:e2e}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TRACK_ANYWHERE_MODE: local
+      TRACK_ANYWHERE_DATABASE_URL: postgresql+psycopg://${TRACK_ANYWHERE_MIGRATOR_ROLE:-track_anywhere_migrator}:${TRACK_ANYWHERE_MIGRATOR_PASSWORD:-track_anywhere_migrator_test}@postgres:5432/track_anywhere
+      TRACK_ANYWHERE_DB_RUNTIME_ROLE: ${TRACK_ANYWHERE_RUNTIME_ROLE:-track_anywhere_runtime}
+      PYTHONUNBUFFERED: "1"
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    restart: "no"
+
   api:
     build:
       context: .
@@ -41,6 +57,19 @@ services:
       PYTHONUNBUFFERED: "1"
     ports:
       - "${TRACK_ANYWHERE_E2E_API_BIND:-127.0.0.1}:${TRACK_ANYWHERE_E2E_API_PORT:-18080}:8000"
+
+  web:
+    build:
+      context: .
+      target: web-runtime
+    image: ${TRACK_ANYWHERE_E2E_WEB_IMAGE:-track-anywhere-web:e2e}
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      TRACK_ANYWHERE_BACKEND_URL: http://api:8000
+    ports:
+      - "${TRACK_ANYWHERE_E2E_WEB_BIND:-127.0.0.1}:${TRACK_ANYWHERE_E2E_WEB_PORT:-13000}:3000"
 
 volumes:
   postgres17-data:

@@ -19,3 +19,8 @@ htmlcov
 tmp
 temp
 playground
+output
+backups
+*.dump
+*.backup
+*.sql.gz
