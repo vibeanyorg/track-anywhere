@@ -22,6 +22,7 @@ from .reference_reducer import (
     VerificationReport,
     canonical_json_bytes,
     reduce_target,
+    verify_source_target_semantics,
 )
 
 
@@ -66,6 +67,18 @@ _TARGET_TABLES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "status",
         ),
         ("book_id", "category_id"),
+    ),
+    "category_versions": (
+        (
+            "book_id",
+            "category_id",
+            "category_version_id",
+            "parent_category_id",
+            "name",
+            "status",
+            "change_reason_code",
+        ),
+        ("book_id", "category_id", "category_version_id"),
     ),
     "ledger_events": (
         (
@@ -215,7 +228,6 @@ _SOURCE_TO_TARGET_COUNTS = {
     "categories": "categories",
     "ledger_books": "books",
     "postings": "journal_postings",
-    "transaction_lines": "reporting_lines",
     "transactions": "journal_transactions",
 }
 
@@ -432,6 +444,20 @@ def verify_target(target_url: str) -> VerificationReport:
         engine.dispose()
 
 
+def _read_target_facts(
+    target_url: str,
+) -> tuple[dict[str, list[Mapping[str, object]]], VerificationReport]:
+    engine = create_engine(target_url, pool_pre_ping=True)
+    try:
+        with engine.connect() as connection:
+            if connection.dialect.name != "postgresql":
+                raise ValueError("independent verifier requires PostgreSQL")
+            rows = _read_target(connection)
+        return rows, reduce_target(rows)
+    finally:
+        engine.dispose()
+
+
 def _database_identity(url: str) -> tuple[str, int, str]:
     parsed = make_url(url)
     if not parsed.host or not parsed.database:
@@ -578,7 +604,12 @@ def _source_table_hash(
 
 def _read_source_facts(
     source_url: str, expected: tuple[_ManifestTable, ...]
-) -> tuple[str, dict[str, int], dict[str, str]]:
+) -> tuple[
+    str,
+    dict[str, int],
+    dict[str, str],
+    dict[str, list[Mapping[str, object]]],
+]:
     engine = create_engine(source_url, pool_pre_ping=True)
     try:
         with engine.connect().execution_options(
@@ -603,6 +634,7 @@ def _read_source_facts(
                     raise ValueError("source must contain exactly one Alembic revision")
                 counts: dict[str, int] = {}
                 hashes: dict[str, str] = {}
+                rows_by_table: dict[str, list[Mapping[str, object]]] = {}
                 for table in sorted(expected, key=lambda item: item.table):
                     rendered_columns = ", ".join(
                         _safe_identifier(column)
@@ -621,7 +653,8 @@ def _read_source_facts(
                     hashes[table.table] = _source_table_hash(
                         records, primary_key=table.primary_key
                     )
-        return revisions[0], counts, hashes
+                    rows_by_table[table.table] = records
+        return revisions[0], counts, hashes, rows_by_table
     finally:
         engine.dispose()
 
@@ -692,11 +725,19 @@ def verify_backfill(
         manifest_path
     )
     expected_counts = {table.table: table.row_count for table in manifest_tables}
-    source_revision, source_counts, source_hashes = _read_source_facts(
+    source_revision, source_counts, source_hashes, source_rows = _read_source_facts(
         source_url, manifest_tables
     )
-    target_report = verify_target(target_url)
+    target_rows, target_report = _read_target_facts(target_url)
     issues = list(target_report.issues)
+    if manifest_tables:
+        issues.extend(
+            verify_source_target_semantics(
+                source_rows,
+                target_rows,
+                snapshot_id=snapshot_id,
+            )
+        )
     if source_revision != expected_revision:
         issues.append(
             VerificationIssue(
