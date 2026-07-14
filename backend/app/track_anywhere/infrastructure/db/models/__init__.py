@@ -16,6 +16,12 @@ from .auth import (
     PasswordAccountRecord,
     UserRecord,
 )
+from .backfill import (
+    BackfillCheckpointRecord,
+    BackfillQuarantineRecord,
+    BackfillSealRecord,
+    BackfillSourceReceiptRecord,
+)
 from .catalog import (
     AccountRecord,
     AssetRecord,
@@ -50,6 +56,10 @@ __all__ = [
     "AccountBalanceRecord",
     "AssetRecord",
     "AuthIdentityRecord",
+    "BackfillCheckpointRecord",
+    "BackfillQuarantineRecord",
+    "BackfillSealRecord",
+    "BackfillSourceReceiptRecord",
     "BookMemberRecord",
     "BookRecord",
     "BookEventHeadRecord",
