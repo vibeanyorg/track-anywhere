@@ -23,6 +23,7 @@ ALEMBIC_INI = REPOSITORY_ROOT / "alembic.ini"
 DATABASE_URL_ENV = "TRACK_ANYWHERE_DATABASE_URL"
 RUNTIME_ROLE_ENV = "TRACK_ANYWHERE_DB_RUNTIME_ROLE"
 V2_MODEL_TABLES = {
+    "account_balances",
     "accounts",
     "assets",
     "auth_identities",
@@ -35,6 +36,8 @@ V2_MODEL_TABLES = {
     "command_receipts",
     "credentials",
     "event_stream_heads",
+    "journal_postings",
+    "journal_transactions",
     "ledger_events",
     "oauth_authorization_grants",
     "oauth_client_redirect_uris",
@@ -42,6 +45,11 @@ V2_MODEL_TABLES = {
     "oauth_device_grants",
     "password_accounts",
     "protected_description_sidecars",
+    "reporting_lines",
+    "synchronous_projection_applied_events",
+    "synchronous_projection_event_types",
+    "transaction_external_references",
+    "transaction_reversals",
     "users",
     "v2_schema_metadata",
 }

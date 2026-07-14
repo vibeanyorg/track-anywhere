@@ -65,10 +65,10 @@ def _event_values(
         "event_id": event_id or uuid4(),
         "book_id": book_id,
         "book_position": book_position,
-        "stream_type": "journal_transaction",
+        "stream_type": "investment_lot",
         "stream_id": stream_id or uuid4(),
         "stream_version": stream_version,
-        "event_type": "JournalTransactionPosted",
+        "event_type": "InvestmentLotAcquired",
         "event_schema_version": 1,
         "command_id": uuid4(),
         "actor_subject_id": "human:test-user",
@@ -420,7 +420,7 @@ def test_book_and_stream_heads_are_event_bound_and_advance_monotonically(
             book_id, stream_type, stream_id, last_version,
             last_book_position, last_event_id
         ) values (
-            :book_id, 'journal_transaction', :stream_id, 99, 2, :last_event_id
+            :book_id, 'investment_lot', :stream_id, 99, 2, :last_event_id
         )
         """,
         {

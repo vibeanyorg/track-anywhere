@@ -24,10 +24,21 @@ from .event_store import (
     LedgerEventRecord,
 )
 from .privacy import ProtectedDescriptionSidecarRecord
+from .projections import (
+    AccountBalanceRecord,
+    JournalPostingRecord,
+    JournalTransactionRecord,
+    ReportingLineRecord,
+    SynchronousProjectionAppliedEventRecord,
+    SynchronousProjectionEventTypeRecord,
+    TransactionExternalReferenceRecord,
+    TransactionReversalRecord,
+)
 
 
 __all__ = [
     "AccountRecord",
+    "AccountBalanceRecord",
     "AssetRecord",
     "AuthIdentityRecord",
     "BookMemberRecord",
@@ -40,11 +51,18 @@ __all__ = [
     "CommandReceiptRecord",
     "EventStreamHeadRecord",
     "LedgerEventRecord",
+    "JournalPostingRecord",
+    "JournalTransactionRecord",
     "OAuthAuthorizationGrantRecord",
     "OAuthClientRecord",
     "OAuthClientRedirectUriRecord",
     "OAuthDeviceGrantRecord",
     "PasswordAccountRecord",
     "ProtectedDescriptionSidecarRecord",
+    "ReportingLineRecord",
+    "SynchronousProjectionAppliedEventRecord",
+    "SynchronousProjectionEventTypeRecord",
+    "TransactionExternalReferenceRecord",
+    "TransactionReversalRecord",
     "UserRecord",
 ]

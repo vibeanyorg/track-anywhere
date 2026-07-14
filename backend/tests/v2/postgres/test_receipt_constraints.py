@@ -54,8 +54,8 @@ def _insert_event(
                     actor_subject_id, correlation_id, causation_event_id,
                     effective_at, payload, previous_hash, event_hash
                 ) values (
-                    :event_id, :book_id, :position, 'journal_transaction',
-                    :stream_id, 1, 'JournalTransactionPosted', 1, :command_id,
+                    :event_id, :book_id, :position, 'investment_lot',
+                    :stream_id, 1, 'InvestmentLotAcquired', 1, :command_id,
                     'human:test-user', :correlation_id, null, :effective_at,
                     '{}'::jsonb, :previous_hash, :event_hash
                 )

@@ -98,8 +98,8 @@ def _insert_book_and_event(pg_engine):
                     actor_subject_id, correlation_id, causation_event_id,
                     effective_at, payload, previous_hash, event_hash
                 ) values (
-                    :event_id, :book_id, 1, 'journal_transaction', :stream_id,
-                    1, 'JournalTransactionPosted', 1, :command_id,
+                    :event_id, :book_id, 1, 'investment_lot', :stream_id,
+                    1, 'InvestmentLotAcquired', 1, :command_id,
                     'human:test-user', :correlation_id, null, :effective_at,
                     '{}'::jsonb, :previous_hash, :event_hash
                 )
@@ -354,8 +354,8 @@ def test_runtime_cannot_supply_generated_event_fields_or_mutate_event_store(
                 correlation_id, effective_at, recorded_at, payload,
                 previous_hash, event_hash
             ) values (
-                :event_id, 999999, :book_id, 2, 'journal_transaction',
-                :stream_id, 1, 'JournalTransactionPosted', 1, :command_id,
+                :event_id, 999999, :book_id, 2, 'investment_lot',
+                :stream_id, 1, 'InvestmentLotAcquired', 1, :command_id,
                 'human:test-user', :correlation_id, :effective_at, :recorded_at,
                 '{}'::jsonb, :previous_hash, :event_hash
             )
@@ -475,7 +475,8 @@ def test_event_store_trigger_functions_are_invoker_only_and_private(
         "event_stream_heads",
         "ledger_events",
     }
-    assert len(rows) == 5
+    assert len(rows) == 6
+    assert any(row["function_name"] == "v2_require_sync_projection" for row in rows)
     for row in rows:
         assert row["prosecdef"] is False
         assert row["proconfig"] is not None
