@@ -385,6 +385,7 @@ def _create_tables() -> None:
             "and result_status is not null "
             "and result_status between 100 and 599 "
             "and result_body is not null "
+            "and result_body <> 'null'::jsonb "
             "and completed_at is not null)",
             name=op.f("ck_command_receipts_lifecycle_shape"),
         ),
@@ -527,6 +528,32 @@ def _create_triggers(runtime_role: str) -> None:
             ) then
                 raise exception using errcode = '23514',
                     message = 'processing command receipt cannot commit';
+            end if;
+            if exists (
+                select 1
+                  from public.command_receipts receipt
+                 where receipt.actor_subject_id = new.actor_subject_id
+                   and receipt.book_id = new.book_id
+                   and receipt.operation = new.operation
+                   and receipt.idempotency_key_hash = new.idempotency_key_hash
+                   and receipt.status = 'completed'
+                   and receipt.first_book_position is not null
+                   and (
+                       select count(*)::numeric
+                         from public.ledger_events event
+                        where event.book_id = receipt.book_id
+                          and event.book_position between
+                              receipt.first_book_position
+                              and receipt.last_book_position
+                          and event.command_id = receipt.command_id
+                   ) <> (
+                       receipt.last_book_position::numeric
+                       - receipt.first_book_position::numeric
+                       + 1
+                   )
+            ) then
+                raise exception using errcode = '23514',
+                    message = 'command receipt range must be contiguous and owned by its command';
             end if;
             return null;
         """,

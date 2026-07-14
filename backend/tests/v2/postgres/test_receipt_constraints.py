@@ -35,8 +35,15 @@ def _insert_book(engine: Engine, book_id: UUID, asset_code: str) -> None:
         )
 
 
-def _insert_event(engine: Engine, book_id: UUID, position: int) -> UUID:
+def _insert_event(
+    engine: Engine,
+    book_id: UUID,
+    position: int,
+    *,
+    command_id: UUID | None = None,
+) -> UUID:
     event_id = uuid4()
+    event_command_id = command_id or uuid4()
     with engine.begin() as connection:
         connection.execute(
             text(
@@ -59,7 +66,7 @@ def _insert_event(engine: Engine, book_id: UUID, position: int) -> UUID:
                 "book_id": book_id,
                 "position": position,
                 "stream_id": uuid4(),
-                "command_id": uuid4(),
+                "command_id": event_command_id,
                 "correlation_id": uuid4(),
                 "effective_at": datetime.now(UTC),
                 "previous_hash": b"p" * 32,
@@ -74,6 +81,7 @@ def _receipt_values(
     *,
     key_hash: bytes = b"k" * 32,
     request_hash: bytes = b"r" * 32,
+    command_id: UUID | None = None,
 ) -> dict[str, object]:
     return {
         "actor_subject_id": "human:test-user",
@@ -81,7 +89,7 @@ def _receipt_values(
         "operation": "post-transaction",
         "idempotency_key_hash": key_hash,
         "request_hash": request_hash,
-        "command_id": uuid4(),
+        "command_id": command_id or uuid4(),
     }
 
 
@@ -254,6 +262,95 @@ def test_completed_receipt_requires_every_response_field(
             )
 
 
+def test_completed_receipt_rejects_json_null_response_body(pg_engine) -> None:
+    book_id = uuid4()
+    _insert_book(pg_engine, book_id, "USD")
+    values = _receipt_values(book_id)
+
+    with pytest.raises(IntegrityError):
+        with pg_engine.begin() as connection:
+            _insert_processing(connection, values)
+            connection.execute(
+                text(
+                    """
+                    update command_receipts
+                       set status = 'completed',
+                           response_schema_version = 1,
+                           result_status = 201,
+                           result_body = 'null'::jsonb,
+                           completed_at = clock_timestamp()
+                     where actor_subject_id = :actor_subject_id
+                       and book_id = :book_id
+                       and operation = :operation
+                       and idempotency_key_hash = :idempotency_key_hash
+                    """
+                ),
+                values,
+            )
+
+
+@pytest.mark.parametrize("range_case", ("other_commands", "position_gap"))
+def test_completed_receipt_range_is_contiguous_and_owned_by_its_command(
+    pg_engine, range_case: str
+) -> None:
+    book_id = uuid4()
+    command_id = uuid4()
+    _insert_book(pg_engine, book_id, "USD")
+    if range_case == "other_commands":
+        _insert_event(pg_engine, book_id, 1, command_id=uuid4())
+        _insert_event(pg_engine, book_id, 2, command_id=uuid4())
+        last_position = 2
+    else:
+        _insert_event(pg_engine, book_id, 1, command_id=command_id)
+        _insert_event(pg_engine, book_id, 3, command_id=command_id)
+        last_position = 3
+
+    values = _receipt_values(book_id, command_id=command_id)
+    with pytest.raises(IntegrityError):
+        _insert_completed(
+            pg_engine,
+            values,
+            first_position=1,
+            last_position=last_position,
+        )
+
+
+def test_completed_receipt_accepts_contiguous_events_from_its_command(
+    pg_engine,
+) -> None:
+    book_id = uuid4()
+    command_id = uuid4()
+    _insert_book(pg_engine, book_id, "USD")
+    for position in (1, 2, 3):
+        _insert_event(pg_engine, book_id, position, command_id=command_id)
+
+    values = _receipt_values(book_id, command_id=command_id)
+    _insert_completed(pg_engine, values, first_position=1, last_position=3)
+
+    with pg_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    """
+                select count(*)
+                  from ledger_events event
+                  join command_receipts receipt
+                    on receipt.book_id = event.book_id
+                   and receipt.command_id = event.command_id
+                   and event.book_position between
+                       receipt.first_book_position and receipt.last_book_position
+                 where receipt.actor_subject_id = :actor_subject_id
+                   and receipt.book_id = :book_id
+                   and receipt.operation = :operation
+                   and receipt.idempotency_key_hash = :idempotency_key_hash
+                """
+                ),
+                values,
+            ).scalar_one()
+            == 3
+        )
+
+
 def test_processing_is_deferred_until_commit_and_rechecks_current_receipt(
     pg_engine,
 ) -> None:
@@ -292,15 +389,16 @@ def test_receipt_positions_are_paired_book_scoped_and_reference_real_events(
 ) -> None:
     first_book = uuid4()
     second_book = uuid4()
+    range_command_id = uuid4()
     _insert_book(pg_engine, first_book, "USD")
     _insert_book(pg_engine, second_book, "EUR")
-    _insert_event(pg_engine, first_book, 1)
-    _insert_event(pg_engine, first_book, 2)
+    _insert_event(pg_engine, first_book, 1, command_id=range_command_id)
+    _insert_event(pg_engine, first_book, 2, command_id=range_command_id)
     _insert_event(pg_engine, second_book, 3)
 
     _insert_completed(
         pg_engine,
-        _receipt_values(first_book, key_hash=b"v" * 32),
+        _receipt_values(first_book, key_hash=b"v" * 32, command_id=range_command_id),
         first_position=1,
         last_position=2,
     )

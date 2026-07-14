@@ -241,6 +241,7 @@ class CommandReceiptRecord(V2Base):
             "and result_status is not null "
             "and result_status between 100 and 599 "
             "and result_body is not null "
+            "and result_body <> 'null'::jsonb "
             "and completed_at is not null)",
             name="lifecycle_shape",
         ),
