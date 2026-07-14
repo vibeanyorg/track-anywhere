@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+from track_anywhere.observability.audit import AuditSignal, redact_sensitive
+from track_anywhere.observability.metrics import LedgerMetrics
+
+
+def test_sensitive_fields_are_redacted_recursively() -> None:
+    raw = {
+        "api_key": "ta_super_secret",
+        "credential": "bearer secret",
+        "memo": "a full private merchant memo",
+        "attachment_content": "raw attachment bytes",
+        "book_id": "book-safe",
+        "nested": {"csrf_token": "csrf-secret", "error_code": "safe_code"},
+    }
+
+    safe = redact_sensitive(raw)
+    rendered = repr(safe)
+
+    assert "ta_super_secret" not in rendered
+    assert "bearer secret" not in rendered
+    assert "full private merchant memo" not in rendered
+    assert "raw attachment bytes" not in rendered
+    assert safe["book_id"] == "book-safe"
+    assert safe["nested"]["error_code"] == "safe_code"
+
+
+def test_audit_signal_and_metrics_expose_only_bounded_fields() -> None:
+    signal = AuditSignal.p0(
+        code="terminal_hash_mismatch",
+        book_id="book-1",
+        fields={"memo": "private", "expected_hash": "do-not-log"},
+    )
+    metrics = LedgerMetrics()
+    metrics.increment("integrity.p0", labels={"book_id": "book-1", "api_key": "secret"})
+
+    assert signal.severity == "P0"
+    assert signal.fields == {"memo": "[REDACTED]", "expected_hash": "[REDACTED]"}
+    assert "secret" not in repr(metrics.snapshot())
