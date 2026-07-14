@@ -10,6 +10,7 @@ from .auth import create_auth_router
 from .catalogs import create_catalog_router
 from .investments import create_investment_router
 from .journal import create_journal_router
+from .queries import create_query_router
 from .reporting import create_reporting_router
 from .system import create_system_router
 
@@ -86,6 +87,8 @@ def create_v2_router(
             )
         )
     router.include_router(versioned_router)
+    if engine is not None:
+        router.include_router(create_query_router(get_session))
     router.include_router(
         auth_factory(
             get_session,
