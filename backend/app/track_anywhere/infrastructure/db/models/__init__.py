@@ -17,6 +17,12 @@ from .catalog import (
     CategoryRecord,
     CategoryVersionRecord,
 )
+from .event_store import (
+    BookEventHeadRecord,
+    CommandReceiptRecord,
+    EventStreamHeadRecord,
+    LedgerEventRecord,
+)
 from .privacy import ProtectedDescriptionSidecarRecord
 
 
@@ -26,10 +32,14 @@ __all__ = [
     "AuthIdentityRecord",
     "BookMemberRecord",
     "BookRecord",
+    "BookEventHeadRecord",
     "BrowserSessionRecord",
     "CategoryRecord",
     "CategoryVersionRecord",
     "CredentialRecord",
+    "CommandReceiptRecord",
+    "EventStreamHeadRecord",
+    "LedgerEventRecord",
     "OAuthAuthorizationGrantRecord",
     "OAuthClientRecord",
     "OAuthClientRedirectUriRecord",

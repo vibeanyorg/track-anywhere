@@ -27,11 +27,15 @@ V2_MODEL_TABLES = {
     "assets",
     "auth_identities",
     "book_members",
+    "book_event_heads",
     "books",
     "browser_sessions",
     "categories",
     "category_versions",
+    "command_receipts",
     "credentials",
+    "event_stream_heads",
+    "ledger_events",
     "oauth_authorization_grants",
     "oauth_client_redirect_uris",
     "oauth_clients",
@@ -41,7 +45,9 @@ V2_MODEL_TABLES = {
     "users",
     "v2_schema_metadata",
 }
-V2_RELATION_NAMES = sorted({"alembic_version", *V2_MODEL_TABLES})
+V2_RELATION_NAMES = sorted(
+    {"alembic_version", "ledger_global_sequence", *V2_MODEL_TABLES}
+)
 
 
 def _run_alembic(
@@ -727,7 +733,7 @@ def test_programmatic_current_rejects_marker_without_version_table(
 
     assert result.returncode != 0
     assert _relation_names(migrated_postgres_database.migrator_url) == sorted(
-        V2_MODEL_TABLES
+        {"ledger_global_sequence", *V2_MODEL_TABLES}
     )
 
 
