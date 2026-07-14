@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
+from hashlib import pbkdf2_hmac, sha256
 from uuid import UUID, uuid4
 
 import pytest
@@ -20,6 +20,13 @@ AUTH_TABLES = (
     "oauth_device_grants",
     "password_accounts",
     "users",
+)
+
+_PASSWORD = "correct horse battery staple"
+_PASSWORD_SALT = "track-anywhere-test-salt"
+CANONICAL_PASSWORD_HASH = (
+    f"pbkdf2_sha256$390000${_PASSWORD_SALT}$"
+    f"{pbkdf2_hmac('sha256', _PASSWORD.encode(), _PASSWORD_SALT.encode(), 390_000).hex()}"
 )
 
 
@@ -71,6 +78,146 @@ def _insert_book(engine: Engine, book_id: UUID) -> None:
 def _times() -> tuple[datetime, datetime]:
     issued_at = datetime.now(UTC)
     return issued_at, issued_at + timedelta(hours=1)
+
+
+def _insert_credential(
+    engine: Engine,
+    *,
+    token_hash: bytes,
+    actor_subject_id: str,
+    actor_type: str = "human",
+    auth_kind: str = "api_key",
+    book_id: UUID | None = None,
+    issued_at: datetime,
+    expires_at: datetime,
+) -> UUID:
+    credential_id = uuid4()
+    _execute(
+        engine,
+        """
+        insert into credentials (
+            credential_id, token_hash, jti, actor_subject_id, actor_type,
+            auth_kind, book_id, scopes, issued_at, expires_at,
+            revoked_at, last_used_at
+        ) values (
+            :credential_id, :token_hash, :jti, :actor_subject_id, :actor_type,
+            :auth_kind, :book_id, '["book:read"]'::jsonb,
+            :issued_at, :expires_at, null, null
+        )
+        """,
+        {
+            "credential_id": credential_id,
+            "token_hash": token_hash,
+            "jti": uuid4(),
+            "actor_subject_id": actor_subject_id,
+            "actor_type": actor_type,
+            "auth_kind": auth_kind,
+            "book_id": book_id,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        },
+    )
+    return credential_id
+
+
+def _insert_oauth_client(
+    engine: Engine,
+    *,
+    client_id: str,
+    redirect_uri: str | None = None,
+) -> None:
+    _execute(
+        engine,
+        """
+        insert into oauth_clients (
+            client_id, client_name, client_type, client_secret_hash,
+            scopes, status
+        ) values (
+            :client_id, 'Test client', 'public', null,
+            '["book:read"]'::jsonb, 'active'
+        )
+        """,
+        {"client_id": client_id},
+    )
+    if redirect_uri is not None:
+        _execute(
+            engine,
+            """
+            insert into oauth_client_redirect_uris (
+                client_id, redirect_uri, status
+            ) values (:client_id, :redirect_uri, 'active')
+            """,
+            {"client_id": client_id, "redirect_uri": redirect_uri},
+        )
+
+
+def _insert_authorization_grant(
+    engine: Engine,
+    *,
+    code_hash: bytes,
+    client_id: str,
+    redirect_uri: str,
+    actor_subject_id: str,
+    created_at: datetime,
+    expires_at: datetime,
+    resource: str = "https://ledger.example",
+) -> None:
+    _execute(
+        engine,
+        """
+        insert into oauth_authorization_grants (
+            code_hash, client_id, redirect_uri, actor_subject_id, scopes,
+            code_challenge, challenge_method, resource, created_at, expires_at,
+            used_at, revoked_at
+        ) values (
+            :code_hash, :client_id, :redirect_uri, :actor_subject_id,
+            '["book:read"]'::jsonb, :code_challenge, 'S256', :resource,
+            :created_at, :expires_at, null, null
+        )
+        """,
+        {
+            "code_hash": code_hash,
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "actor_subject_id": actor_subject_id,
+            "code_challenge": "A" * 43,
+            "resource": resource,
+            "created_at": created_at,
+            "expires_at": expires_at,
+        },
+    )
+
+
+def _insert_browser_session(
+    engine: Engine,
+    *,
+    session_hash: bytes,
+    csrf_token_hash: bytes,
+    credential_hash: bytes,
+    user_id: str,
+    issued_at: datetime,
+    expires_at: datetime,
+) -> None:
+    _execute(
+        engine,
+        """
+        insert into browser_sessions (
+            session_hash, csrf_token_hash, credential_hash, user_id,
+            issued_at, expires_at, revoked_at, last_seen_at
+        ) values (
+            :session_hash, :csrf_token_hash, :credential_hash, :user_id,
+            :issued_at, :expires_at, null, null
+        )
+        """,
+        {
+            "session_hash": session_hash,
+            "csrf_token_hash": csrf_token_hash,
+            "credential_hash": credential_hash,
+            "user_id": user_id,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        },
+    )
 
 
 def test_auth_tables_model_metadata_and_secret_column_inventory_are_exact(
@@ -199,7 +346,7 @@ def test_membership_identity_and_password_shapes_are_database_enforced(
         """,
         {
             "user_id": user_id,
-            "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$encoded",
+            "password_hash": CANONICAL_PASSWORD_HASH,
         },
     )
 
@@ -799,6 +946,549 @@ def test_device_grant_terminal_states_cannot_be_reopened(pg_engine) -> None:
         )
 
 
+def test_password_hash_must_match_the_current_pbkdf2_verifier_contract(
+    pg_engine,
+) -> None:
+    from track_anywhere.password_auth import _verify_password
+
+    assert _verify_password(_PASSWORD, CANONICAL_PASSWORD_HASH)
+    _insert_user(pg_engine, "user:password-valid")
+    _execute(
+        pg_engine,
+        """
+        insert into password_accounts (
+            user_id, normalized_email, password_hash, status
+        ) values (
+            'user:password-valid', 'valid@example.test', :password_hash, 'active'
+        )
+        """,
+        {"password_hash": CANONICAL_PASSWORD_HASH},
+    )
+
+    digest = CANONICAL_PASSWORD_HASH.rsplit("$", 1)[1]
+    malformed_hashes = (
+        "hunter2",
+        "$argon2id$v=19$m=65536,t=3,p=4$encoded",
+        CANONICAL_PASSWORD_HASH.replace("$390000$", "$390001$"),
+        f"pbkdf2_sha256$390000$${digest}",
+        f"pbkdf2_sha256$390000$salt$with-dollar${digest}",
+        f"pbkdf2_sha256$390000$test-salt${digest[:-1]}",
+        f"pbkdf2_sha256$390000$test-salt${digest.upper()}",
+        f"pbkdf2_sha256$390000${'x' * 23}${digest}",
+        f"pbkdf2_sha256$390000${'x' * 25}${digest}",
+        f"pbkdf2_sha256$390000$contains a space here!!${digest}",
+        f"pbkdf2_sha256$390000${'界' * 24}${digest}",
+    )
+    for index, password_hash in enumerate(malformed_hashes):
+        user_id = f"user:password-invalid-{index}"
+        _insert_user(pg_engine, user_id)
+        _rejects_integrity(
+            pg_engine,
+            """
+            insert into password_accounts (
+                user_id, normalized_email, password_hash, status
+            ) values (
+                :user_id, :email, :password_hash, 'active'
+            )
+            """,
+            {
+                "user_id": user_id,
+                "email": f"invalid-{index}@example.test",
+                "password_hash": password_hash,
+            },
+        )
+
+
+def test_credentials_and_browser_sessions_have_immutable_bound_lifecycles(
+    pg_engine,
+) -> None:
+    issued_at, expires_at = _times()
+    book_id = uuid4()
+    other_book_id = uuid4()
+    _insert_book(pg_engine, book_id)
+    _insert_book(pg_engine, other_book_id)
+    _insert_user(pg_engine, "machine:lane", subject_type="machine")
+    _insert_user(pg_engine, "user:credential")
+    _insert_user(pg_engine, "user:other")
+
+    for index, auth_kind in enumerate(("pkce", "device", "browser_session")):
+        _rejects_integrity(
+            pg_engine,
+            """
+            insert into credentials (
+                credential_id, token_hash, jti, actor_subject_id, actor_type,
+                auth_kind, book_id, scopes, issued_at, expires_at
+            ) values (
+                :credential_id, :token_hash, :jti, 'machine:lane', 'machine',
+                :auth_kind, :book_id, '[]'::jsonb, :issued_at, :expires_at
+            )
+            """,
+            {
+                "credential_id": uuid4(),
+                "token_hash": bytes([index + 1]) * 32,
+                "jti": uuid4(),
+                "auth_kind": auth_kind,
+                "book_id": book_id,
+                "issued_at": issued_at,
+                "expires_at": expires_at,
+            },
+        )
+
+    credential_hash = b"i" * 32
+    credential_id = _insert_credential(
+        pg_engine,
+        token_hash=credential_hash,
+        actor_subject_id="user:credential",
+        book_id=book_id,
+        issued_at=issued_at,
+        expires_at=expires_at,
+    )
+    frozen_updates = (
+        ("credential_id = :value", {"value": uuid4()}),
+        ("token_hash = :value", {"value": b"j" * 32}),
+        ("jti = :value", {"value": uuid4()}),
+        ("actor_subject_id = 'user:other'", {}),
+        ("auth_kind = 'pkce'", {}),
+        ("book_id = :value", {"value": other_book_id}),
+        ("scopes = '[\"ledger:write\"]'::jsonb", {}),
+        ("issued_at = :value", {"value": issued_at + timedelta(seconds=1)}),
+        ("expires_at = :value", {"value": expires_at + timedelta(hours=1)}),
+    )
+    for assignment, parameters in frozen_updates:
+        _rejects_integrity(
+            pg_engine,
+            f"update credentials set {assignment} where credential_id = :credential_id",
+            {**parameters, "credential_id": credential_id},
+        )
+
+    revoked_at = issued_at + timedelta(minutes=5)
+    _execute(
+        pg_engine,
+        "update credentials set revoked_at = :value where credential_id = :id",
+        {"value": revoked_at, "id": credential_id},
+    )
+    for replacement in (None, revoked_at + timedelta(seconds=1)):
+        _rejects_integrity(
+            pg_engine,
+            "update credentials set revoked_at = :value where credential_id = :id",
+            {"value": replacement, "id": credential_id},
+        )
+
+    first_use = issued_at + timedelta(minutes=6)
+    second_use = issued_at + timedelta(minutes=7)
+    for last_used_at in (first_use, second_use):
+        _execute(
+            pg_engine,
+            "update credentials set last_used_at = :value where credential_id = :id",
+            {"value": last_used_at, "id": credential_id},
+        )
+    for replacement in (None, first_use):
+        _rejects_integrity(
+            pg_engine,
+            "update credentials set last_used_at = :value where credential_id = :id",
+            {"value": replacement, "id": credential_id},
+        )
+
+    # A human API key is not a browser-session credential.
+    with pytest.raises(IntegrityError):
+        _insert_browser_session(
+            pg_engine,
+            session_hash=b"a" * 32,
+            csrf_token_hash=b"b" * 32,
+            credential_hash=credential_hash,
+            user_id="user:credential",
+            issued_at=issued_at,
+            expires_at=expires_at,
+        )
+
+    browser_credential_hash = b"c" * 32
+    _insert_credential(
+        pg_engine,
+        token_hash=browser_credential_hash,
+        actor_subject_id="user:credential",
+        auth_kind="browser_session",
+        issued_at=issued_at,
+        expires_at=expires_at,
+    )
+    with pytest.raises(IntegrityError):
+        _insert_browser_session(
+            pg_engine,
+            session_hash=b"d" * 32,
+            csrf_token_hash=b"e" * 32,
+            credential_hash=browser_credential_hash,
+            user_id="user:credential",
+            issued_at=issued_at,
+            expires_at=expires_at + timedelta(seconds=1),
+        )
+
+    session_hash = b"f" * 32
+    _insert_browser_session(
+        pg_engine,
+        session_hash=session_hash,
+        csrf_token_hash=b"g" * 32,
+        credential_hash=browser_credential_hash,
+        user_id="user:credential",
+        issued_at=issued_at,
+        expires_at=expires_at,
+    )
+    for assignment, parameters in (
+        ("session_hash = :value", {"value": b"h" * 32}),
+        ("csrf_token_hash = :value", {"value": b"i" * 32}),
+        ("issued_at = :value", {"value": issued_at + timedelta(seconds=1)}),
+        ("expires_at = :value", {"value": expires_at - timedelta(seconds=1)}),
+    ):
+        _rejects_integrity(
+            pg_engine,
+            f"update browser_sessions set {assignment} where session_hash = :session_hash",
+            {**parameters, "session_hash": session_hash},
+        )
+
+    session_revoked_at = issued_at + timedelta(minutes=10)
+    _execute(
+        pg_engine,
+        "update browser_sessions set revoked_at = :value where session_hash = :hash",
+        {"value": session_revoked_at, "hash": session_hash},
+    )
+    for replacement in (None, session_revoked_at + timedelta(seconds=1)):
+        _rejects_integrity(
+            pg_engine,
+            "update browser_sessions set revoked_at = :value where session_hash = :hash",
+            {"value": replacement, "hash": session_hash},
+        )
+    first_seen = issued_at + timedelta(minutes=11)
+    second_seen = issued_at + timedelta(minutes=12)
+    for last_seen_at in (first_seen, second_seen):
+        _execute(
+            pg_engine,
+            "update browser_sessions set last_seen_at = :value where session_hash = :hash",
+            {"value": last_seen_at, "hash": session_hash},
+        )
+    for replacement in (None, first_seen):
+        _rejects_integrity(
+            pg_engine,
+            "update browser_sessions set last_seen_at = :value where session_hash = :hash",
+            {"value": replacement, "hash": session_hash},
+        )
+
+
+@pytest.mark.parametrize("invalid_binding", ("rebind", "revoked", "preissued"))
+def test_browser_sessions_cannot_escape_the_live_credential_window(
+    pg_engine,
+    invalid_binding: str,
+) -> None:
+    credential_issued_at, credential_expires_at = _times()
+    _insert_user(pg_engine, "user:browser-primary")
+    _insert_user(pg_engine, "user:browser-other")
+    primary_hash = b"1" * 32
+    other_hash = b"2" * 32
+    primary_id = _insert_credential(
+        pg_engine,
+        token_hash=primary_hash,
+        actor_subject_id="user:browser-primary",
+        auth_kind="browser_session",
+        issued_at=credential_issued_at,
+        expires_at=credential_expires_at,
+    )
+    _insert_credential(
+        pg_engine,
+        token_hash=other_hash,
+        actor_subject_id="user:browser-other",
+        auth_kind="browser_session",
+        issued_at=credential_issued_at,
+        expires_at=credential_expires_at,
+    )
+
+    session_hash = b"3" * 32
+    if invalid_binding == "rebind":
+        _insert_browser_session(
+            pg_engine,
+            session_hash=session_hash,
+            csrf_token_hash=b"4" * 32,
+            credential_hash=primary_hash,
+            user_id="user:browser-primary",
+            issued_at=credential_issued_at,
+            expires_at=credential_expires_at,
+        )
+        _rejects_integrity(
+            pg_engine,
+            """
+            update browser_sessions
+               set credential_hash = :credential_hash, user_id = :user_id
+             where session_hash = :session_hash
+            """,
+            {
+                "credential_hash": other_hash,
+                "user_id": "user:browser-other",
+                "session_hash": session_hash,
+            },
+        )
+        return
+
+    session_issued_at = credential_issued_at - timedelta(seconds=1)
+    if invalid_binding == "revoked":
+        _insert_browser_session(
+            pg_engine,
+            session_hash=b"5" * 32,
+            csrf_token_hash=b"6" * 32,
+            credential_hash=primary_hash,
+            user_id="user:browser-primary",
+            issued_at=credential_issued_at,
+            expires_at=credential_expires_at,
+        )
+        revoked_at = credential_issued_at + timedelta(seconds=10)
+        _execute(
+            pg_engine,
+            "update credentials set revoked_at = :revoked_at where credential_id = :id",
+            {"revoked_at": revoked_at, "id": primary_id},
+        )
+        session_issued_at = revoked_at + timedelta(seconds=1)
+
+    with pytest.raises(IntegrityError):
+        _insert_browser_session(
+            pg_engine,
+            session_hash=session_hash,
+            csrf_token_hash=b"4" * 32,
+            credential_hash=primary_hash,
+            user_id="user:browser-primary",
+            issued_at=session_issued_at,
+            expires_at=session_issued_at + timedelta(minutes=5),
+        )
+    if invalid_binding == "revoked":
+        _execute(
+            pg_engine,
+            "update browser_sessions set revoked_at = :revoked_at "
+            "where session_hash = :session_hash",
+            {
+                "revoked_at": session_issued_at,
+                "session_hash": b"5" * 32,
+            },
+        )
+
+
+def test_oauth_authorization_grants_freeze_issuance_and_terminal_timestamps(
+    pg_engine,
+) -> None:
+    created_at, expires_at = _times()
+    _insert_user(pg_engine, "user:grant")
+    _insert_user(pg_engine, "user:grant-other")
+    _insert_oauth_client(
+        pg_engine,
+        client_id="grant-client",
+        redirect_uri="https://client.example/grant",
+    )
+    _insert_oauth_client(
+        pg_engine,
+        client_id="grant-client-other",
+        redirect_uri="https://client.example/grant-other",
+    )
+    code_hash = b"o" * 32
+    _insert_authorization_grant(
+        pg_engine,
+        code_hash=code_hash,
+        client_id="grant-client",
+        redirect_uri="https://client.example/grant",
+        actor_subject_id="user:grant",
+        created_at=created_at,
+        expires_at=expires_at,
+    )
+
+    for assignment, parameters in (
+        ("code_hash = :value", {"value": b"p" * 32}),
+        (
+            "client_id = 'grant-client-other', "
+            "redirect_uri = 'https://client.example/grant-other'",
+            {},
+        ),
+        ("actor_subject_id = 'user:grant-other'", {}),
+        ("scopes = '[\"ledger:write\"]'::jsonb", {}),
+        ("code_challenge = :value", {"value": "B" * 43}),
+        ("resource = 'https://other.example'", {}),
+        ("created_at = :value", {"value": created_at - timedelta(seconds=1)}),
+        ("expires_at = :value", {"value": expires_at + timedelta(seconds=1)}),
+    ):
+        _rejects_integrity(
+            pg_engine,
+            f"update oauth_authorization_grants set {assignment} "
+            "where code_hash = :code_hash",
+            {**parameters, "code_hash": code_hash},
+        )
+
+    used_hash = b"u" * 32
+    revoked_hash = b"r" * 32
+    for terminal_hash in (used_hash, revoked_hash):
+        _insert_authorization_grant(
+            pg_engine,
+            code_hash=terminal_hash,
+            client_id="grant-client",
+            redirect_uri="https://client.example/grant",
+            actor_subject_id="user:grant",
+            created_at=created_at,
+            expires_at=expires_at,
+        )
+    used_at = created_at + timedelta(minutes=1)
+    _execute(
+        pg_engine,
+        "update oauth_authorization_grants set used_at = :value where code_hash = :hash",
+        {"value": used_at, "hash": used_hash},
+    )
+    revoked_at = created_at + timedelta(minutes=2)
+    _execute(
+        pg_engine,
+        "update oauth_authorization_grants set revoked_at = :value where code_hash = :hash",
+        {"value": revoked_at, "hash": revoked_hash},
+    )
+    for column, terminal_hash, value in (
+        ("used_at", used_hash, used_at),
+        ("revoked_at", revoked_hash, revoked_at),
+    ):
+        for replacement in (None, value + timedelta(seconds=1)):
+            _rejects_integrity(
+                pg_engine,
+                f"update oauth_authorization_grants set {column} = :value "
+                "where code_hash = :hash",
+                {"value": replacement, "hash": terminal_hash},
+            )
+
+
+def test_device_grants_freeze_issuance_approval_and_polling_state(pg_engine) -> None:
+    created_at, expires_at = _times()
+    _insert_user(pg_engine, "user:device-approver")
+    _insert_user(pg_engine, "user:device-other")
+    _insert_oauth_client(pg_engine, client_id="device-lifecycle")
+    _insert_oauth_client(pg_engine, client_id="device-lifecycle-other")
+    device_hash = b"v" * 32
+    _execute(
+        pg_engine,
+        """
+        insert into oauth_device_grants (
+            device_code_hash, user_code_hash, client_id, scopes, resource,
+            status, created_at, expires_at, interval_seconds, last_poll_at,
+            poll_count, approved_actor_subject_id, approved_at, consumed_at
+        ) values (
+            :device_hash, :user_hash, 'device-lifecycle',
+            '["book:read"]'::jsonb, 'https://ledger.example', 'pending',
+            :created_at, :expires_at, 5, null, 0, null, null, null
+        )
+        """,
+        {
+            "device_hash": device_hash,
+            "user_hash": b"w" * 32,
+            "created_at": created_at,
+            "expires_at": expires_at,
+        },
+    )
+    for assignment, parameters in (
+        ("device_code_hash = :value", {"value": b"x" * 32}),
+        ("user_code_hash = :value", {"value": b"y" * 32}),
+        ("client_id = 'device-lifecycle-other'", {}),
+        ("scopes = '[\"ledger:write\"]'::jsonb", {}),
+        ("resource = 'https://other.example'", {}),
+        ("created_at = :value", {"value": created_at - timedelta(seconds=1)}),
+        ("expires_at = :value", {"value": expires_at + timedelta(seconds=1)}),
+        ("interval_seconds = 10", {}),
+    ):
+        _rejects_integrity(
+            pg_engine,
+            f"update oauth_device_grants set {assignment} "
+            "where device_code_hash = :device_hash",
+            {**parameters, "device_hash": device_hash},
+        )
+
+    first_poll = created_at + timedelta(seconds=5)
+    second_poll = created_at + timedelta(seconds=10)
+    for poll_count, last_poll_at in ((1, first_poll), (2, second_poll)):
+        _execute(
+            pg_engine,
+            """
+            update oauth_device_grants
+               set poll_count = :poll_count, last_poll_at = :last_poll_at
+             where device_code_hash = :device_hash
+            """,
+            {
+                "poll_count": poll_count,
+                "last_poll_at": last_poll_at,
+                "device_hash": device_hash,
+            },
+        )
+    for poll_count, last_poll_at in ((1, second_poll), (3, first_poll), (3, None)):
+        _rejects_integrity(
+            pg_engine,
+            """
+            update oauth_device_grants
+               set poll_count = :poll_count, last_poll_at = :last_poll_at
+             where device_code_hash = :device_hash
+            """,
+            {
+                "poll_count": poll_count,
+                "last_poll_at": last_poll_at,
+                "device_hash": device_hash,
+            },
+        )
+
+    _rejects_integrity(
+        pg_engine,
+        """
+        update oauth_device_grants
+           set status = 'expired',
+               approved_actor_subject_id = 'user:device-approver',
+               approved_at = :approved_at
+         where device_code_hash = :device_hash
+        """,
+        {
+            "approved_at": created_at + timedelta(minutes=1),
+            "device_hash": device_hash,
+        },
+    )
+
+    approved_at = created_at + timedelta(minutes=1)
+    _execute(
+        pg_engine,
+        """
+        update oauth_device_grants
+           set status = 'approved',
+               approved_actor_subject_id = 'user:device-approver',
+               approved_at = :approved_at
+         where device_code_hash = :device_hash
+        """,
+        {"approved_at": approved_at, "device_hash": device_hash},
+    )
+    for assignment, parameters in (
+        ("approved_actor_subject_id = 'user:device-other'", {}),
+        (
+            "approved_at = :approved_at",
+            {"approved_at": approved_at + timedelta(seconds=1)},
+        ),
+    ):
+        _rejects_integrity(
+            pg_engine,
+            f"update oauth_device_grants set {assignment} "
+            "where device_code_hash = :device_hash",
+            {**parameters, "device_hash": device_hash},
+        )
+    _rejects_integrity(
+        pg_engine,
+        """
+        update oauth_device_grants
+           set status = 'denied',
+               approved_actor_subject_id = null, approved_at = null
+         where device_code_hash = :device_hash
+        """,
+        {"device_hash": device_hash},
+    )
+    _execute(
+        pg_engine,
+        """
+        update oauth_device_grants
+           set status = 'consumed', consumed_at = :consumed_at
+         where device_code_hash = :device_hash
+        """,
+        {
+            "consumed_at": approved_at + timedelta(seconds=1),
+            "device_hash": device_hash,
+        },
+    )
+
+
 def test_password_email_must_already_be_normalized(pg_engine) -> None:
     _insert_user(pg_engine, "user:email")
     _rejects_integrity(
@@ -808,10 +1498,10 @@ def test_password_email_must_already_be_normalized(pg_engine) -> None:
             user_id, normalized_email, password_hash, status
         ) values (
             'user:email', ' Alice@Example.Test ',
-            '$argon2id$v=19$m=65536,t=3,p=4$encoded', 'active'
+            :password_hash, 'active'
         )
         """,
-        {},
+        {"password_hash": CANONICAL_PASSWORD_HASH},
     )
 
 

@@ -27,6 +27,9 @@ _SCOPE_ARRAY_CHECK = (
     "scopes = jsonb_path_query_array(scopes, "
     '\'$[*] ? (@.type() == "string" && @ like_regex "\\\\S")\')'
 )
+_PASSWORD_HASH_CHECK = (
+    "password_hash ~ '^pbkdf2_sha256[$]390000[$][A-Za-z0-9_-]{24}[$][0-9a-f]{64}$'"
+)
 
 
 class UserRecord(V2Base):
@@ -138,7 +141,7 @@ class PasswordAccountRecord(V2Base):
             ondelete="RESTRICT",
             onupdate="RESTRICT",
         ),
-        CheckConstraint("btrim(password_hash) <> ''", name="password_hash_nonblank"),
+        CheckConstraint(_PASSWORD_HASH_CHECK, name="password_hash_pbkdf2"),
         CheckConstraint(
             "normalized_email = lower(btrim(normalized_email)) "
             "and normalized_email <> ''",
@@ -199,7 +202,8 @@ class CredentialRecord(V2Base):
             name="last_used_after_issue",
         ),
         CheckConstraint(
-            "actor_type <> 'machine' or book_id is not null",
+            "actor_type <> 'machine' "
+            "or (auth_kind = 'api_key' and book_id is not null)",
             name="machine_book_required",
         ),
     )

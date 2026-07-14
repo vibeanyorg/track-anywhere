@@ -40,6 +40,9 @@ _SCOPE_ARRAY_CHECK = (
     "scopes = jsonb_path_query_array(scopes, "
     '\'$[*] ? (@.type() == "string" && @ like_regex "\\\\S")\')'
 )
+_PASSWORD_HASH_CHECK = (
+    "password_hash ~ '^pbkdf2_sha256[$]390000[$][A-Za-z0-9_-]{24}[$][0-9a-f]{64}$'"
+)
 
 
 def _quote_identifier(identifier: str) -> str:
@@ -445,8 +448,8 @@ def _create_auth_tables() -> None:
         sa.Column("status", sa.String(length=16), nullable=False),
         *_timestamps(),
         sa.CheckConstraint(
-            "btrim(password_hash) <> ''",
-            name=op.f("ck_password_accounts_password_hash_nonblank"),
+            _PASSWORD_HASH_CHECK,
+            name=op.f("ck_password_accounts_password_hash_pbkdf2"),
         ),
         sa.CheckConstraint(
             "normalized_email = lower(btrim(normalized_email)) "
@@ -511,7 +514,8 @@ def _create_auth_tables() -> None:
             name=op.f("ck_credentials_last_used_after_issue"),
         ),
         sa.CheckConstraint(
-            "actor_type <> 'machine' or book_id is not null",
+            "actor_type <> 'machine' "
+            "or (auth_kind = 'api_key' and book_id is not null)",
             name=op.f("ck_credentials_machine_book_required"),
         ),
         sa.ForeignKeyConstraint(
@@ -856,6 +860,130 @@ def _create_immutability_triggers(runtime_role: str) -> None:
             end if;
             return new;
         """,
+        "v2_guard_credential_lifecycle": """
+            if new.credential_id is distinct from old.credential_id
+               or new.token_hash is distinct from old.token_hash
+               or new.jti is distinct from old.jti
+               or new.actor_subject_id is distinct from old.actor_subject_id
+               or new.actor_type is distinct from old.actor_type
+               or new.auth_kind is distinct from old.auth_kind
+               or new.book_id is distinct from old.book_id
+               or new.scopes is distinct from old.scopes
+               or new.issued_at is distinct from old.issued_at
+               or new.expires_at is distinct from old.expires_at then
+                raise exception using
+                    errcode = '23514',
+                    message = 'credential issuance bindings are immutable';
+            end if;
+            if old.revoked_at is not null
+               and new.revoked_at is distinct from old.revoked_at then
+                raise exception using
+                    errcode = '23514',
+                    message = 'credential revocation is irreversible';
+            end if;
+            if old.last_used_at is not null
+               and (new.last_used_at is null
+                    or new.last_used_at < old.last_used_at) then
+                raise exception using
+                    errcode = '23514',
+                    message = 'credential last-used time must be monotonic';
+            end if;
+            return new;
+        """,
+        "v2_guard_authorization_grant_lifecycle": """
+            if new.code_hash is distinct from old.code_hash
+               or new.client_id is distinct from old.client_id
+               or new.redirect_uri is distinct from old.redirect_uri
+               or new.actor_subject_id is distinct from old.actor_subject_id
+               or new.scopes is distinct from old.scopes
+               or new.code_challenge is distinct from old.code_challenge
+               or new.challenge_method is distinct from old.challenge_method
+               or new.resource is distinct from old.resource
+               or new.created_at is distinct from old.created_at
+               or new.expires_at is distinct from old.expires_at then
+                raise exception using
+                    errcode = '23514',
+                    message = 'authorization grant issuance bindings are immutable';
+            end if;
+            if old.used_at is not null
+               and new.used_at is distinct from old.used_at then
+                raise exception using
+                    errcode = '23514',
+                    message = 'authorization grant use is irreversible';
+            end if;
+            if old.revoked_at is not null
+               and new.revoked_at is distinct from old.revoked_at then
+                raise exception using
+                    errcode = '23514',
+                    message = 'authorization grant revocation is irreversible';
+            end if;
+            return new;
+        """,
+        "v2_guard_browser_session_lifecycle": """
+            if tg_op = 'UPDATE' then
+                if new.session_hash is distinct from old.session_hash
+                   or new.csrf_token_hash is distinct from old.csrf_token_hash
+                   or new.credential_hash is distinct from old.credential_hash
+                   or new.user_id is distinct from old.user_id
+                   or new.issued_at is distinct from old.issued_at
+                   or new.expires_at is distinct from old.expires_at then
+                    raise exception using
+                        errcode = '23514',
+                        message = 'browser session issuance bindings are immutable';
+                end if;
+                if old.revoked_at is not null
+                   and new.revoked_at is distinct from old.revoked_at then
+                    raise exception using
+                        errcode = '23514',
+                        message = 'browser session revocation is irreversible';
+                end if;
+                if old.last_seen_at is not null
+                   and (new.last_seen_at is null
+                        or new.last_seen_at < old.last_seen_at) then
+                    raise exception using
+                        errcode = '23514',
+                        message = 'browser session last-seen time must be monotonic';
+                end if;
+                return new;
+            end if;
+
+            declare
+                bound_subject_id varchar(128);
+                bound_actor_type varchar(16);
+                bound_auth_kind varchar(32);
+                credential_issued_at timestamptz;
+                credential_expires_at timestamptz;
+                credential_revoked_at timestamptz;
+            begin
+                select actor_subject_id, actor_type, auth_kind,
+                       issued_at, expires_at, revoked_at
+                  into bound_subject_id, bound_actor_type, bound_auth_kind,
+                       credential_issued_at, credential_expires_at,
+                       credential_revoked_at
+                  from public.credentials
+                 where token_hash = new.credential_hash;
+                if not found
+                   or bound_subject_id is distinct from new.user_id
+                   or bound_actor_type <> 'human'
+                   or bound_auth_kind <> 'browser_session' then
+                    raise exception using
+                        errcode = '23514',
+                        message = 'browser session must bind a human browser credential';
+                end if;
+                if credential_revoked_at is not null then
+                    raise exception using
+                        errcode = '23514',
+                        message = 'browser session credential is revoked';
+                end if;
+                if new.issued_at < credential_issued_at
+                   or new.expires_at > credential_expires_at then
+                    raise exception using
+                        errcode = '23514',
+                        message = 'browser session must stay within credential lifetime';
+                end if;
+            end;
+            return new;
+        """,
         "v2_guard_device_grant_transition": """
             if old.status in ('denied', 'consumed', 'expired')
                and new is distinct from old then
@@ -863,11 +991,53 @@ def _create_immutability_triggers(runtime_role: str) -> None:
                     errcode = '23514',
                     message = 'terminal device grants are immutable';
             end if;
+            if new.device_code_hash is distinct from old.device_code_hash
+               or new.user_code_hash is distinct from old.user_code_hash
+               or new.client_id is distinct from old.client_id
+               or new.scopes is distinct from old.scopes
+               or new.resource is distinct from old.resource
+               or new.created_at is distinct from old.created_at
+               or new.expires_at is distinct from old.expires_at
+               or new.interval_seconds is distinct from old.interval_seconds then
+                raise exception using
+                    errcode = '23514',
+                    message = 'device grant issuance bindings are immutable';
+            end if;
+            if new.poll_count < old.poll_count
+               or (old.last_poll_at is not null
+                   and (new.last_poll_at is null
+                        or new.last_poll_at < old.last_poll_at)) then
+                raise exception using
+                    errcode = '23514',
+                    message = 'device grant polling state must be monotonic';
+            end if;
+            if (new.poll_count > old.poll_count)
+               <> (new.last_poll_at is distinct from old.last_poll_at) then
+                raise exception using
+                    errcode = '23514',
+                    message = 'device grant polling count and time must advance together';
+            end if;
+            if old.approved_at is not null
+               and (new.approved_actor_subject_id
+                        is distinct from old.approved_actor_subject_id
+                    or new.approved_at is distinct from old.approved_at) then
+                raise exception using
+                    errcode = '23514',
+                    message = 'device grant approval binding is immutable';
+            end if;
             if old.status = 'pending'
                and new.status not in ('pending', 'approved', 'denied', 'expired') then
                 raise exception using
                     errcode = '23514',
                     message = 'invalid pending device grant transition';
+            end if;
+            if old.status = 'pending'
+               and new.status = 'expired'
+               and (new.approved_actor_subject_id is not null
+                    or new.approved_at is not null) then
+                raise exception using
+                    errcode = '23514',
+                    message = 'pending device grants cannot expire as approved';
             end if;
             if old.status = 'approved'
                and new.status not in ('approved', 'consumed', 'expired') then
@@ -935,6 +1105,24 @@ def _create_immutability_triggers(runtime_role: str) -> None:
             "protected_description_sidecars",
             "before update",
             "v2_guard_description_sidecar_identity",
+        ),
+        (
+            "trg_credentials_guard_lifecycle",
+            "credentials",
+            "before update",
+            "v2_guard_credential_lifecycle",
+        ),
+        (
+            "trg_oauth_authorization_grants_guard_lifecycle",
+            "oauth_authorization_grants",
+            "before update",
+            "v2_guard_authorization_grant_lifecycle",
+        ),
+        (
+            "trg_browser_sessions_guard_lifecycle",
+            "browser_sessions",
+            "before insert or update",
+            "v2_guard_browser_session_lifecycle",
         ),
         (
             "trg_oauth_device_grants_guard_transition",
