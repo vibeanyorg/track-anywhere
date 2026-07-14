@@ -1,66 +1,57 @@
 ---
 name: track-anywhere-ledger
-description: "Use the local Track Anywhere `ta` CLI for personal accounting tasks: create accounts, record balance snapshots, record transfers or expenses, confirm screenshot/OCR-derived financial data, check balances, generate summaries, and operate Hermes/OpenClaw-style ledger agents safely. Trigger when the user asks to 记账, 查账, 创建账户, 更新余额, record card/account/wallet/brokerage/crypto balances, process bank or wallet screenshots, or manage the local Track Anywhere ledger."
+description: "Operate the local Track Anywhere V2 event ledger through its supported ta CLI and HTTP API."
 ---
 
-# Track Anywhere Ledger
+# Track Anywhere V2 Ledger
 
-Run commands from the Track Anywhere repo root. If `TRACK_ANYWHERE_ROOT` is set, move there first:
+Run from the repository root. Resolve the API URL from an explicit `--base-url`,
+then `TRACK_ANYWHERE_API`, then `TRACK_ANYWHERE_SERVICE_URL`, and otherwise use
+`http://localhost:8000`.
 
-```bash
-if [ -n "${TRACK_ANYWHERE_ROOT:-}" ]; then
-  cd "$TRACK_ANYWHERE_ROOT"
-fi
-```
+## Mandatory discovery
 
-## Service Address
-
-Resolve the API base URL before running CLI/API commands:
-
-1. Use `--base-url` when the user explicitly gives one.
-2. Otherwise use `TRACK_ANYWHERE_API` if set.
-3. Otherwise use `TRACK_ANYWHERE_SERVICE_URL` if set.
-4. For Docker local dev, read `TRACK_ANYWHERE_SERVICE_URL` from `deploy/env/dev.env`.
-5. For Docker production/VPS, read it from `deploy/env/prod.env` on the host.
-6. Fall back to `http://localhost:8000`.
-
-Do not hardcode the VPS address in ledger commands. Export the resolved value:
+The V2 CLI intentionally rejects retired command groups. Before planning a
+workflow, inspect the live command contract:
 
 ```bash
-export TRACK_ANYWHERE_API="${TRACK_ANYWHERE_API:-${TRACK_ANYWHERE_SERVICE_URL:-http://localhost:8000}}"
+ta capabilities --json
+ta schema --json
+ta <group> <command> --help
 ```
 
-## Core Rules
+Use only commands advertised by `ta capabilities`. Never infer that an old
+capture, recurring, payment-profile, attachment, or backup command still has a
+network implementation.
 
-- NEVER write to SQLite directly. Use `ta` or the HTTP API.
-- ALWAYS pass `--json` when the command supports it.
-- Before every write, run `ta data backup --label before-<change> --json`.
-- Pass a stable `--idempotency-key` on every write. Reuse the same key on retry.
-- Screenshots, OCR, and spoken input are uncertain. When details are missing, record a balance snapshot or a draft. NEVER invent merchants, amounts, or categories.
-- After every write, read the affected accounts and transactions. Report only verified results.
-- If the user asked to keep the API running, do not stop it at the end of the task.
+## Write rules
 
-## Workflow
+- Never write ledger or projection tables directly.
+- Pass `--json` or `--agent` for machine-readable operation.
+- Pass an explicit stable idempotency key for every financial command and reuse
+  it for a retry of the same logical request.
+- Send amounts as exact decimal strings; never use floats or signed values to
+  imply debit/credit direction.
+- Use explicit Book, account, asset, transaction, posting, and category IDs.
+- Do not invent missing merchants, categories, accounts, assets, timestamps, or
+  posting direction. Ask the user when a required fact is uncertain.
+- After a write, re-read the transaction and affected Book balances from a fresh
+  request before reporting success.
 
-1. Discover syntax with `ta --help` and relevant subcommand help.
-2. Read current state with `ta account find/list/show/balance --json` or `ta tx list/show --json`.
-3. Back up with `ta data backup --label before-<change> --json`.
-4. Write with `ta account create`, `ta account adjust`, `ta category create`, `ta expense record`, `ta income record`, `ta credit-card update`, `ta tx record`, `ta investment event`, or draft commands.
-5. Verify affected balances and transactions with CLI reads.
-6. Report backup path, account IDs, transaction IDs, verified balances, and unresolved uncertainty.
+## Supported workflow
 
-For wealth-management, money-market, or fund holdings where annualized return matters, record dated `ta investment event` cash flows (`buy`, `add`, `sell`, `income`) and verify with `ta investment performance <account_id> --json`. Do not rely only on account names or balance-snapshot free text for principal and holding period.
+1. Check `ta system health --json` and `ta system ready --json`.
+2. Check `ta auth status --json`; authenticate only when needed.
+3. Run `ta capabilities --json` and command-specific help.
+4. Read current journal/balances with `ta tx list`, `ta book balances`, or
+   `ta book reporting-lines`.
+5. Execute a supported Book/asset/account/category, journal,
+   reversal/correction, classification, FX, or investment-lot command with a
+   stable idempotency key.
+6. Re-read affected facts and report IDs, exact units/amounts, and any remaining
+   uncertainty.
 
-## Runbook Topics
-
-- concrete command examples
-- account taxonomy
-- balance snapshots from screenshots
-- investment holding events and annualized-return queries
-- income/expense categories and category summaries
-- credit-card repayment and fee handling
-- credit-card limits and billing profile metadata
-- summaries and multi-currency rules
-- API health and startup handling
+If readiness fails, do not fall back to another database or an older API. Fix
+the local PostgreSQL 17 V2 runtime or report the blocker.
 
 Reference: [references/ledger-runbook.md](references/ledger-runbook.md)

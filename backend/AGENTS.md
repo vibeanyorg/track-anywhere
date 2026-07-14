@@ -99,21 +99,19 @@ tests.
   FastAPI imports are allowed here. This layer owns HTTP parameters, cookies,
   headers, status codes, dependency wiring, response models, and exception
   mapping.
-- Application/service layer (`track_anywhere.service`): orchestrates use cases,
-  authorization, idempotency, audit recording, and persistence boundaries. It
-  should not import FastAPI.
-- Command/schema layer (`track_anywhere.commands` and future schema modules):
-  owns Pydantic validation for use-case inputs and API contracts. Keep schemas
-  explicit and version-compatible.
-- Domain layer (`ledger`, `drafts`, `categories`, `budgets`, `investments`,
-  `credit_cards`, `users`, `security`, and related modules): owns business
-  invariants. It must not depend on HTTP, cookies, headers, FastAPI, or test
-  clients.
-- Persistence layer (`storage`, `db_migrations`, `alembic`): owns database
-  mapping and migrations. Do not let ORM details leak into API response
-  contracts or domain invariants.
-- Dependencies point inward: API -> service -> domain/persistence. Do not make
-  domain code call API code.
+- Application layer (`track_anywhere.application`): owns commands, Book-scoped
+  authorization, idempotency, unit-of-work boundaries, and ledger commits. It
+  must not import FastAPI.
+- API schema layer (`track_anywhere.api.v2.schemas`): owns typed HTTP inputs and
+  actor extraction. Keep transport validation out of the domain.
+- Domain layer (`track_anywhere.domain`): owns immutable event contracts,
+  journal, money, reporting, investment, and privacy invariants. It must not
+  depend on HTTP, ORM models, cookies, or test clients.
+- Infrastructure layer (`track_anywhere.infrastructure` and `alembic`): owns
+  PostgreSQL mappings, event storage, repositories, projections, and migrations.
+  ORM details must not leak into domain contracts.
+- Dependencies point inward: API -> application -> domain, with infrastructure
+  implementing application ports. Domain code never calls API code.
 
 ## Testing And Verification
 
@@ -121,14 +119,14 @@ tests.
   near the layer being changed, plus API tests when the HTTP contract changes.
 - Use FastAPI `TestClient` for HTTP-level tests unless the app is intentionally
   moved to a fully async test stack.
-- PostgreSQL 17 is mandatory for V2 persistence, migration, repository,
-  concurrency, replay, and backfill tests. SQLite is allowed only for pure
-  functions that do not open a database and for explicitly unported V1 tests
-  while the V1 runtime still exists.
+- PostgreSQL 17 is mandatory for every database-bearing persistence, migration,
+  repository, concurrency, replay, and backfill test. Pure unit tests must not
+  silently install a database fallback.
 - Test security-sensitive behavior directly: auth failures, CSRF/origin checks,
   idempotency conflicts, stale versions, and sensitive-data redaction.
-- For API contract changes, update `backend/tests/snapshots/public-api-v1.json`
-  only when the new contract is intentional.
+- For API contract changes, update
+  `backend/tests/snapshots/public-api-v2.json` only when the new contract is
+  intentional.
 - Run `uv run pytest backend/tests` after backend changes. If the change also
   affects CLI behavior or package wiring, run the full `uv run pytest`.
 - If linting or typechecking tools are added to the project later, run the
