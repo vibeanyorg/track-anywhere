@@ -73,6 +73,16 @@ def _insert_event(
                 "event_hash": bytes([position]) * 32,
             },
         )
+        connection.execute(
+            text(
+                """
+                insert into synchronous_projection_applied_events (
+                    book_id, event_id, projection_version
+                ) values (:book_id, :event_id, 1)
+                """
+            ),
+            {"book_id": book_id, "event_id": event_id},
+        )
     return event_id
 
 

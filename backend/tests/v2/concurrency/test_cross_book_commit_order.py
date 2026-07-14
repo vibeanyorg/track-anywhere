@@ -10,6 +10,9 @@ from track_anywhere.application.event_batch import PendingEvent
 from track_anywhere.domain.investments.events import InvestmentLotAcquired
 from track_anywhere.infrastructure.db.event_store import PostgresEventStore
 from track_anywhere.infrastructure.db.models.event_store import LedgerEventRecord
+from track_anywhere.infrastructure.db.models.projections import (
+    SynchronousProjectionAppliedEventRecord,
+)
 from track_anywhere.infrastructure.projections.event_reader import PerBookEventReader
 
 
@@ -57,6 +60,23 @@ def _pending(stream_id: UUID, *, command_id: UUID) -> PendingEvent:
     )
 
 
+def _acknowledge_infrastructure_append(
+    session: Session,
+    *,
+    book_id: UUID,
+    event_id: UUID,
+) -> None:
+    # This test intentionally bypasses LedgerCommitter so it can control commit
+    # order; acknowledge the sync event without asserting lot projection behavior.
+    session.add(
+        SynchronousProjectionAppliedEventRecord(
+            book_id=book_id,
+            event_id=event_id,
+            projection_version=1,
+        )
+    )
+
+
 def test_reverse_commit_order_cannot_hide_the_late_book_event(pg_engine) -> None:
     book_a = _seed_book(pg_engine, "Book A")
     book_b = _seed_book(pg_engine, "Book B")
@@ -75,6 +95,11 @@ def test_reverse_commit_order_cannot_hide_the_late_book_event(pg_engine) -> None
             expected_stream_versions={("investment_lot", stream_a): 0},
             events=(event_a,),
         )
+        _acknowledge_infrastructure_append(
+            session_a,
+            book_id=book_a,
+            event_id=event_a.event_id,
+        )
         sequence_a = session_a.scalar(
             select(LedgerEventRecord.global_sequence).where(
                 LedgerEventRecord.event_id == event_a.event_id
@@ -87,6 +112,11 @@ def test_reverse_commit_order_cannot_hide_the_late_book_event(pg_engine) -> None
             book_id=book_b,
             expected_stream_versions={("investment_lot", stream_b): 0},
             events=(event_b,),
+        )
+        _acknowledge_infrastructure_append(
+            session_b,
+            book_id=book_b,
+            event_id=event_b.event_id,
         )
         session_b.commit()
 

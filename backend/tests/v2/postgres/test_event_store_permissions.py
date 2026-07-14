@@ -116,6 +116,16 @@ def _insert_book_and_event(pg_engine):
                 "event_hash": b"e" * 32,
             },
         )
+        connection.execute(
+            text(
+                """
+                insert into synchronous_projection_applied_events (
+                    book_id, event_id, projection_version
+                ) values (:book_id, :event_id, 1)
+                """
+            ),
+            {"book_id": book_id, "event_id": event_id},
+        )
     return book_id, event_id
 
 

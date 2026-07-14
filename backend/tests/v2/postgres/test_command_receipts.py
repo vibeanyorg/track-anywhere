@@ -24,6 +24,9 @@ from track_anywhere.infrastructure.db.models.event_store import (
     CommandReceiptRecord,
     LedgerEventRecord,
 )
+from track_anywhere.infrastructure.db.models.projections import (
+    SynchronousProjectionAppliedEventRecord,
+)
 from track_anywhere.infrastructure.db.repositories import RowLock
 from track_anywhere.infrastructure.db.repositories.auth import (
     AuthRepository,
@@ -125,6 +128,15 @@ def _handler(command: FakeCommand, uow) -> CommandResult:
             ("investment_lot", command.stream_id): 0,
         },
         events=(event,),
+    )
+    # Infrastructure-only receipt test: acknowledge the now-sync-required lot
+    # event without exercising the production lot projection coordinator.
+    uow.session.add(
+        SynchronousProjectionAppliedEventRecord(
+            book_id=command.book_id,
+            event_id=event.event_id,
+            projection_version=1,
+        )
     )
     return CommandResult(
         response_schema_version=2,

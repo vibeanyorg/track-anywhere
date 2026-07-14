@@ -189,6 +189,8 @@ def test_projection_relations_native_type_and_model_metadata_are_complete(
     assert tuple(posting_side) == ("e", ["debit", "credit"])
     assert [tuple(row) for row in sync_event_types] == [
         ("FinancialExternalReferenceCorrected", 1, 1),
+        ("InvestmentLotAcquired", 1, 1),
+        ("InvestmentLotDisposed", 1, 1),
         ("JournalTransactionPosted", 1, 1),
         ("JournalTransactionReversed", 1, 1),
         ("ReportingLinesAssigned", 1, 1),
@@ -334,7 +336,15 @@ def test_posting_numeric_38_digit_boundary_is_exact_and_39_digits_fail(
             )
 
 
-def test_sync_required_events_need_a_marker_but_async_events_do_not(pg_engine) -> None:
+@pytest.mark.parametrize(
+    "event_type",
+    (
+        "JournalTransactionPosted",
+        "InvestmentLotAcquired",
+        "InvestmentLotDisposed",
+    ),
+)
+def test_sync_required_events_need_a_marker(pg_engine, event_type: str) -> None:
     sync_book, _, _ = _insert_catalog(pg_engine)
     connection = pg_engine.connect()
     transaction = connection.begin()
@@ -343,7 +353,7 @@ def test_sync_required_events_need_a_marker_but_async_events_do_not(pg_engine) -
             connection,
             book_id=sync_book,
             book_position=1,
-            event_type="JournalTransactionPosted",
+            event_type=event_type,
         )
         with pytest.raises(DBAPIError):
             transaction.commit()
@@ -351,15 +361,6 @@ def test_sync_required_events_need_a_marker_but_async_events_do_not(pg_engine) -
         if transaction.is_active:
             transaction.rollback()
         connection.close()
-
-    async_book, _, _ = _insert_catalog(pg_engine)
-    with pg_engine.begin() as connection:
-        _insert_raw_event(
-            connection,
-            book_id=async_book,
-            book_position=1,
-            event_type="InvestmentLotAcquired",
-        )
 
 
 def test_known_sync_event_with_unknown_schema_is_rejected_at_commit_and_rolled_back(
@@ -479,14 +480,14 @@ def test_marker_accepts_only_registered_sync_events_and_is_database_timestamped(
         ).scalar_one()
     assert applied_at is not None
 
-    async_book, _, _ = _insert_catalog(pg_engine)
+    unregistered_book, _, _ = _insert_catalog(pg_engine)
     with pytest.raises(DBAPIError):
         with pg_engine.begin() as connection:
-            async_event_id = _insert_raw_event(
+            unregistered_event_id = _insert_raw_event(
                 connection,
-                book_id=async_book,
+                book_id=unregistered_book,
                 book_position=1,
-                event_type="InvestmentLotAcquired",
+                event_type="AsyncProjectionRequested",
             )
             connection.execute(
                 text(
@@ -496,7 +497,10 @@ def test_marker_accepts_only_registered_sync_events_and_is_database_timestamped(
                     ) values (:book_id, :event_id, 1)
                     """
                 ),
-                {"book_id": async_book, "event_id": async_event_id},
+                {
+                    "book_id": unregistered_book,
+                    "event_id": unregistered_event_id,
+                },
             )
 
     invalid_version_book, _, _ = _insert_catalog(pg_engine)

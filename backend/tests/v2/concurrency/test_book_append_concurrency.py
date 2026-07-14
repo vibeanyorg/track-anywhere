@@ -16,6 +16,9 @@ from track_anywhere.infrastructure.db.models.event_store import (
     BookEventHeadRecord,
     LedgerEventRecord,
 )
+from track_anywhere.infrastructure.db.models.projections import (
+    SynchronousProjectionAppliedEventRecord,
+)
 from track_anywhere.serialization.canonical_json import EventHashEnvelope, event_hash
 
 
@@ -78,6 +81,15 @@ def _append_worker(
                     book_id=book_id,
                     expected_stream_versions={("investment_lot", stream_id): 0},
                     events=(pending,),
+                )
+                # Infrastructure-only append test: acknowledge the now-sync-required
+                # lot event without exercising its real synchronous projector.
+                session.add(
+                    SynchronousProjectionAppliedEventRecord(
+                        book_id=book_id,
+                        event_id=pending.event_id,
+                        projection_version=1,
+                    )
                 )
         results.put(("ok", worker_number))
     except BaseException:

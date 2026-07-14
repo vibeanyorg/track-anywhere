@@ -25,6 +25,7 @@ from .post_transaction import (
     PostTransactionPosting,
     execute_post_transaction,
 )
+from .record_fx import RecordFxCommand, execute_record_fx
 from .correct_transaction import (
     CorrectTransactionCommand,
     CorrectionReplacement,
@@ -52,6 +53,7 @@ __all__ = [
     "PostTransactionPosting",
     "ReportingAllocationExceeded",
     "ReportingLineInput",
+    "RecordFxCommand",
     "ReverseTransactionCommand",
     "TransactionAlreadyReversed",
     "TransactionIdAlreadyExists",
@@ -62,5 +64,6 @@ __all__ = [
     "execute_correct_external_reference",
     "execute_correct_transaction",
     "execute_post_transaction",
+    "execute_record_fx",
     "execute_reverse_transaction",
 ]

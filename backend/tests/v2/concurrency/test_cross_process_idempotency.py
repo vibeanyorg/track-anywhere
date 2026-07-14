@@ -25,6 +25,9 @@ from track_anywhere.infrastructure.db.models.event_store import (
     CommandReceiptRecord,
     LedgerEventRecord,
 )
+from track_anywhere.infrastructure.db.models.projections import (
+    SynchronousProjectionAppliedEventRecord,
+)
 from track_anywhere.infrastructure.db.repositories import RowLock
 from track_anywhere.infrastructure.db.repositories.auth import AuthRepository
 from track_anywhere.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
@@ -95,6 +98,15 @@ def _atomic_handler(command: FakeCommand, uow) -> CommandResult:
         book_id=command.book_id,
         expected_stream_versions={("investment_lot", command.stream_id): 0},
         events=(pending,),
+    )
+    # Infrastructure-only receipt test: acknowledge the now-sync-required lot
+    # event without exercising the production lot projection coordinator.
+    uow.session.add(
+        SynchronousProjectionAppliedEventRecord(
+            book_id=command.book_id,
+            event_id=pending.event_id,
+            projection_version=1,
+        )
     )
     return CommandResult(
         response_schema_version=1,

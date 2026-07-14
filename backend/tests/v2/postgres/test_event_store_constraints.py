@@ -102,6 +102,16 @@ def _insert_event_on_connection(
         ),
         values,
     )
+    connection.execute(
+        text(
+            """
+            insert into synchronous_projection_applied_events (
+                book_id, event_id, projection_version
+            ) values (:book_id, :event_id, 1)
+            """
+        ),
+        {"book_id": values["book_id"], "event_id": values["event_id"]},
+    )
 
 
 def _insert_event(engine: Engine, values: dict[str, object]) -> None:

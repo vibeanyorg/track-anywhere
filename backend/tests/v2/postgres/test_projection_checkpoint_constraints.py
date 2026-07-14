@@ -146,6 +146,14 @@ def _seed_book_with_events(connection, *, event_count: int = 2):
             """),
             _event_params(book_id, event_id, position),
         )
+        connection.execute(
+            text("""
+            insert into synchronous_projection_applied_events (
+                book_id, event_id, projection_version
+            ) values (:book_id, :event_id, 1)
+            """),
+            {"book_id": book_id, "event_id": event_id},
+        )
         events.append(event_id)
     return book_id, events
 

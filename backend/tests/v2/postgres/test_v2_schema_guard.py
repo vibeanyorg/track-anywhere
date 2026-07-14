@@ -38,6 +38,8 @@ V2_MODEL_TABLES = {
     "event_stream_heads",
     "journal_postings",
     "journal_transactions",
+    "investment_lot_allocations",
+    "investment_lots",
     "ledger_events",
     "oauth_authorization_grants",
     "oauth_client_redirect_uris",

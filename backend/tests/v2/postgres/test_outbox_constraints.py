@@ -68,6 +68,14 @@ def _seed_event(connection, *, book_name: str = "Outbox book"):
             "event_hash": bytes(str(book_id), "utf-8")[:32].ljust(32, b"e"),
         },
     )
+    connection.execute(
+        text("""
+        insert into synchronous_projection_applied_events (
+            book_id, event_id, projection_version
+        ) values (:book_id, :event_id, 1)
+        """),
+        {"book_id": book_id, "event_id": event_id},
+    )
     return book_id, event_id
 
 

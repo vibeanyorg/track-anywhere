@@ -74,6 +74,35 @@ def _pending_event(
     )
 
 
+def _append_batch_with_projection_markers(
+    session: Session,
+    *,
+    book_id: UUID,
+    expected_stream_versions: dict[tuple[str, UUID], int],
+    events: tuple[PendingEvent, ...],
+):
+    result = PostgresEventStore()._append_batch(
+        session,
+        book_id=book_id,
+        expected_stream_versions=expected_stream_versions,
+        events=events,
+    )
+    session.execute(
+        text(
+            """
+            insert into synchronous_projection_applied_events (
+                book_id, event_id, projection_version
+            ) values (:book_id, :event_id, 1)
+            """
+        ),
+        [
+            {"book_id": book_id, "event_id": event_id}
+            for event_id in result.event_ids
+        ],
+    )
+    return result
+
+
 def _recomputed_hash(record: LedgerEventRecord) -> bytes:
     return event_hash(
         EventHashEnvelope(
@@ -116,7 +145,7 @@ def test_append_batch_builds_book_hash_chain_and_per_type_stream_versions(
     )
 
     with Session(pg_engine) as session, session.begin():
-        result = PostgresEventStore()._append_batch(
+        result = _append_batch_with_projection_markers(
             session,
             book_id=book_id,
             expected_stream_versions={
@@ -168,7 +197,7 @@ def test_expected_stream_version_conflict_is_typed_and_writes_nothing(
     book_id = _seed_book(pg_engine)
     stream_id = uuid4()
     with Session(pg_engine) as session, session.begin():
-        PostgresEventStore()._append_batch(
+        _append_batch_with_projection_markers(
             session,
             book_id=book_id,
             expected_stream_versions={("investment_lot", stream_id): 0},
@@ -177,7 +206,7 @@ def test_expected_stream_version_conflict_is_typed_and_writes_nothing(
 
     with pytest.raises(StreamVersionConflict) as error_info:
         with Session(pg_engine) as session, session.begin():
-            PostgresEventStore()._append_batch(
+            _append_batch_with_projection_markers(
                 session,
                 book_id=book_id,
                 expected_stream_versions={("investment_lot", stream_id): 0},
@@ -208,7 +237,7 @@ def test_expected_versions_must_exactly_cover_touched_streams(pg_engine) -> None
     stream_id = uuid4()
     with pytest.raises(AppendBatchValidationError):
         with Session(pg_engine) as session, session.begin():
-            PostgresEventStore()._append_batch(
+            _append_batch_with_projection_markers(
                 session,
                 book_id=book_id,
                 expected_stream_versions={},
@@ -248,7 +277,7 @@ def test_database_failure_rolls_back_the_whole_batch_and_all_heads(pg_engine) ->
 
     with pytest.raises(IntegrityError):
         with Session(pg_engine) as session, session.begin():
-            PostgresEventStore()._append_batch(
+            _append_batch_with_projection_markers(
                 session,
                 book_id=book_id,
                 expected_stream_versions={("investment_lot", stream_id): 0},
@@ -290,7 +319,7 @@ def test_locking_one_book_head_does_not_block_another_book_append(pg_engine) -> 
             .with_for_update()
         ).scalar_one()
         second.execute(text("set local lock_timeout = '250ms'"))
-        PostgresEventStore()._append_batch(
+        _append_batch_with_projection_markers(
             second,
             book_id=book_b,
             expected_stream_versions={("investment_lot", stream_id): 0},

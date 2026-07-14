@@ -29,6 +29,7 @@ from .event_store import (
     EventStreamHeadRecord,
     LedgerEventRecord,
 )
+from .investments import InvestmentLotAllocationRecord, InvestmentLotRecord
 from .outbox import OutboxMessageRecord
 from .privacy import ProtectedDescriptionSidecarRecord
 from .projections import (
@@ -60,6 +61,8 @@ __all__ = [
     "LedgerEventRecord",
     "JournalPostingRecord",
     "JournalTransactionRecord",
+    "InvestmentLotAllocationRecord",
+    "InvestmentLotRecord",
     "OAuthAuthorizationGrantRecord",
     "OAuthClientRecord",
     "OAuthClientRedirectUriRecord",
