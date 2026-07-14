@@ -157,7 +157,12 @@ def read_manifest(path: Path) -> FrozenSourceManifest:
         source_revision = next(
             (
                 values[key]
-                for key in ("source_revision", "alembic_revision", "revision")
+                for key in (
+                    "source_revision",
+                    "source_alembic_revision",
+                    "alembic_revision",
+                    "revision",
+                )
                 if key in values
             ),
             "",

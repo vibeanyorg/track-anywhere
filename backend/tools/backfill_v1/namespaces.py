@@ -10,8 +10,12 @@ ENTITY_KINDS = frozenset(
     {
         "account",
         "book",
+        "category",
+        "category_version",
         "command",
         "event",
+        "line",
+        "line_version",
         "posting",
         "transaction",
     }

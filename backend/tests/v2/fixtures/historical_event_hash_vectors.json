@@ -1,0 +1,105 @@
+{
+  "vectors": [
+    {
+      "name": "historical-investment-source-scale",
+      "envelope": {
+        "event_id": "00000000-0000-4000-8000-000000000015",
+        "book_id": "00000000-0000-4000-8000-000000000002",
+        "book_position": 21,
+        "global_sequence": 21,
+        "stream_type": "historical_investment",
+        "stream_id": "00000000-0000-4000-8000-000000000016",
+        "stream_version": 1,
+        "event_type": "HistoricalInvestmentActivityImported",
+        "event_schema_version": 1,
+        "command_id": "00000000-0000-4000-8000-000000000017",
+        "actor_subject_id": "service:backfill-v2",
+        "correlation_id": "00000000-0000-4000-8000-000000000018",
+        "causation_event_id": "00000000-0000-4000-8000-000000000001",
+        "effective_at": "2026-07-14T01:21:03.000004+00:00",
+        "recorded_at": "2026-07-14T01:21:04.000005+00:00",
+        "previous_hash": "1515151515151515151515151515151515151515151515151515151515151515"
+      },
+      "payload": {
+        "source_event_id": "inv-source-1",
+        "source_account_id": "account-source-1",
+        "activity_kind": "buy",
+        "settlement_asset_code": "CNY",
+        "cash_amount": {"unscaled_units": "5000000", "scale": 2},
+        "quantity": null,
+        "nav": null,
+        "source_version": 1,
+        "source_row_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "event_hash_hex": "0eafca9e880265144f49c9c50af4b05b6a4e555df91003de4a971da270e7d384"
+    },
+    {
+      "name": "historical-reporting-fx-source-scale",
+      "envelope": {
+        "event_id": "00000000-0000-4000-8000-000000000019",
+        "book_id": "00000000-0000-4000-8000-000000000002",
+        "book_position": 25,
+        "global_sequence": 25,
+        "stream_type": "historical_reporting",
+        "stream_id": "00000000-0000-4000-8000-00000000001a",
+        "stream_version": 1,
+        "event_type": "HistoricalReportingLineImported",
+        "event_schema_version": 1,
+        "command_id": "00000000-0000-4000-8000-00000000001b",
+        "actor_subject_id": "service:backfill-v2",
+        "correlation_id": "00000000-0000-4000-8000-00000000001c",
+        "causation_event_id": "00000000-0000-4000-8000-000000000001",
+        "effective_at": "2026-07-14T01:25:03.000004+00:00",
+        "recorded_at": "2026-07-14T01:25:04.000005+00:00",
+        "previous_hash": "1919191919191919191919191919191919191919191919191919191919191919"
+      },
+      "payload": {
+        "source_line_id": "line-source-1",
+        "source_transaction_id": "transaction-source-1",
+        "transaction_id": "00000000-0000-4000-8000-000000000014",
+        "line_kind": "fx_fee",
+        "position": 1,
+        "asset_code": "USDT",
+        "amount": {"unscaled_units": "12345678", "scale": 8},
+        "source_version": 2,
+        "source_row_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "event_hash_hex": "162165e4bdaa9648a7fbbd0c0cea61410181b4a447d76ba6a8a9ef783d78f903"
+    },
+    {
+      "name": "historical-category-domain-hashes",
+      "envelope": {
+        "event_id": "00000000-0000-4000-8000-00000000001d",
+        "book_id": "00000000-0000-4000-8000-000000000002",
+        "book_position": 29,
+        "global_sequence": 29,
+        "stream_type": "historical_category",
+        "stream_id": "00000000-0000-4000-8000-00000000001e",
+        "stream_version": 1,
+        "event_type": "HistoricalCategoryActivityImported",
+        "event_schema_version": 1,
+        "command_id": "00000000-0000-4000-8000-00000000001f",
+        "actor_subject_id": "service:backfill-v2",
+        "correlation_id": "00000000-0000-4000-8000-000000000020",
+        "causation_event_id": "00000000-0000-4000-8000-000000000001",
+        "effective_at": "2026-07-14T01:29:03.000004+00:00",
+        "recorded_at": "2026-07-14T01:29:04.000005+00:00",
+        "previous_hash": "1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d"
+      },
+      "payload": {
+        "source_event_id": "classification-source-1",
+        "activity_kind": "reclassify",
+        "source_category_id": "category-before",
+        "target_category_id": "category-after",
+        "affected_line_count": 1,
+        "source_actor_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "source_version": 1,
+        "before_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "after_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "rollback_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "source_row_hash": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "event_hash_hex": "22b5df9f16cbf0a17023ef2a867dae858c55546aa2b2d5654aecc3d4a66a1cbf"
+    }
+  ]
+}

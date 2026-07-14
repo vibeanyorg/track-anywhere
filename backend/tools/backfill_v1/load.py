@@ -199,6 +199,159 @@ class ResumableBackfillLoader:
             last_keys=dict(sorted(last_keys.items())),
         )
 
+    def load_atomic_group(
+        self,
+        items: Iterable[SourceLoadItem],
+        *,
+        apply_group: Callable[[Session, tuple[SourceLoadItem, ...]], None],
+    ) -> LoadResult:
+        """Apply related source rows and all of their receipts in one transaction.
+
+        Journal transactions, postings, and reporting lines form one source
+        aggregate.  Treating them as independent loader calls would allow a
+        crash to commit an event while leaving some of its source identities
+        unreceipted.  This group boundary preserves the existing single-row
+        loader semantics while making that aggregate indivisible.
+        """
+
+        ordered = tuple(
+            sorted(
+                items,
+                key=lambda item: (
+                    item.source_table.encode("utf-8"),
+                    item.canonical_source_key.encode("utf-8"),
+                    item.source_primary_key.encode("utf-8"),
+                ),
+            )
+        )
+        if not ordered:
+            raise ValueError("backfill atomic group must contain at least one item")
+        if any(type(item) is not SourceLoadItem for item in ordered):
+            raise TypeError("backfill load accepts exact SourceLoadItem values")
+        identities = {(item.source_table, item.source_primary_key) for item in ordered}
+        if len(identities) != len(ordered):
+            raise ValueError(
+                "backfill atomic group contains duplicate source identities"
+            )
+
+        with self._session_factory() as session, session.begin():
+            checkpoints: dict[str, BackfillCheckpointRecord | None] = {}
+            receipts: dict[tuple[str, str], BackfillSourceReceiptRecord | None] = {}
+            for source_table in sorted({item.source_table for item in ordered}):
+                checkpoint = session.execute(
+                    select(BackfillCheckpointRecord)
+                    .where(
+                        BackfillCheckpointRecord.snapshot_id == self._snapshot_id,
+                        BackfillCheckpointRecord.source_table == source_table,
+                    )
+                    .with_for_update()
+                ).scalar_one_or_none()
+                if (
+                    checkpoint is not None
+                    and checkpoint.manifest_hash != self._manifest_hash
+                ):
+                    raise BackfillChangedSourceError(
+                        "snapshot checkpoint belongs to a different manifest"
+                    )
+                checkpoints[source_table] = checkpoint
+
+            for item in ordered:
+                receipt = session.get(
+                    BackfillSourceReceiptRecord,
+                    (
+                        self._snapshot_id,
+                        item.source_table,
+                        item.source_primary_key,
+                    ),
+                )
+                receipts[(item.source_table, item.source_primary_key)] = receipt
+                if receipt is not None:
+                    _assert_receipt_matches(receipt, item)
+
+            existing_count = sum(receipt is not None for receipt in receipts.values())
+            if existing_count:
+                if existing_count != len(ordered):
+                    raise BackfillChangedSourceError(
+                        "atomic source group is only partially receipted"
+                    )
+                return LoadResult(
+                    attempted=len(ordered),
+                    applied=0,
+                    replayed=len(ordered),
+                    last_keys=dict(
+                        sorted(
+                            {
+                                item.source_table: item.canonical_source_key
+                                for item in ordered
+                            }.items()
+                        )
+                    ),
+                )
+
+            grouped_by_table: dict[str, list[SourceLoadItem]] = {}
+            for item in ordered:
+                grouped_by_table.setdefault(item.source_table, []).append(item)
+            for source_table, table_items in grouped_by_table.items():
+                checkpoint = checkpoints[source_table]
+                first_key = min(item.canonical_source_key for item in table_items)
+                if (
+                    checkpoint is not None
+                    and first_key <= checkpoint.last_canonical_source_key
+                ):
+                    raise BackfillChangedSourceError(
+                        "checkpoint has advanced beyond an unreceipted source key"
+                    )
+
+            apply_group(session, ordered)
+            if self._after_apply_before_receipt is not None:
+                for item in ordered:
+                    self._after_apply_before_receipt(item)
+            for item in ordered:
+                session.add(
+                    BackfillSourceReceiptRecord(
+                        snapshot_id=self._snapshot_id,
+                        source_table=item.source_table,
+                        source_primary_key=item.source_primary_key,
+                        canonical_source_key=item.canonical_source_key,
+                        book_id=item.book_id,
+                        source_hash=item.source_hash,
+                        target_entity_id=item.target_entity_id,
+                    )
+                )
+            for source_table, table_items in grouped_by_table.items():
+                checkpoint = checkpoints[source_table]
+                last_key = max(item.canonical_source_key for item in table_items)
+                if checkpoint is None:
+                    session.add(
+                        BackfillCheckpointRecord(
+                            snapshot_id=self._snapshot_id,
+                            source_table=source_table,
+                            manifest_hash=self._manifest_hash,
+                            last_canonical_source_key=last_key,
+                            processed_count=len(table_items),
+                        )
+                    )
+                else:
+                    checkpoint.last_canonical_source_key = last_key
+                    checkpoint.processed_count += len(table_items)
+                    checkpoint.updated_at = datetime.now(UTC)
+            session.flush()
+            return LoadResult(
+                attempted=len(ordered),
+                applied=len(ordered),
+                replayed=0,
+                last_keys=dict(
+                    sorted(
+                        {
+                            table: max(
+                                item.canonical_source_key for item in table_items
+                            )
+                            for table, table_items in grouped_by_table.items()
+                        }.items()
+                    )
+                ),
+            )
+
 
 def _assert_receipt_matches(
     receipt: BackfillSourceReceiptRecord,
@@ -235,13 +388,27 @@ def seal_backfill(
             )
             or 0
         )
-        receipt_count = int(
-            session.scalar(
-                select(func.count())
-                .select_from(BackfillSourceReceiptRecord)
+        receipt_counts = {
+            str(source_table): int(count)
+            for source_table, count in session.execute(
+                select(
+                    BackfillSourceReceiptRecord.source_table,
+                    func.count(),
+                )
                 .where(BackfillSourceReceiptRecord.snapshot_id == snapshot_id)
+                .group_by(BackfillSourceReceiptRecord.source_table)
             )
-            or 0
+        }
+        receipt_count = sum(receipt_counts.values())
+        observed_counts = {
+            table: receipt_counts.get(table, 0) for table in normalized_counts
+        }
+        observed_counts.update(
+            {
+                table: count
+                for table, count in receipt_counts.items()
+                if table not in normalized_counts
+            }
         )
         candidate = BackfillSeal(
             snapshot_id=snapshot_id,
@@ -259,9 +426,9 @@ def seal_backfill(
             return candidate
         if quarantine_count:
             raise BackfillSealBlocked("backfill cannot seal with quarantine rows")
-        if sum(normalized_counts.values()) != receipt_count:
+        if observed_counts != normalized_counts:
             raise BackfillSealBlocked(
-                "backfill source counts do not match durable source receipts"
+                "backfill per-table source counts do not match durable source receipts"
             )
         session.add(
             BackfillSealRecord(

@@ -5,6 +5,11 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
+from track_anywhere.domain.backfill.events import (
+    HistoricalCategoryActivityImported,
+    HistoricalInvestmentActivityImported,
+    HistoricalReportingLineImported,
+)
 from track_anywhere.domain.investments.events import (
     InvestmentLotAcquired,
     InvestmentLotDisposed,
@@ -132,6 +137,15 @@ def test_posted_event_round_trips_through_a_jsonb_mapping() -> None:
         (ReportingLinesCleared, "ReportingLinesCleared"),
         (InvestmentLotAcquired, "InvestmentLotAcquired"),
         (InvestmentLotDisposed, "InvestmentLotDisposed"),
+        (
+            HistoricalCategoryActivityImported,
+            "HistoricalCategoryActivityImported",
+        ),
+        (
+            HistoricalInvestmentActivityImported,
+            "HistoricalInvestmentActivityImported",
+        ),
+        (HistoricalReportingLineImported, "HistoricalReportingLineImported"),
     ],
 )
 def test_event_discriminators_are_exact_class_metadata_not_payload_fields(

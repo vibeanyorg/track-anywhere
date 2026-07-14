@@ -7,6 +7,11 @@ from typing import TypeAlias, get_args
 
 from pydantic import AliasChoices, AliasPath, BaseModel, ValidationError
 
+from ..domain.backfill.events import (
+    HistoricalCategoryActivityImported,
+    HistoricalInvestmentActivityImported,
+    HistoricalReportingLineImported,
+)
 from ..domain.investments.events import (
     InvestmentLotAcquired,
     InvestmentLotDisposed,
@@ -339,5 +344,8 @@ PRODUCTION_EVENT_REGISTRY = EventRegistry(
         ReportingLinesCleared,
         InvestmentLotAcquired,
         InvestmentLotDisposed,
+        HistoricalCategoryActivityImported,
+        HistoricalInvestmentActivityImported,
+        HistoricalReportingLineImported,
     )
 )

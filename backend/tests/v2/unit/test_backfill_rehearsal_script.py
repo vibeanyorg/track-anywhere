@@ -83,7 +83,8 @@ case "$*" in
       if [[ "$1" == --output-dir ]]; then output="$2"; break; fi
       shift
     done
-    mkdir "$output"
+    mkdir -p "$output/extraction"
+    printf '%s\n' '{"fake":"canonical-extraction"}' > "$output/extraction/manifest.json"
     ;;
   *"run python -"*) cat >/dev/null ;;
   *) ;;
@@ -200,6 +201,11 @@ def test_rehearsal_runs_both_independent_verifiers_before_strict_cleanup() -> No
     assert "--workers 4" in content
     assert "--shuffle-seed 0" in content
     assert "--shuffle-seed 731" in content
+    assert 'cmp -s "$RUN_A_MANIFEST" "$RUN_B_MANIFEST"' in content
+    assert '--manifest "$RUN_A_MANIFEST"' in content
+    assert '--manifest "$RUN_B_MANIFEST"' in content
+    assert '--manifest "$MANIFEST_PATH"' in content
+    assert '--manifest "$MANIFEST_PATH"' not in content[verify_a - 160 : verify_a]
 
 
 def test_success_cleanup_is_strict_and_reads_absence_back() -> None:

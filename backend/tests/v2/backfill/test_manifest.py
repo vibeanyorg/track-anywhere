@@ -9,6 +9,7 @@ from backend.tools.backfill_v1.config import current_v2_head
 from backend.tools.backfill_v1.manifest import (
     FrozenSourceManifest,
     assert_target_ready,
+    read_manifest,
     validate_target_state,
     verify_frozen_source,
 )
@@ -60,6 +61,27 @@ def test_frozen_dump_hash_and_revision_must_match(tmp_path) -> None:
             manifest=manifest,
             actual_source_revision="another-revision",
         )
+
+
+def test_fixed_backup_manifest_accepts_source_alembic_revision(tmp_path) -> None:
+    manifest_path = tmp_path / "fixed-backup.manifest.txt"
+    manifest_path.write_text(
+        "\n".join(
+            (
+                "sha256=" + "a" * 64,
+                "source_alembic_revision=0019_posting_constraints",
+                "accounts=121",
+                "transactions=135",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest = read_manifest(manifest_path)
+
+    assert manifest.dump_sha256 == "a" * 64
+    assert manifest.source_revision == "0019_posting_constraints"
 
 
 def test_target_requires_exact_head_and_zero_backfill_business_rows() -> None:

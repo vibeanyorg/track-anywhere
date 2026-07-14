@@ -193,15 +193,50 @@ uv run python -m backend.tools.backfill_v1 run \
   --shuffle-seed 731 \
   --output-dir "$OUTPUT_ROOT/run-b"
 
+RUN_A_MANIFEST="$OUTPUT_ROOT/run-a/extraction/manifest.json"
+RUN_B_MANIFEST="$OUTPUT_ROOT/run-b/extraction/manifest.json"
+[[ -f "$RUN_A_MANIFEST" && -f "$RUN_B_MANIFEST" ]] || {
+  echo "backfill run omitted its canonical extraction manifest" >&2
+  exit 1
+}
+cmp -s "$RUN_A_MANIFEST" "$RUN_B_MANIFEST" || {
+  echo "canonical extraction manifests differ between rehearsals" >&2
+  exit 1
+}
+TRACK_ANYWHERE_FROZEN_MANIFEST="$MANIFEST_PATH" \
+TRACK_ANYWHERE_RUN_A_MANIFEST="$RUN_A_MANIFEST" \
+TRACK_ANYWHERE_RUN_B_MANIFEST="$RUN_B_MANIFEST" \
+uv run python - <<'PY'
+import os
+from pathlib import Path
+
+from backend.tools.backfill_v1.manifest import read_manifest
+
+frozen = read_manifest(Path(os.environ["TRACK_ANYWHERE_FROZEN_MANIFEST"]))
+run_a = read_manifest(Path(os.environ["TRACK_ANYWHERE_RUN_A_MANIFEST"]))
+run_b = read_manifest(Path(os.environ["TRACK_ANYWHERE_RUN_B_MANIFEST"]))
+if run_a.to_dict() != run_b.to_dict():
+    raise SystemExit("canonical extraction manifests are not identical")
+if not run_a.tables:
+    raise SystemExit("canonical extraction manifest has no source tables")
+if (
+    run_a.dump_sha256 != frozen.dump_sha256
+    or run_a.source_revision != frozen.source_revision
+):
+    raise SystemExit("canonical extraction is not bound to the frozen source")
+if frozen.tables and run_a.to_dict() != frozen.to_dict():
+    raise SystemExit("canonical extraction does not match the fixed full manifest")
+PY
+
 uv run python -m backend.tools.backfill_v1.verify \
   --source-url "$SOURCE_READ_ONLY_URL" \
   --target-url "$TARGET_A_URL" \
-  --manifest "$MANIFEST_PATH" \
+  --manifest "$RUN_A_MANIFEST" \
   --output "$OUTPUT_ROOT/run-a/independent-verification.json"
 uv run python -m backend.tools.backfill_v1.verify \
   --source-url "$SOURCE_READ_ONLY_URL" \
   --target-url "$TARGET_B_URL" \
-  --manifest "$MANIFEST_PATH" \
+  --manifest "$RUN_B_MANIFEST" \
   --output "$OUTPUT_ROOT/run-b/independent-verification.json"
 uv run python -m backend.tools.backfill_v1.verify_determinism \
   --run-a "$OUTPUT_ROOT/run-a/independent-verification.json" \

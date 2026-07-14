@@ -43,6 +43,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     inventory.add_argument("--extraction-dir", type=Path, required=True)
     inventory.add_argument("--output", type=Path, required=True)
+
+    run = commands.add_parser(
+        "run", help="extract and resumably load one frozen V1 snapshot into V2"
+    )
+    run.add_argument("--source-url", required=True)
+    run.add_argument("--target-url", required=True)
+    run.add_argument("--dump", type=Path, required=True)
+    run.add_argument("--manifest", type=Path, required=True)
+    run.add_argument("--output-dir", type=Path, required=True)
+    run.add_argument("--batch-size", type=int, default=500)
+    run.add_argument("--workers", type=int, default=1)
+    run.add_argument("--shuffle-seed", type=int, default=0)
     return parser
 
 
@@ -95,6 +107,23 @@ def _inventory(args: argparse.Namespace) -> int:
     return 0 if report.ok else 2
 
 
+def _run(args: argparse.Namespace) -> int:
+    from .pipeline import run_backfill
+
+    result = run_backfill(
+        source_url=args.source_url,
+        target_url=args.target_url,
+        dump_path=args.dump,
+        manifest_path=args.manifest,
+        output_dir=args.output_dir,
+        batch_size=args.batch_size,
+        workers=args.workers,
+        shuffle_seed=args.shuffle_seed,
+    )
+    print(result.seal.snapshot_id)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -104,6 +133,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _extract(args)
         if args.command == "inventory":
             return _inventory(args)
+        if args.command == "run":
+            return _run(args)
     except (FileExistsError, RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2

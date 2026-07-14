@@ -131,6 +131,62 @@ def test_changed_manifest_or_duplicate_source_content_is_rejected(pg_engine) -> 
         same_manifest.load((changed_item,))
 
 
+def test_related_source_rows_and_receipts_use_one_atomic_group(pg_engine) -> None:
+    scenario = JournalScenario.create()
+    seed_journal_scenario(pg_engine, scenario)
+    factory = sessionmaker(pg_engine, expire_on_commit=False)
+    items = (_item(scenario, 1), _item(scenario, 2))
+
+    def apply_group(session, grouped) -> None:
+        book = session.get(BookRecord, scenario.book_id)
+        assert book is not None
+        book.current_name += ":group"
+        session.flush([book])
+
+    def crash(item: SourceLoadItem) -> None:
+        if item.source_primary_key == "account-2":
+            raise RuntimeError("injected grouped termination")
+
+    crashing = ResumableBackfillLoader(
+        factory,
+        snapshot_id="sha256:snapshot-group",
+        manifest_hash=b"g" * 32,
+        apply_item=lambda _session, _item: None,
+        after_apply_before_receipt=crash,
+    )
+    with pytest.raises(RuntimeError, match="grouped termination"):
+        crashing.load_atomic_group(items, apply_group=apply_group)
+
+    with Session(pg_engine) as session:
+        assert not session.get(BookRecord, scenario.book_id).current_name.endswith(
+            ":group"
+        )
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(BackfillSourceReceiptRecord)
+                .where(
+                    BackfillSourceReceiptRecord.snapshot_id == "sha256:snapshot-group"
+                )
+            )
+            == 0
+        )
+
+    resumed = ResumableBackfillLoader(
+        factory,
+        snapshot_id="sha256:snapshot-group",
+        manifest_hash=b"g" * 32,
+        apply_item=lambda _session, _item: None,
+    )
+    loaded = resumed.load_atomic_group(items, apply_group=apply_group)
+    replay = resumed.load_atomic_group(items, apply_group=apply_group)
+
+    assert (loaded.applied, loaded.replayed) == (2, 0)
+    assert (replay.applied, replay.replayed) == (0, 2)
+    with Session(pg_engine) as session:
+        assert session.get(BookRecord, scenario.book_id).current_name.endswith(":group")
+
+
 def test_database_rejects_checkpoint_regression_and_receipt_mutation(pg_engine) -> None:
     scenario = JournalScenario.create()
     seed_journal_scenario(pg_engine, scenario)

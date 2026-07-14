@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.tests.v2.fixtures.synchronous import JournalScenario, seed_journal_scenario
 from backend.tools.backfill_v1.load import (
     BackfillChangedSourceError,
+    BackfillSealBlocked,
     ResumableBackfillLoader,
     SourceLoadItem,
     seal_backfill,
@@ -71,4 +72,39 @@ def test_seal_is_idempotent_immutable_and_writes_stable_verification(
             manifest_hash=b"z" * 32,
             source_counts={"accounts": 2},
             terminal_book_hashes={str(scenario.book_id): "ab" * 32},
+        )
+
+
+def test_seal_rejects_equal_total_with_wrong_per_table_receipt_distribution(
+    pg_engine,
+) -> None:
+    scenario = JournalScenario.create()
+    seed_journal_scenario(pg_engine, scenario)
+    factory = sessionmaker(pg_engine, expire_on_commit=False)
+    items = (
+        SourceLoadItem(
+            source_table=source_table,
+            source_primary_key=f"{source_table}-1",
+            canonical_source_key="0001",
+            source_hash=hashlib.sha256(source_table.encode()).digest(),
+            book_id=scenario.book_id,
+            target_entity_id=None,
+            payload={},
+        )
+        for source_table in ("accounts", "assets")
+    )
+    ResumableBackfillLoader(
+        factory,
+        snapshot_id="sha256:snapshot-table-counts",
+        manifest_hash=b"t" * 32,
+        apply_item=lambda _session, _item: None,
+    ).load(items)
+
+    with pytest.raises(BackfillSealBlocked, match="per-table source counts"):
+        seal_backfill(
+            factory,
+            snapshot_id="sha256:snapshot-table-counts",
+            manifest_hash=b"t" * 32,
+            source_counts={"accounts": 2, "assets": 0},
+            terminal_book_hashes={str(scenario.book_id): "cd" * 32},
         )

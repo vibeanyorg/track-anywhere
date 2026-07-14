@@ -46,6 +46,31 @@ scripts/pg17-client.sh pg_dump --version
 
 All three commands must report major version 17.
 
+## Fixed-source semantic mapping
+
+This is a greenfield V2 import, not a V1 compatibility layer. The frozen source
+is mapped without inventing domain facts:
+
+- 38 categorized transaction lines become V2 category reporting lines; the 5
+  uncategorized FX lines become typed historical reporting events (4 exchange,
+  1 fee). No fake category or memo is introduced.
+- All 6 investment activities become typed historical investment events. They
+  create no V2 lot or valuation because V1 does not contain the two-asset facts
+  required by that kernel.
+- All 43 classification audits are retained as typed history. The 8
+  reclassifications also replay real reporting revisions, with chain and current
+  category/version/path parity checked before the first target write.
+- A pure four-posting, two-asset FX transaction marks its source system accounts
+  `fx_trading` and posts with V2 kind `fx`; the mixed six-posting FX-plus-fee
+  shape remains `standard`.
+- Transactions, classification events, and investment events share one
+  deterministic per-Book schedule. It is ordered by effective time and raw
+  source identity, with original-before-reversal and transaction-before-reclass
+  dependencies; journal children stay adjacent to their parent aggregate.
+- V1 deferred reporting fields are accepted only at their real defaults:
+  null counterparty/project, `unknown` necessity, and `none` reimbursement.
+  Any meaningful value blocks the run rather than being silently discarded.
+
 ## Run the rehearsal
 
 Choose a new output name. Do not pre-create it.
@@ -62,14 +87,17 @@ bash scripts/rehearse-v2-backfill.sh \
 One shell process owns the entire lifecycle. In order it:
 
 1. binds the dump SHA-256 to the manifest and checks all three client versions;
-2. creates and restores one source, then makes its connections read-only;
-3. creates two empty targets at the exact V2 Alembic head;
-4. checks the frozen source contract before loading;
-5. imports run A with UTC/C, batch 37, one worker, seed 0;
-6. imports run B with Pacific/Auckland/en_US.UTF-8, batch 13, four workers, seed 731;
-7. independently verifies each target and compares those verifier reports;
-8. strictly drops all three databases and proves each is absent; and
-9. atomically writes `summary.json`, then disarms the failure cleanup trap.
+2. requires both runs to emit byte-identical full extraction manifests bound to
+   the fixed dump and source revision; each independent verifier consumes its
+   run's full manifest rather than the initial dump-only binding;
+3. creates and restores one source, then makes its connections read-only;
+4. creates two empty targets at the exact V2 Alembic head;
+5. checks the frozen source contract before loading;
+6. imports run A with UTC/C, batch 37, one worker, seed 0;
+7. imports run B with Pacific/Auckland/en_US.UTF-8, batch 13, four workers, seed 731;
+8. independently verifies each target and compares those verifier reports;
+9. strictly drops all three databases and proves each is absent; and
+10. atomically writes `summary.json`, then disarms the failure cleanup trap.
 
 Any failed command, assertion, cleanup, or absence check exits nonzero. Failure
 can retain diagnostics, but cannot produce a PASS summary. The cleanup trap
