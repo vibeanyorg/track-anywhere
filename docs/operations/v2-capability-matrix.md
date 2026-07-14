@@ -41,6 +41,7 @@ it does not imply an invitation or membership-administration API.
 Only rows marked `implemented` may retain reachable V2 runtime code. Deferred
 and removed rows must have no hidden V1 route, adapter, SQLite fallback, or CLI
 network call. The exact file decision is frozen in
-[the retirement manifest](v2-retirement-manifest.md), and deletion is blocked
-until [pre-retirement verification](v2-pre-retirement-verification.md) records a
-passing local gate.
+[the retirement manifest](v2-retirement-manifest.md). The user-authorized
+greenfield deletion is complete; the remaining fixed-dump and exact-image gates
+in [local verification evidence](v2-pre-retirement-verification.md) block release
+and cutover, not source cleanup.

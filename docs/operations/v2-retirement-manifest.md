@@ -359,6 +359,7 @@ historical-code exclusion allowed by the post-retirement scan.
 3. The retained auth package and CLI modules must continue to have the named V2
    consumer. If that consumer disappears, delete the utility or amend this
    matrix through review.
-4. Do not delete V1 until the gate decision in
-   [v2-pre-retirement-verification.md](v2-pre-retirement-verification.md) is
-   `APPROVED`.
+4. V1 deletion is complete under the user's explicit greenfield authorization.
+   The remaining manual gates in
+   [v2-pre-retirement-verification.md](v2-pre-retirement-verification.md) block
+   release and cutover; they must not be represented as production approval.
