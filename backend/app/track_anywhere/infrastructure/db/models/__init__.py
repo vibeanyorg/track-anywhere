@@ -1,3 +1,9 @@
+from .async_projection import (
+    ProjectionCheckpointRecord,
+    ProjectionDirtyPeriodRecord,
+    ProjectionFailureRecord,
+    ProjectionGenerationRecord,
+)
 from .auth import (
     AuthIdentityRecord,
     BookMemberRecord,
@@ -23,6 +29,7 @@ from .event_store import (
     EventStreamHeadRecord,
     LedgerEventRecord,
 )
+from .outbox import OutboxMessageRecord
 from .privacy import ProtectedDescriptionSidecarRecord
 from .projections import (
     AccountBalanceRecord,
@@ -57,6 +64,11 @@ __all__ = [
     "OAuthClientRecord",
     "OAuthClientRedirectUriRecord",
     "OAuthDeviceGrantRecord",
+    "OutboxMessageRecord",
+    "ProjectionCheckpointRecord",
+    "ProjectionDirtyPeriodRecord",
+    "ProjectionFailureRecord",
+    "ProjectionGenerationRecord",
     "PasswordAccountRecord",
     "ProtectedDescriptionSidecarRecord",
     "ReportingLineRecord",
