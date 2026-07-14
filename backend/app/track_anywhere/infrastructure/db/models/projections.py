@@ -35,10 +35,12 @@ class SynchronousProjectionEventTypeRecord(V2Base):
     __table_args__ = (
         CheckConstraint("btrim(event_type) <> ''", name="event_type_nonblank"),
         CheckConstraint("event_schema_version > 0", name="schema_version_positive"),
+        CheckConstraint("projection_version > 0", name="projection_version_positive"),
     )
 
     event_type: Mapped[str] = mapped_column(String(64), primary_key=True)
     event_schema_version: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    projection_version: Mapped[int] = mapped_column(Integer)
 
 
 class JournalTransactionRecord(V2Base):

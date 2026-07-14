@@ -35,7 +35,9 @@ def _insert_raw_event(
     book_id: UUID,
     book_position: int,
     event_type: str,
+    event_schema_version: int = 1,
     event_id: UUID | None = None,
+    stream_id: UUID | None = None,
 ) -> UUID:
     persisted_event_id = event_id or uuid4()
     connection.execute(
@@ -48,7 +50,8 @@ def _insert_raw_event(
                 effective_at, payload, previous_hash, event_hash
             ) values (
                 :event_id, :book_id, :book_position, :stream_type, :stream_id,
-                1, :event_type, 1, :command_id, 'human:test-user',
+                1, :event_type, :event_schema_version, :command_id,
+                'human:test-user',
                 :correlation_id, null, :effective_at, '{}'::jsonb,
                 :previous_hash, :event_hash
             )
@@ -63,8 +66,9 @@ def _insert_raw_event(
                 if event_type.startswith("InvestmentLot")
                 else "journal_transaction"
             ),
-            "stream_id": uuid4(),
+            "stream_id": stream_id or uuid4(),
             "event_type": event_type,
+            "event_schema_version": event_schema_version,
             "command_id": uuid4(),
             "correlation_id": uuid4(),
             "effective_at": datetime.now(UTC),
@@ -98,6 +102,44 @@ def _insert_projected_transaction(
         transaction_id=transaction_id,
         debit_account_id=debit_account_id,
         credit_account_id=credit_account_id,
+    )
+
+
+def _insert_reporting_line(
+    connection,
+    *,
+    book_id: UUID,
+    transaction_id: UUID,
+    source_event_id: UUID,
+    classification_revision: int,
+    line_position: int,
+) -> None:
+    connection.execute(
+        text(
+            """
+            insert into reporting_lines (
+                book_id, transaction_id, classification_revision,
+                line_id, line_version_id, catalog_id, line_position,
+                asset_code, units, line_kind, dimension, dimension_id,
+                description_ref, source_event_id
+            ) values (
+                :book_id, :transaction_id, :classification_revision,
+                :line_id, :line_version_id, :catalog_id, :line_position,
+                'USD', 100, 'expense', 'category', null, null,
+                :source_event_id
+            )
+            """
+        ),
+        {
+            "book_id": book_id,
+            "transaction_id": transaction_id,
+            "classification_revision": classification_revision,
+            "line_id": uuid4(),
+            "line_version_id": uuid4(),
+            "catalog_id": uuid4(),
+            "line_position": line_position,
+            "source_event_id": source_event_id,
+        },
     )
 
 
@@ -136,7 +178,7 @@ def test_projection_relations_native_type_and_model_metadata_are_complete(
         sync_event_types = connection.execute(
             text(
                 """
-                select event_type, event_schema_version
+                select event_type, event_schema_version, projection_version
                   from synchronous_projection_event_types
                  order by event_type, event_schema_version
                 """
@@ -146,11 +188,11 @@ def test_projection_relations_native_type_and_model_metadata_are_complete(
     assert all(relations.values())
     assert tuple(posting_side) == ("e", ["debit", "credit"])
     assert [tuple(row) for row in sync_event_types] == [
-        ("FinancialExternalReferenceCorrected", 1),
-        ("JournalTransactionPosted", 1),
-        ("JournalTransactionReversed", 1),
-        ("ReportingLinesAssigned", 1),
-        ("ReportingLinesCleared", 1),
+        ("FinancialExternalReferenceCorrected", 1, 1),
+        ("JournalTransactionPosted", 1, 1),
+        ("JournalTransactionReversed", 1, 1),
+        ("ReportingLinesAssigned", 1, 1),
+        ("ReportingLinesCleared", 1, 1),
     ]
 
 
@@ -320,6 +362,86 @@ def test_sync_required_events_need_a_marker_but_async_events_do_not(pg_engine) -
         )
 
 
+def test_known_sync_event_with_unknown_schema_is_rejected_at_commit_and_rolled_back(
+    pg_engine,
+) -> None:
+    book_id, _, _ = _insert_catalog(pg_engine)
+    event_id = uuid4()
+    connection = pg_engine.connect()
+    transaction = connection.begin()
+    try:
+        _insert_raw_event(
+            connection,
+            book_id=book_id,
+            book_position=1,
+            event_type="JournalTransactionPosted",
+            event_schema_version=2,
+            event_id=event_id,
+        )
+        with pytest.raises(IntegrityError) as error:
+            transaction.commit()
+        assert error.value.orig.sqlstate == "23514"
+    finally:
+        if transaction.is_active:
+            transaction.rollback()
+        connection.close()
+
+    with pg_engine.connect() as verification_connection:
+        assert (
+            verification_connection.execute(
+                text("select count(*) from ledger_events where event_id = :event_id"),
+                {"event_id": event_id},
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_journal_transaction_source_requires_registered_type_and_schema(
+    pg_engine,
+) -> None:
+    book_id, _, _ = _insert_catalog(pg_engine)
+    transaction_id = uuid4()
+    event_id = uuid4()
+    connection = pg_engine.connect()
+    transaction = connection.begin()
+    try:
+        _insert_raw_event(
+            connection,
+            book_id=book_id,
+            book_position=1,
+            event_type="JournalTransactionPosted",
+            event_schema_version=2,
+            event_id=event_id,
+            stream_id=transaction_id,
+        )
+        with pytest.raises(IntegrityError) as error:
+            connection.execute(
+                text(
+                    """
+                    insert into journal_transactions (
+                        book_id, transaction_id, source_event_id,
+                        source_position, effective_at, transaction_kind,
+                        description_ref
+                    ) values (
+                        :book_id, :transaction_id, :event_id, 1,
+                        :effective_at, 'standard', null
+                    )
+                    """
+                ),
+                {
+                    "book_id": book_id,
+                    "transaction_id": transaction_id,
+                    "event_id": event_id,
+                    "effective_at": datetime.now(UTC),
+                },
+            )
+        assert error.value.orig.sqlstate == "23514"
+    finally:
+        if transaction.is_active:
+            transaction.rollback()
+        connection.close()
+
+
 def test_marker_accepts_only_registered_sync_events_and_is_database_timestamped(
     pg_engine,
 ) -> None:
@@ -399,6 +521,161 @@ def test_marker_accepts_only_registered_sync_events_and_is_database_timestamped(
                     "event_id": invalid_version_event_id,
                 },
             )
+
+
+def test_marker_projection_version_must_match_the_registry(pg_engine) -> None:
+    book_id, _, _ = _insert_catalog(pg_engine)
+    with pytest.raises(IntegrityError) as error:
+        with pg_engine.begin() as connection:
+            event_id = _insert_raw_event(
+                connection,
+                book_id=book_id,
+                book_position=1,
+                event_type="JournalTransactionPosted",
+            )
+            connection.execute(
+                text(
+                    """
+                    insert into synchronous_projection_applied_events (
+                        book_id, event_id, projection_version
+                    ) values (:book_id, :event_id, 2147483647)
+                    """
+                ),
+                {"book_id": book_id, "event_id": event_id},
+            )
+    assert error.value.orig.sqlstate == "23514"
+
+
+def test_runtime_can_replace_all_and_clear_only_current_reporting_lines(
+    pg_engine,
+) -> None:
+    book_id, debit_account_id, credit_account_id = _insert_catalog(pg_engine)
+    transaction_id = uuid4()
+    with pg_engine.begin() as connection:
+        _insert_projected_transaction(
+            connection,
+            book_id=book_id,
+            transaction_id=transaction_id,
+            event_id=uuid4(),
+            book_position=1,
+            debit_account_id=debit_account_id,
+            credit_account_id=credit_account_id,
+        )
+        assigned_event_id = _insert_raw_event(
+            connection,
+            book_id=book_id,
+            book_position=2,
+            event_type="ReportingLinesAssigned",
+        )
+        connection.execute(
+            text(
+                """
+                insert into synchronous_projection_applied_events (
+                    book_id, event_id, projection_version
+                ) values (:book_id, :event_id, 1)
+                """
+            ),
+            {"book_id": book_id, "event_id": assigned_event_id},
+        )
+        for line_position in (0, 1):
+            _insert_reporting_line(
+                connection,
+                book_id=book_id,
+                transaction_id=transaction_id,
+                source_event_id=assigned_event_id,
+                classification_revision=1,
+                line_position=line_position,
+            )
+
+    with pg_engine.begin() as connection:
+        replacement_event_id = _insert_raw_event(
+            connection,
+            book_id=book_id,
+            book_position=3,
+            event_type="ReportingLinesAssigned",
+        )
+        connection.execute(
+            text(
+                """
+                insert into synchronous_projection_applied_events (
+                    book_id, event_id, projection_version
+                ) values (:book_id, :event_id, 1)
+                """
+            ),
+            {"book_id": book_id, "event_id": replacement_event_id},
+        )
+        connection.execute(
+            text(
+                """
+                delete from reporting_lines
+                 where book_id = :book_id and transaction_id = :transaction_id
+                """
+            ),
+            {"book_id": book_id, "transaction_id": transaction_id},
+        )
+        _insert_reporting_line(
+            connection,
+            book_id=book_id,
+            transaction_id=transaction_id,
+            source_event_id=replacement_event_id,
+            classification_revision=2,
+            line_position=0,
+        )
+
+    with pg_engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                """
+                select classification_revision, line_position, source_event_id
+                  from reporting_lines
+                 where book_id = :book_id and transaction_id = :transaction_id
+                """
+            ),
+            {"book_id": book_id, "transaction_id": transaction_id},
+        ).all()
+    assert [tuple(row) for row in rows] == [(2, 0, replacement_event_id)]
+
+    with pg_engine.begin() as connection:
+        cleared_event_id = _insert_raw_event(
+            connection,
+            book_id=book_id,
+            book_position=4,
+            event_type="ReportingLinesCleared",
+        )
+        connection.execute(
+            text(
+                """
+                insert into synchronous_projection_applied_events (
+                    book_id, event_id, projection_version
+                ) values (:book_id, :event_id, 1)
+                """
+            ),
+            {"book_id": book_id, "event_id": cleared_event_id},
+        )
+        connection.execute(
+            text(
+                """
+                delete from reporting_lines
+                 where book_id = :book_id and transaction_id = :transaction_id
+                """
+            ),
+            {"book_id": book_id, "transaction_id": transaction_id},
+        )
+
+    with pg_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text(
+                    """
+                select count(*)
+                  from reporting_lines
+                 where book_id = :book_id and transaction_id = :transaction_id
+                """
+                ),
+                {"book_id": book_id, "transaction_id": transaction_id},
+            ).scalar_one()
+            == 0
+        )
 
 
 def test_balance_numeric_48_digit_positive_and_negative_boundaries_are_exact(
@@ -949,8 +1226,11 @@ def test_runtime_projection_acl_and_trigger_functions_are_minimal(
                 text("select has_table_privilege(:role, :table_name, 'SELECT')"),
                 {"role": runtime, "table_name": f"public.{table_name}"},
             ).scalar_one()
+            assert connection.execute(
+                text("select has_table_privilege(:role, :table_name, 'DELETE')"),
+                {"role": runtime, "table_name": f"public.{table_name}"},
+            ).scalar_one() is (table_name == "reporting_lines")
             for privilege in (
-                "DELETE",
                 "TRUNCATE",
                 "REFERENCES",
                 "TRIGGER",

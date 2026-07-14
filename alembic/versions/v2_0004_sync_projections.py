@@ -139,6 +139,7 @@ def _create_tables() -> None:
         "synchronous_projection_event_types",
         sa.Column("event_type", sa.String(length=64), nullable=False),
         sa.Column("event_schema_version", sa.SmallInteger(), nullable=False),
+        sa.Column("projection_version", sa.Integer(), nullable=False),
         sa.CheckConstraint(
             "btrim(event_type) <> ''",
             name=op.f("ck_synchronous_projection_event_types_event_type_nonblank"),
@@ -146,6 +147,12 @@ def _create_tables() -> None:
         sa.CheckConstraint(
             "event_schema_version > 0",
             name=op.f("ck_synchronous_projection_event_types_schema_version_positive"),
+        ),
+        sa.CheckConstraint(
+            "projection_version > 0",
+            name=op.f(
+                "ck_synchronous_projection_event_types_projection_version_positive"
+            ),
         ),
         sa.PrimaryKeyConstraint(
             "event_type",
@@ -518,9 +525,14 @@ def _create_tables() -> None:
             "synchronous_projection_event_types",
             sa.column("event_type", sa.String()),
             sa.column("event_schema_version", sa.SmallInteger()),
+            sa.column("projection_version", sa.Integer()),
         ),
         [
-            {"event_type": event_type, "event_schema_version": 1}
+            {
+                "event_type": event_type,
+                "event_schema_version": 1,
+                "projection_version": 1,
+            }
             for event_type in (
                 "FinancialExternalReferenceCorrected",
                 "JournalTransactionPosted",
@@ -653,6 +665,9 @@ def _create_triggers(runtime_role: str) -> None:
         "v2_validate_journal_source_projection": """
             perform 1
               from public.ledger_events event_record
+              join public.synchronous_projection_event_types required
+                on required.event_type = event_record.event_type
+               and required.event_schema_version = event_record.event_schema_version
              where event_record.book_id = new.book_id
                and event_record.event_id = new.source_event_id
                and event_record.book_position = new.source_position
@@ -671,15 +686,24 @@ def _create_triggers(runtime_role: str) -> None:
                 select 1
                   from public.synchronous_projection_event_types required
                  where required.event_type = new.event_type
-                   and required.event_schema_version = new.event_schema_version
-            ) and not exists (
-                select 1
-                  from public.synchronous_projection_applied_events applied
-                 where applied.book_id = new.book_id
-                   and applied.event_id = new.event_id
             ) then
-                raise exception using errcode = '23514',
-                    message = 'sync-required event must have an applied projection marker';
+                perform 1
+                  from public.synchronous_projection_event_types required
+                 where required.event_type = new.event_type
+                   and required.event_schema_version = new.event_schema_version;
+                if not found then
+                    raise exception using errcode = '23514',
+                        message = 'sync event schema is not registered';
+                end if;
+                if not exists (
+                    select 1
+                      from public.synchronous_projection_applied_events applied
+                     where applied.book_id = new.book_id
+                       and applied.event_id = new.event_id
+                ) then
+                    raise exception using errcode = '23514',
+                        message = 'sync-required event must have an applied projection marker';
+                end if;
             end if;
             return null;
         """,
@@ -689,6 +713,7 @@ def _create_triggers(runtime_role: str) -> None:
               join public.synchronous_projection_event_types required
                 on required.event_type = event_record.event_type
                and required.event_schema_version = event_record.event_schema_version
+               and required.projection_version = new.projection_version
              where event_record.book_id = new.book_id
                and event_record.event_id = new.event_id;
             if not found then
@@ -771,6 +796,9 @@ def _apply_runtime_acl(runtime_role: str) -> None:
         _grant_columns(quoted_runtime, table_name, "insert", columns)
     for table_name, columns in _UPDATE_COLUMNS.items():
         _grant_columns(quoted_runtime, table_name, "update", columns)
+    connection.exec_driver_sql(
+        f"grant delete on table public.reporting_lines to {quoted_runtime}"
+    )
 
     connection.exec_driver_sql(
         "revoke all privileges on type public.posting_side "
