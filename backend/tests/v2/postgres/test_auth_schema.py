@@ -28,6 +28,10 @@ CANONICAL_PASSWORD_HASH = (
     f"pbkdf2_sha256$390000${_PASSWORD_SALT}$"
     f"{pbkdf2_hmac('sha256', _PASSWORD.encode(), _PASSWORD_SALT.encode(), 390_000).hex()}"
 )
+ROTATED_PASSWORD_HASH = (
+    f"pbkdf2_sha256$390000${_PASSWORD_SALT}$"
+    f"{pbkdf2_hmac('sha256', f'{_PASSWORD}-rotated'.encode(), _PASSWORD_SALT.encode(), 390_000).hex()}"
+)
 
 
 def _execute(engine: Engine, statement: str, parameters: dict[str, object]) -> None:
@@ -443,6 +447,193 @@ def test_membership_identity_and_password_shapes_are_database_enforced(
             "book_id": book_id,
             "user_id": user_id,
             "revoked_at": datetime.now(UTC),
+        },
+    )
+
+
+def test_book_member_binding_is_immutable_but_membership_state_is_mutable(
+    pg_engine,
+) -> None:
+    book_id = uuid4()
+    other_book_id = uuid4()
+    _insert_book(pg_engine, book_id)
+    _insert_book(pg_engine, other_book_id)
+    _insert_user(pg_engine, "user:member")
+    _insert_user(pg_engine, "user:member-other")
+    _execute(
+        pg_engine,
+        """
+        insert into book_members (
+            book_id, user_id, role, status, scopes, revoked_at
+        ) values (
+            :book_id, 'user:member', 'viewer', 'active',
+            '["book:read"]'::jsonb, null
+        )
+        """,
+        {"book_id": book_id},
+    )
+    for assignment, parameters in (
+        ("book_id = :value", {"value": other_book_id}),
+        ("user_id = 'user:member-other'", {}),
+        ("created_at = created_at + interval '1 second'", {}),
+    ):
+        _rejects_integrity(
+            pg_engine,
+            f"update book_members set {assignment} "
+            "where book_id = :book_id and user_id = 'user:member'",
+            {**parameters, "book_id": book_id},
+        )
+
+    _execute(
+        pg_engine,
+        """
+        update book_members
+           set role = 'auditor', scopes = '["book:read", "audit:read"]'::jsonb,
+               status = 'revoked', revoked_at = :revoked_at
+         where book_id = :book_id and user_id = 'user:member'
+        """,
+        {
+            "book_id": book_id,
+            "revoked_at": datetime.now(UTC),
+        },
+    )
+
+
+def test_user_principal_identity_is_immutable_but_profile_is_mutable(pg_engine) -> None:
+    user_id = "user:principal"
+    _insert_user(pg_engine, user_id)
+    for assignment in (
+        "user_id = 'user:renamed'",
+        "subject_type = 'machine'",
+        "created_at = created_at + interval '1 second'",
+    ):
+        _rejects_integrity(
+            pg_engine,
+            f"update users set {assignment} where user_id = :user_id",
+            {"user_id": user_id},
+        )
+
+    _execute(
+        pg_engine,
+        """
+        update users
+           set current_display_name = 'Updated principal',
+               status = 'disabled', updated_at = :updated_at
+         where user_id = :user_id
+        """,
+        {"updated_at": datetime.now(UTC), "user_id": user_id},
+    )
+
+
+def test_auth_identity_principal_is_human_and_immutable(pg_engine) -> None:
+    _insert_user(pg_engine, "user:identity-owner")
+    _insert_user(pg_engine, "user:identity-other")
+    _insert_user(pg_engine, "machine:identity", subject_type="machine")
+    _rejects_integrity(
+        pg_engine,
+        """
+        insert into auth_identities (
+            identity_id, provider, subject, user_id, email_verified, status
+        ) values (
+            :identity_id, 'oidc', 'machine-subject',
+            'machine:identity', false, 'active'
+        )
+        """,
+        {"identity_id": uuid4()},
+    )
+
+    identity_id = uuid4()
+    _execute(
+        pg_engine,
+        """
+        insert into auth_identities (
+            identity_id, provider, subject, user_id, email_verified, status
+        ) values (
+            :identity_id, 'oidc', 'human-subject',
+            'user:identity-owner', false, 'active'
+        )
+        """,
+        {"identity_id": identity_id},
+    )
+    for assignment, parameters in (
+        ("identity_id = :value", {"value": uuid4()}),
+        ("provider = 'saml'", {}),
+        ("subject = 'other-subject'", {}),
+        ("user_id = 'user:identity-other'", {}),
+        ("created_at = created_at + interval '1 second'", {}),
+    ):
+        _rejects_integrity(
+            pg_engine,
+            f"update auth_identities set {assignment} where identity_id = :identity_id",
+            {**parameters, "identity_id": identity_id},
+        )
+
+    _execute(
+        pg_engine,
+        """
+        update auth_identities
+           set email = 'updated@example.test', email_verified = true,
+               display_name = 'Updated identity',
+               picture_url = 'https://example.test/picture.png',
+               status = 'disabled', updated_at = :updated_at
+         where identity_id = :identity_id
+        """,
+        {"updated_at": datetime.now(UTC), "identity_id": identity_id},
+    )
+
+
+def test_password_account_principal_is_human_and_immutable(pg_engine) -> None:
+    _insert_user(pg_engine, "user:password-owner")
+    _insert_user(pg_engine, "user:password-other")
+    _insert_user(pg_engine, "machine:password", subject_type="machine")
+    _rejects_integrity(
+        pg_engine,
+        """
+        insert into password_accounts (
+            user_id, normalized_email, password_hash, status
+        ) values (
+            'machine:password', 'machine@example.test',
+            :password_hash, 'active'
+        )
+        """,
+        {"password_hash": CANONICAL_PASSWORD_HASH},
+    )
+
+    _execute(
+        pg_engine,
+        """
+        insert into password_accounts (
+            user_id, normalized_email, password_hash, status
+        ) values (
+            'user:password-owner', 'owner@example.test',
+            :password_hash, 'active'
+        )
+        """,
+        {"password_hash": CANONICAL_PASSWORD_HASH},
+    )
+    for assignment in (
+        "user_id = 'user:password-other'",
+        "created_at = created_at + interval '1 second'",
+    ):
+        _rejects_integrity(
+            pg_engine,
+            f"update password_accounts set {assignment} "
+            "where user_id = 'user:password-owner'",
+            {},
+        )
+
+    _execute(
+        pg_engine,
+        """
+        update password_accounts
+           set normalized_email = 'updated-owner@example.test',
+               password_hash = :password_hash, status = 'disabled',
+               updated_at = :updated_at
+         where user_id = 'user:password-owner'
+        """,
+        {
+            "password_hash": ROTATED_PASSWORD_HASH,
+            "updated_at": datetime.now(UTC),
         },
     )
 

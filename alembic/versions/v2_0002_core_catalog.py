@@ -821,6 +821,67 @@ def _create_immutability_triggers(runtime_role: str) -> None:
             end if;
             return new;
         """,
+        "v2_guard_user_principal": """
+            if new.user_id is distinct from old.user_id
+               or new.subject_type is distinct from old.subject_type
+               or new.created_at is distinct from old.created_at then
+                raise exception using
+                    errcode = '23514',
+                    message = 'user principal identity is immutable';
+            end if;
+            return new;
+        """,
+        "v2_guard_book_member_binding": """
+            if new.book_id is distinct from old.book_id
+               or new.user_id is distinct from old.user_id
+               or new.created_at is distinct from old.created_at then
+                raise exception using
+                    errcode = '23514',
+                    message = 'book membership binding is immutable';
+            end if;
+            return new;
+        """,
+        "v2_guard_auth_identity_principal": """
+            if tg_op = 'UPDATE'
+               and (new.identity_id is distinct from old.identity_id
+                    or new.provider is distinct from old.provider
+                    or new.subject is distinct from old.subject
+                    or new.user_id is distinct from old.user_id
+                    or new.created_at is distinct from old.created_at) then
+                raise exception using
+                    errcode = '23514',
+                    message = 'interactive auth identity binding is immutable';
+            end if;
+            perform 1
+              from public.users
+             where user_id = new.user_id
+               and subject_type = 'human';
+            if not found then
+                raise exception using
+                    errcode = '23514',
+                    message = 'interactive auth identity requires a human user';
+            end if;
+            return new;
+        """,
+        "v2_guard_password_account_principal": """
+            if tg_op = 'UPDATE'
+               and (new.user_id is distinct from old.user_id
+                    or new.created_at is distinct from old.created_at) then
+                raise exception using
+                    errcode = '23514',
+                    message = 'password account principal binding is immutable';
+            end if;
+            perform 1
+              from public.users
+             where user_id = new.user_id
+               and subject_type = 'human';
+            if not found then
+                raise exception using
+                    errcode = '23514',
+                    message = 'password account requires a human user';
+            end if;
+            return new;
+        """,
         "v2_guard_account_identity": """
             if new.book_id is distinct from old.book_id
                or new.account_id is distinct from old.account_id
@@ -1095,6 +1156,30 @@ def _create_immutability_triggers(runtime_role: str) -> None:
             "books",
             "before update",
             "v2_guard_book_identity",
+        ),
+        (
+            "trg_users_guard_principal",
+            "users",
+            "before update",
+            "v2_guard_user_principal",
+        ),
+        (
+            "trg_book_members_guard_binding",
+            "book_members",
+            "before update",
+            "v2_guard_book_member_binding",
+        ),
+        (
+            "trg_auth_identities_guard_principal",
+            "auth_identities",
+            "before insert or update",
+            "v2_guard_auth_identity_principal",
+        ),
+        (
+            "trg_password_accounts_guard_principal",
+            "password_accounts",
+            "before insert or update",
+            "v2_guard_password_account_principal",
         ),
         (
             "trg_accounts_guard_identity",
