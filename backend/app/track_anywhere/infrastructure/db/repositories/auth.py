@@ -134,10 +134,12 @@ class BookMembershipRepository:
     ) -> BookMembershipSnapshot:
         record = self._session.execute(
             apply_row_lock(
-                select(BookMemberRecord).where(
+                select(BookMemberRecord)
+                .where(
                     BookMemberRecord.book_id == book_id,
                     BookMemberRecord.user_id == user_id,
-                ),
+                )
+                .execution_options(populate_existing=True),
                 lock,
             )
         ).scalar_one_or_none()

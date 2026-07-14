@@ -53,6 +53,11 @@ class UnknownAccount(JournalError):
         super().__init__(f"unknown account: {account_id}")
 
 
+class AccountClosed(JournalError):
+    def __init__(self, account_id: str) -> None:
+        super().__init__(f"account is closed: {account_id}")
+
+
 class CrossBookAccount(JournalError):
     def __init__(self, account_id: str, *, expected_book_id: str) -> None:
         super().__init__(
@@ -180,6 +185,8 @@ class JournalValidator:
                         expected_book_id=checked_command.book_id,
                     )
                 raise UnknownAccount(posting.account_id)
+            if account.status != "active":
+                raise AccountClosed(posting.account_id)
             if posting.asset_code != account.asset_code:
                 raise PostingAssetMismatch(
                     posting.account_id,

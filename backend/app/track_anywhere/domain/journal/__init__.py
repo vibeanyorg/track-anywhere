@@ -10,6 +10,7 @@ from .models import (
     TransactionKind,
 )
 from .validators import (
+    AccountClosed,
     CrossBookAccount,
     DuplicatePostingId,
     DuplicatePostingPosition,
@@ -26,6 +27,7 @@ from .validators import (
 
 __all__ = [
     "AccountCatalogSnapshot",
+    "AccountClosed",
     "AccountSnapshot",
     "AccountSystemRole",
     "CrossBookAccount",

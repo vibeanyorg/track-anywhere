@@ -47,6 +47,7 @@ class AccountSnapshot:
     book_id: str
     asset_code: str
     system_role: AccountSystemRole = AccountSystemRole.STANDARD
+    status: str = "active"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,8 @@ class AccountCatalogSnapshot:
                 or type(account.asset_code) is not str
                 or not account.asset_code
                 or type(account.system_role) is not AccountSystemRole
+                or type(account.status) is not str
+                or account.status not in {"active", "closed"}
             ):
                 raise InvalidAccountCatalog(
                     "account snapshot has an invalid runtime shape"

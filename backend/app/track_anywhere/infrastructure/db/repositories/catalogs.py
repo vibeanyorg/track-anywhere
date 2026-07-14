@@ -83,7 +83,9 @@ class CatalogRepository:
     ) -> AssetSnapshot:
         record = self._one(
             apply_row_lock(
-                select(AssetRecord).where(AssetRecord.asset_code == asset_code),
+                select(AssetRecord)
+                .where(AssetRecord.asset_code == asset_code)
+                .execution_options(populate_existing=True),
                 lock,
             ),
             "asset",
@@ -127,10 +129,12 @@ class CatalogRepository:
     ) -> AccountSnapshot:
         record = self._one(
             apply_row_lock(
-                select(AccountRecord).where(
+                select(AccountRecord)
+                .where(
                     AccountRecord.book_id == book_id,
                     AccountRecord.account_id == account_id,
-                ),
+                )
+                .execution_options(populate_existing=True),
                 lock,
             ),
             "account",
