@@ -22,13 +22,32 @@ permissions:
   packages: write
 
 env:
-  PYTHON_VERSION: "3.12"
+  PYTHON_VERSION: "3.13"
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
-  unit:
-    name: Unit and contract tests
+  v2-gates:
+    name: V2 PostgreSQL and client gates
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TRACK_ANYWHERE_ALLOW_EXTERNAL_TEST_DATABASE: "1"
+      TRACK_ANYWHERE_TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_MIGRATOR_BASE_URL: postgresql+psycopg://track_anywhere_migrator:track_anywhere_migrator_test@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_RUNTIME_BASE_URL: postgresql+psycopg://track_anywhere_runtime:track_anywhere_runtime_test@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -37,14 +56,97 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --extra postgres --dev
-      - run: uv run pytest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Provision non-superuser V2 roles
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          create role track_anywhere_owner
+            nologin nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_migrator
+            login password 'track_anywhere_migrator_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_runtime
+            login password 'track_anywhere_runtime_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          grant track_anywhere_owner to track_anywhere_migrator
+            with admin false, inherit false, set true;
+          SQL
+      - run: uv sync --locked --extra postgres
+      - name: V2 unit gate
+        run: uv run --extra postgres pytest backend/tests/v2/unit -q
+      - name: PostgreSQL constraints and role separation gate
+        run: uv run --extra postgres pytest backend/tests/v2/postgres -q
+      - name: Multiprocess concurrency gate
+        run: uv run --extra postgres pytest backend/tests/v2/concurrency -q
+      - name: Replay and synthetic backfill gate
+        # The real frozen dump contains local production-derived data and remains a
+        # local-only manual release gate; CI deliberately runs only synthetic data.
+        run: uv run --extra postgres pytest backend/tests/v2/replay backend/tests/v2/backfill -m 'not frozen_dump' -q
+      - name: API contract and CLI gate
+        run: uv run --extra postgres pytest backend/tests/v2/contract cli/tests contract_tests -q
+      - name: Clean migration and role separation gate
+        run: |
+          set -euo pipefail
+          V2_CI_MIGRATOR_URL="$(
+            uv run --extra postgres python backend/tests/v2/postgres_factory.py create \
+              --purpose ci-alembic --schema empty --emit-role migrator
+          )"
+          cleanup() {
+            uv run --extra postgres python backend/tests/v2/postgres_factory.py drop \
+              --url "$V2_CI_MIGRATOR_URL" || true
+          }
+          trap cleanup EXIT
+          export TRACK_ANYWHERE_DB_RUNTIME_ROLE="$(
+            uv run --extra postgres python backend/tests/v2/postgres_factory.py \
+              role-name --kind runtime
+          )"
+          TRACK_ANYWHERE_DATABASE_URL="$V2_CI_MIGRATOR_URL" \
+            uv run --extra postgres alembic upgrade head
+          TRACK_ANYWHERE_DATABASE_URL="$V2_CI_MIGRATOR_URL" \
+            uv run --extra postgres alembic check
+          cleanup
+          trap - EXIT
+      - name: Frontend install
+        run: npm --prefix frontend ci
+      - name: Frontend lint
+        run: npm --prefix frontend run lint
+      - name: Frontend build
+        run: npm --prefix frontend run build
+
+  hash-vectors:
+    name: Hash vectors on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: >-
+          uv run pytest
+          backend/tests/v2/unit/test_canonical_json.py
+          backend/tests/v2/unit/test_event_contracts.py
+          backend/tests/v2/unit/test_event_hash.py -q
 
   docker-postgres-e2e:
-    name: Docker Postgres E2E
+    name: Docker PostgreSQL 17 V2 E2E
     runs-on: ubuntu-latest
-    needs: unit
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.channel == 'stable')
+    needs:
+      - v2-gates
+      - hash-vectors
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -53,13 +155,16 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --extra postgres --dev
-      - run: scripts/e2e-docker-postgres.sh
+      - run: uv sync --locked --extra postgres
+      - run: bash scripts/e2e-docker-postgres.sh
 
   build-nightly:
     name: Build nightly image
     runs-on: ubuntu-latest
-    needs: unit
+    needs:
+      - v2-gates
+      - hash-vectors
+      - docker-postgres-e2e
     if: github.ref == 'refs/heads/main' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.channel == 'nightly')
     strategy:
       matrix:
@@ -96,7 +201,8 @@ jobs:
     name: Build stable image
     runs-on: ubuntu-latest
     needs:
-      - unit
+      - v2-gates
+      - hash-vectors
       - docker-postgres-e2e
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.channel == 'stable')
     strategy:
