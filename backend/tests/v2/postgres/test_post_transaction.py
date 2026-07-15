@@ -274,6 +274,29 @@ def test_rejects_closed_accounts_after_the_book_head_lock(
     assert "account_read" in order[1:]
 
 
+def test_general_journal_rejects_credit_card_accounts_without_partial_writes(
+    pg_engine,
+) -> None:
+    scenario = JournalScenario.create()
+    seed_journal_scenario(
+        pg_engine,
+        scenario,
+        credit_account_type="liability",
+        credit_account_subtype="credit_card",
+    )
+
+    with pytest.raises(RuntimeError, match="credit-card semantic command"):
+        _execute(pg_engine, scenario, _command(scenario))
+
+    with Session(pg_engine) as session:
+        assert session.scalar(select(func.count()).select_from(LedgerEventRecord)) == 0
+        assert (
+            session.scalar(select(func.count()).select_from(CommandReceiptRecord)) == 0
+        )
+        head = session.get(BookEventHeadRecord, scenario.book_id)
+        assert head is not None and head.last_position == 0
+
+
 def test_locked_account_read_refreshes_a_stale_identity_map(pg_engine) -> None:
     scenario = JournalScenario.create()
     seed_journal_scenario(pg_engine, scenario)

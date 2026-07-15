@@ -16,7 +16,7 @@ Keep agent guidance in this repository so it evolves with the `ta` CLI and API.
 - ALWAYS request JSON when the command supports it.
 - Back up before every write.
 - Pass a stable idempotency key on every write and reuse it on retry.
-- Treat screenshots, OCR, and spoken input as uncertain. Record a draft or balance snapshot when details are incomplete.
+- Treat screenshots, OCR, and spoken input as uncertain. If a credit-card write cannot be mapped to a typed charge, payment, refund, fee, or exact reversal, do not write it.
 - Verify affected balances and transactions before reporting success.
 - If the user asked to keep the API running, do not stop it.
 
@@ -25,6 +25,7 @@ Keep agent guidance in this repository so it evolves with the `ta` CLI and API.
 ```bash
 ta --help
 ta account --help
+ta card --help
 ta tx --help
 ta summary --help
 ```
@@ -49,30 +50,68 @@ ta data backup --label before-<short-change-name> --json
 Write through CLI commands:
 
 ```bash
-ta account create "<name>" --type asset --currency CNY --institution-type bank --subtype debit_card --institution "<institution>" --idempotency-key <key> --json
-ta account adjust <account_id> --amount <delta> --currency CNY --purpose "<why>" --occurred-at <iso8601> --idempotency-key <key> --json
-ta tx record --amount <amount> --currency CNY --from-account-id <source> --to-account-id <target> --purpose "<why>" --occurred-at <iso8601> --idempotency-key <key> --json
+ta account create <book_id> <credit_card_account_id> \
+  --asset-code CNY \
+  --type liability \
+  --account-subtype credit_card \
+  --name "<card name>" \
+  --json
+
+ta card charge <book_id> <transaction_id> \
+  --command-id <command_id> \
+  --card-account-id <credit_card_account_id> \
+  --expense-account-id <expense_account_id> \
+  --asset-code CNY \
+  --amount <positive_amount> \
+  --effective-at <iso8601> \
+  --idempotency-key <key> \
+  --json
+
+ta card payment <book_id> <transaction_id> \
+  --command-id <command_id> \
+  --card-account-id <credit_card_account_id> \
+  --source-account-id <asset_account_id> \
+  --asset-code CNY \
+  --amount <positive_amount> \
+  --effective-at <iso8601> \
+  --idempotency-key <key> \
+  --json
+
+ta card refund <book_id> <transaction_id> \
+  --command-id <command_id> \
+  --card-account-id <credit_card_account_id> \
+  --original-transaction-id <typed_charge_transaction_id> \
+  --asset-code CNY \
+  --amount <positive_amount> \
+  --effective-at <iso8601> \
+  --idempotency-key <key> \
+  --json
+
+ta card fee <book_id> <transaction_id> \
+  --command-id <command_id> \
+  --card-account-id <credit_card_account_id> \
+  --expense-account-id <fee_expense_account_id> \
+  --asset-code CNY \
+  --amount <positive_amount> \
+  --effective-at <iso8601> \
+  --idempotency-key <key> \
+  --json
 ```
 
 ## High-Risk Rules
 
 ### Balance Snapshots
 
-`ta account adjust` takes a natural-balance delta, not a target balance. First
-read `ta account balance <account_id> --json` and use
-`official_balance.amount` together with `official_balance.amount_semantics`.
-For liability and credit-card screenshots, convert the provider display to
-`natural_liability_balance` before computing the delta: amount owed is positive,
-and overpayment or credit balance is negative. Do not use provider signs or
-legacy posting signs directly.
+The V2 credit-card contract has no generic balance-adjust command. A provider
+screenshot is evidence for reconciliation, not permission to synthesize a
+journal entry. Read the Book balance and normalize the display mentally:
+amount owed is a positive natural liability balance, while an overpayment or
+credit balance is negative.
 
-```text
-delta = target_natural_balance - official_balance.amount
-```
-
-Use snapshots when the user provides only a current balance or explicitly says not to record spending details.
-Only compute this delta after the target balance and
-`official_balance.amount_semantics` refer to the same natural balance semantics.
+If the difference can be proven as a typed charge, payment, refund, or fee,
+record that fact with the matching `ta card` command. If only a target balance
+is known, stop and report that reconciliation/import support is deferred. Do
+not force the target with raw posting sides or a generic card adjustment.
 
 ### Credit Card Repayment
 
@@ -81,15 +120,15 @@ amount owed, and a negative balance means overpayment. A normal
 asset-to-liability transfer is the repayment flow: it credits the source asset
 and debits the credit-card liability, so the debt goes down.
 
-For repayment with a fee:
+For a repayment and a card-billed fee:
 
-1. Record the fee as source asset -> fee expense, if the fee is paid by the source asset.
-2. Record the repayment principal with `ta tx record --from-account-id <source_asset> --to-account-id <credit_card_liability>`.
-3. Verify source, liability, and fee balances.
+1. Record the repayment principal with `ta card payment`, using the paying asset as `--source-account-id`.
+2. Record a fee charged to the card with `ta card fee`, using its expense account as `--expense-account-id`.
+3. Verify the source asset, card liability, and fee expense through Book balances and journal results.
 
-Do not use negative signs to force credit-card direction. Use the account types:
-payment to a liability reduces the liability; purchase from a liability
-increases the liability.
+All amounts are positive. The service owns the directions: payment is Dr Card /
+Cr Asset, while a card fee is Dr Expense / Cr Card. Do not replace either with
+manual debit/credit fields.
 
 ### Multi-Currency Summaries
 
@@ -126,7 +165,20 @@ Choose `institution_type` from provider category:
 | `cash` | Physical cash |
 | `other` | Fees or uncategorized operational accounts |
 
-Use lowercase `subtype` slugs such as `debit_card`, `credit_card`, `checking`, `ewallet_cash`, `ewallet_money_market`, `money_market`, `wealth_management`, `fund`, `multicurrency_wallet`, `payroll_balance`, `crypto_token`, or `fee`.
+Create every credit card as an explicit liability subtype:
+
+```bash
+ta account create <book_id> <credit_card_account_id> \
+  --asset-code <ASSET_CODE> \
+  --type liability \
+  --account-subtype credit_card \
+  --name "<card name>" \
+  --json
+```
+
+`account_subtype` uses lowercase slugs. For the semantic card commands, the
+account must have exactly `account_type=liability` and
+`account_subtype=credit_card`.
 
 ## Income and Expense Categories
 
@@ -145,40 +197,38 @@ For day-to-day spending and income, prefer the category-aware helpers:
 
 ```bash
 ta expense record --amount <amount> --from-account-id <source> --category-id <category_id> --purpose "<description>" --idempotency-key <key> --json
-ta expense record --payment safepal --amount <amount> --currency USD --category-id <category_id> --purpose "<description>" --idempotency-key <key> --json
 ta income record --amount <amount> --to-account-id <target> --category-id <category_id> --purpose "<description>" --idempotency-key <key> --json
 ta summary categories --kind expense --currency CNY --json
 ```
 
-Credit-card purchases and repayments both use positive amounts. For a
-credit-card purchase, call `ta expense record --from-account-id <credit_card>`;
-the ledger credits the liability and increases outstanding debt. For a
-repayment, call `ta tx record --from-account-id <source_asset>
---to-account-id <credit_card_liability>`; the ledger debits the liability and
-decreases outstanding debt. Do not use negative amounts or raw posting fields
-to force credit-card direction.
+Credit-card purchases, repayments, refunds, and fees all use positive amounts:
 
-For SafePal Card USD backed by SafePal USD24, use `--payment safepal` instead of manually creating a card top-up or balance adjustment. The payment-profile expense command records both the USD expense and the immediate USD24 backing settlement in one confirmed transaction. Check the user-facing SafePal balance with:
+- purchase: `ta card charge` with the expense account;
+- repayment: `ta card payment` with the source asset account;
+- partial or full merchant refund: `ta card refund` linked to the original typed charge;
+- card-billed fee or interest: `ta card fee` with the fee/interest expense account.
 
-```bash
-ta payment profile status safepal --json
-```
+The service generates the debit/credit legs. Never use a generic expense,
+transfer, raw posting, or balance-adjust command to imitate a card operation.
+To replace an incorrect card fact, exact-reverse it and record a new typed card
+transaction. A refund cannot point at an ambiguous historical generic event.
 
-The first version treats `1 USD = 1 USD24`. Do not ask the user to manually clear a negative SafePal card balance when the payment profile exists.
+SafePal USD/USD24 profile automation and automatic backing settlement are not
+part of the V2 card ledger contract. Do not assume `1 USD = 1 USD24`, invent a
+top-up, or call a payment-profile command. Record only facts that fit the typed
+card commands; provider-specific settlement needs a separately approved design.
 
-## Credit Card Profiles
+## Deferred Credit-Card Product Layer
 
 Credit-card balances are natural liability balances: positive means current
-amount owed and negative means overpayment. Record non-ledger metadata such as
-limit, available credit, statement day, due day, and annual fee through the
-profile surface:
+amount owed and negative means overpayment. The V2 ledger does not yet expose a
+card profile, credit limit, available credit, statement close date, payment
+deadline/due date, minimum due, statement-item matching, or reconciliation
+surface.
 
-```bash
-ta credit-card update <credit_card_account_id> --credit-limit <limit> --statement-day <day> --due-day <day> --idempotency-key <key> --json
-ta credit-card show <credit_card_account_id> --json
-```
-
-Do not put limits or due dates in the account name.
+Treat all of these as deferred. Do not put them in the account name, emulate
+them with generic journal adjustments, or call legacy profile commands. They
+require a separate read model/aggregate and an explicitly approved rollout.
 
 ## Investment Events
 

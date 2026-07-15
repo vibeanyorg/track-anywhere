@@ -25,6 +25,7 @@ from track_anywhere.domain.investments.events import (
     InvestmentLotAcquired,
     InvestmentLotDisposed,
 )
+from track_anywhere.domain.credit_cards.events import CreditCardTransactionRecorded
 from track_anywhere.domain.journal.events import (
     FinancialExternalReferenceCorrected,
     JournalTransactionPosted,
@@ -67,6 +68,7 @@ HISTORICAL_FIXTURE_PATH = (
 )
 UUIDS = tuple(UUID(f"00000000-0000-4000-8000-{index:012x}") for index in range(1, 30))
 PRODUCTION_KEYS = {
+    ("CreditCardTransactionRecorded", 1),
     ("JournalTransactionPosted", 1),
     ("JournalTransactionReversed", 1),
     ("FinancialExternalReferenceCorrected", 1),
@@ -79,6 +81,7 @@ PRODUCTION_KEYS = {
     ("HistoricalReportingLineImported", 1),
 }
 PRODUCTION_MODELS = (
+    CreditCardTransactionRecorded,
     JournalTransactionPosted,
     JournalTransactionReversed,
     FinancialExternalReferenceCorrected,
@@ -346,7 +349,7 @@ def test_each_historical_import_contract_has_a_golden_hash_vector() -> None:
         assert event_hash(envelope, payload).hex() == vector["event_hash_hex"]
 
 
-def test_production_registry_contains_exactly_the_ten_v2_contracts() -> None:
+def test_production_registry_contains_exactly_the_eleven_v2_contracts() -> None:
     assert set(PRODUCTION_EVENT_REGISTRY.keys()) == PRODUCTION_KEYS
     for model in PRODUCTION_MODELS:
         key = (model.event_type, model.schema_version)

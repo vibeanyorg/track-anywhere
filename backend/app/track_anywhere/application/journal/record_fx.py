@@ -10,6 +10,7 @@ from ...domain.journal import (
     AccountCatalogSnapshot,
     AccountSnapshot,
     AccountSystemRole,
+    AccountType,
     JournalValidator,
     PostingDraft,
     PostingSide,
@@ -37,7 +38,12 @@ from ..idempotency import (
 )
 from ..ledger_committer import LedgerCommitter, LedgerWritePlan, LockedBookHead
 from ..unit_of_work import UnitOfWork
-from .post_transaction import AssetUnavailable, Authorize, authorize_journal_write
+from .post_transaction import (
+    AssetUnavailable,
+    Authorize,
+    _reject_credit_card_accounts,
+    authorize_journal_write,
+)
 
 
 _AMOUNT_LITERAL = re.compile(r"[0-9]+(?:\.[0-9]+)?", flags=re.ASCII)
@@ -79,7 +85,9 @@ class RecordFxCommand:
         for name, value in identifiers:
             if type(value) is not UUID:
                 raise IdempotencyValidationError(f"{name} must be a UUID")
-        account_ids = tuple(value for name, value in identifiers if name.endswith("account_id"))
+        account_ids = tuple(
+            value for name, value in identifiers if name.endswith("account_id")
+        )
         if len(account_ids) != len(set(account_ids)):
             raise IdempotencyValidationError("FX account identities must be distinct")
         if (
@@ -251,10 +259,10 @@ def _build_fx_payload(
         except CatalogNotFound:
             continue
 
+    _reject_credit_card_accounts(db_accounts.values())
+
     asset_policies: dict[str, AssetPolicy] = {}
-    for asset_code in sorted(
-        (command.source_asset_code, command.target_asset_code)
-    ):
+    for asset_code in sorted((command.source_asset_code, command.target_asset_code)):
         try:
             asset = catalogs.get_asset(asset_code, lock=RowLock.SHARE)
         except CatalogNotFound:
@@ -266,12 +274,16 @@ def _build_fx_payload(
             ledger_scale=asset.ledger_scale,
         )
 
-    target_units = asset_policies[command.target_asset_code].parse_online(
-        command.target_amount
-    ).units
-    source_units = asset_policies[command.source_asset_code].parse_online(
-        command.source_amount
-    ).units
+    target_units = (
+        asset_policies[command.target_asset_code]
+        .parse_online(command.target_amount)
+        .units
+    )
+    source_units = (
+        asset_policies[command.source_asset_code]
+        .parse_online(command.source_amount)
+        .units
+    )
     leg_values = (
         (
             "target-user",
@@ -322,6 +334,8 @@ def _build_fx_payload(
             account_id=str(snapshot.account_id),
             book_id=str(snapshot.book_id),
             asset_code=snapshot.asset_code,
+            account_type=AccountType(snapshot.account_type),
+            account_subtype=snapshot.account_subtype,
             system_role=AccountSystemRole(snapshot.system_role or "standard"),
             status=snapshot.status,
         )

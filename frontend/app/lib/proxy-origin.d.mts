@@ -1,3 +1,8 @@
+export function resolvePublicOrigin(
+  sourceHeaders: HeadersInit,
+  fallbackOrigin: string
+): string;
+
 export function normalizeSameSiteRequestHeaders(
   sourceHeaders: HeadersInit,
   publicOrigin: string,

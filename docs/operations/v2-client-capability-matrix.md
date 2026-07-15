@@ -17,14 +17,15 @@ Status meanings:
 | System health and readiness | Implemented | `GET /api/v2/health`, `GET /api/v2/ready` |
 | Book creation | Implemented | `POST /api/v2/books` |
 | Asset creation | Implemented | `POST /api/v2/books/{book_id}/assets` |
-| Account creation and close | Implemented | Book-scoped account create/close routes |
+| Account creation, close, and reopen | Implemented | Book-scoped account lifecycle routes; credit cards must be exactly zero before close |
 | Category creation | Implemented | `POST /api/v2/books/{book_id}/categories` |
 | Journal post and list | Implemented | Book-scoped journal command/query routes |
+| Credit-card charge, payment, refund, and fee | Implemented | Book-scoped semantic card routes; positive amounts only and no caller-selected posting sides |
 | Reverse and correct | Implemented | Explicit reversal/correction command routes |
 | External-reference correction | Implemented | Explicit journal reference correction route |
 | FX | Implemented | `POST /api/v2/books/{book_id}/journal/fx` |
 | Classification assign/clear | Implemented | Reporting-line command routes |
-| Balances and reporting-line queries | Implemented | Book-scoped V2 query routes with an optional/required as-of position |
+| Balances and reporting-line queries | Implemented | Book-scoped V2 query routes with an optional/required as-of position; balances expose current account status and natural liability semantics |
 | Investment lot acquire/dispose | Implemented | Book-scoped lot command routes |
 | API-key status and device/PKCE login | Implemented | V2 auth/OAuth routes only |
 | Local version, schema, and capability output | Implemented | Local CLI metadata; no server fallback |
@@ -55,7 +56,8 @@ silently maps an unsupported command to another operation.
 
 - Docker health checks and stable smoke use V2 health/readiness only.
 - The isolated E2E lane covers V2 post, journal/balance query, classification,
-  reporting query, and reversal against PostgreSQL 17.
+  reporting query, reversal, CLI credit-card account creation, and all four
+  semantic card writes against PostgreSQL 17.
 - Public OpenAPI is pinned in `backend/tests/snapshots/public-api-v2.json`.
 - Contract tests provision a fresh migrated PostgreSQL 17 database and install
   its runtime-role URL before app construction. SQLite is not a supported test

@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.tests.v2.fixtures.synchronous import JournalScenario, seed_journal_scenario
@@ -18,9 +19,19 @@ RAW_API_KEY = "ta_journal_contract"
 EFFECTIVE_AT = "2026-07-14T12:30:00Z"
 
 
-def _seed_authenticated_journal(engine) -> JournalScenario:
+def _seed_authenticated_journal(
+    engine,
+    *,
+    credit_account_type: str = "asset",
+    credit_account_subtype: str | None = None,
+) -> JournalScenario:
     scenario = JournalScenario.create()
-    seed_journal_scenario(engine, scenario)
+    seed_journal_scenario(
+        engine,
+        scenario,
+        credit_account_type=credit_account_type,
+        credit_account_subtype=credit_account_subtype,
+    )
     now = datetime.now(UTC)
     with Session(engine) as session, session.begin():
         session.add(
@@ -137,6 +148,90 @@ def test_post_requires_plain_decimal_strings_and_returns_book_position(
         "as_of_book_position": 1,
     }
     assert posted.headers["Idempotency-Replayed"] == "false"
+
+
+def test_general_journal_api_rejects_credit_card_postings(pg_engine) -> None:
+    scenario = _seed_authenticated_journal(
+        pg_engine,
+        credit_account_type="liability",
+        credit_account_subtype="credit_card",
+    )
+    client = _journal_client(pg_engine)
+
+    response = client.post(
+        _post_path(scenario),
+        headers=_financial_headers("generic-card-forbidden"),
+        json=_post_payload(scenario),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "command conflict"}
+
+
+def test_general_correction_api_rejects_a_credit_card_replacement(
+    pg_engine,
+) -> None:
+    scenario = _seed_authenticated_journal(pg_engine)
+    client = _journal_client(pg_engine)
+    posted = client.post(
+        _post_path(scenario),
+        headers=_financial_headers("generic-source"),
+        json=_post_payload(scenario),
+    )
+    assert posted.status_code == 201
+    card_account_id = uuid4()
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "insert into accounts ("
+                "book_id, account_id, asset_code, account_type, account_subtype, "
+                "current_name, status) values ("
+                ":book_id, :account_id, 'USD', 'liability', 'credit_card', "
+                "'Card', 'active')"
+            ),
+            {"book_id": scenario.book_id, "account_id": card_account_id},
+        )
+    correction = {
+        "command_id": str(uuid4()),
+        "reversal_transaction_id": str(uuid4()),
+        "expected_reversal_stream_version": 0,
+        "reason_code": "user_correction",
+        "reversal_effective_at": "2026-07-14T12:31:00Z",
+        "reversal_description_ref": None,
+        "replacement": {
+            "transaction_id": str(uuid4()),
+            "expected_stream_version": 0,
+            "kind": "standard",
+            "effective_at": "2026-07-14T12:32:00Z",
+            "description_ref": None,
+            "external_references": [],
+            "postings": [
+                {
+                    "posting_id": str(uuid4()),
+                    "account_id": str(scenario.debit_account_id),
+                    "asset_code": "USD",
+                    "side": "debit",
+                    "amount": "12.34",
+                },
+                {
+                    "posting_id": str(uuid4()),
+                    "account_id": str(card_account_id),
+                    "asset_code": "USD",
+                    "side": "credit",
+                    "amount": "12.34",
+                },
+            ],
+        },
+    }
+
+    response = client.post(
+        f"{_post_path(scenario)}/{scenario.transaction_id}/correct",
+        headers=_financial_headers("generic-card-replacement-forbidden"),
+        json=correction,
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "command conflict"}
 
 
 def test_openapi_lists_every_implemented_financial_command_and_query_routes(

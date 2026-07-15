@@ -4,6 +4,10 @@ from argparse import Namespace
 from typing import Any, Callable
 
 from .command_catalog import CATALOG_COMMAND_HANDLERS, infer_catalog_command_path
+from .command_credit_card import (
+    CREDIT_CARD_COMMAND_HANDLERS,
+    infer_credit_card_command_path,
+)
 from .command_investment import (
     INVESTMENT_COMMAND_HANDLERS,
     infer_investment_command_path,
@@ -23,12 +27,17 @@ ApiCommandHandler = Callable[[Namespace, CliConfig, Requester], DispatcherResult
 PUBLIC_COMMAND_PATHS = (
     "account.close",
     "account.create",
+    "account.reopen",
     "asset.create",
     "auth.login",
     "auth.status",
     "book.balances",
     "book.create",
     "book.reporting_lines",
+    "card.charge",
+    "card.fee",
+    "card.payment",
+    "card.refund",
     "capabilities",
     "category.create",
     "investment.acquire",
@@ -68,8 +77,13 @@ MUTATING_COMMAND_PATHS = frozenset(
     {
         "account.close",
         "account.create",
+        "account.reopen",
         "asset.create",
         "book.create",
+        "card.charge",
+        "card.fee",
+        "card.payment",
+        "card.refund",
         "category.create",
         "investment.acquire",
         "investment.dispose",
@@ -85,6 +99,10 @@ MUTATING_COMMAND_PATHS = frozenset(
 )
 IDEMPOTENCY_KEY_COMMAND_PATHS = frozenset(
     {
+        "card.charge",
+        "card.fee",
+        "card.payment",
+        "card.refund",
         "investment.acquire",
         "investment.dispose",
         "tx.classify",
@@ -100,6 +118,7 @@ IDEMPOTENCY_KEY_COMMAND_PATHS = frozenset(
 API_COMMAND_HANDLERS: dict[str, ApiCommandHandler] = {
     **SYSTEM_COMMAND_HANDLERS,
     **CATALOG_COMMAND_HANDLERS,
+    **CREDIT_CARD_COMMAND_HANDLERS,
     **INVESTMENT_COMMAND_HANDLERS,
     **LEDGER_COMMAND_HANDLERS,
     **PAYMENT_COMMAND_HANDLERS,
@@ -158,6 +177,7 @@ def infer_command_path(args: Namespace) -> str | None:
     for inferer in (
         infer_system_command_path,
         infer_catalog_command_path,
+        infer_credit_card_command_path,
         infer_investment_command_path,
         infer_ledger_command_path,
     ):

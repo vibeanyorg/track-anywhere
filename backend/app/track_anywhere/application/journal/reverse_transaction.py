@@ -5,8 +5,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID, NAMESPACE_URL, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 
+from ...domain.credit_cards.events import (
+    CreditCardIntent,
+    CreditCardTransactionRecorded,
+)
 from ...domain.journal.events import (
     JournalPostingFact,
     JournalTransactionPosted,
@@ -18,6 +22,8 @@ from ...infrastructure.db.models.event_store import (
     EventStreamHeadRecord,
     LedgerEventRecord,
 )
+from ...infrastructure.db.models.credit_cards import CreditCardTransactionRecord
+from ...infrastructure.db.models.catalog import AccountRecord
 from ...infrastructure.db.models.projections import (
     JournalTransactionRecord,
     TransactionReversalRecord,
@@ -55,6 +61,22 @@ class TransactionIdAlreadyExists(RuntimeError):
 
 
 class InvalidTransactionSource(RuntimeError):
+    pass
+
+
+class CreditCardChargeHasActiveRefunds(RuntimeError):
+    pass
+
+
+class CreditCardReversalChainForbidden(RuntimeError):
+    pass
+
+
+class CreditCardReversalPrecedesOriginal(RuntimeError):
+    pass
+
+
+class CreditCardReversalRequiresActiveAccount(RuntimeError):
     pass
 
 
@@ -170,6 +192,23 @@ def _build_reverse_plan(
         reverses_transaction_id=command.reverses_transaction_id,
         reversal_transaction_id=command.reversal_transaction_id,
     )
+    touches_credit_card = _source_touches_credit_card_account(
+        uow,
+        book_id=command.book_id,
+        postings=source.postings,
+    )
+    if touches_credit_card and _closed_credit_card_account_id(
+        uow,
+        book_id=command.book_id,
+        postings=source.postings,
+    ) is not None:
+        raise CreditCardReversalRequiresActiveAccount(
+            "reopen the credit-card account before reversing its transaction"
+        )
+    if touches_credit_card and command.effective_at < source.event.effective_at:
+        raise CreditCardReversalPrecedesOriginal(
+            "credit-card reversal cannot precede its source transaction"
+        )
     pending = _build_reversal_pending(
         command_id=command.command_id,
         reversal_transaction_id=command.reversal_transaction_id,
@@ -266,7 +305,24 @@ def _load_reversal_source(
         event.event_schema_version,
         event.payload,
     )
-    if type(payload) is JournalTransactionPosted:
+    if type(payload) is CreditCardTransactionRecorded:
+        if payload.transaction_id != reverses_transaction_id:
+            raise InvalidTransactionSource(
+                "credit-card event transaction identity mismatch"
+            )
+        if (
+            payload.intent is CreditCardIntent.CHARGE
+            and _has_active_credit_card_refunds(
+                uow,
+                book_id=book_id,
+                charge_transaction_id=reverses_transaction_id,
+            )
+        ):
+            raise CreditCardChargeHasActiveRefunds(
+                "credit-card charge refunds must be reversed first"
+            )
+        postings = payload.postings
+    elif type(payload) is JournalTransactionPosted:
         if payload.transaction_id != reverses_transaction_id:
             raise InvalidTransactionSource("posted event transaction identity mismatch")
         postings = payload.postings
@@ -280,10 +336,93 @@ def _load_reversal_source(
         raise InvalidTransactionSource(
             "journal transaction source event cannot be reversed"
         )
+    if type(payload) is JournalTransactionReversed and _source_touches_credit_card_account(
+        uow,
+        book_id=book_id,
+        postings=postings,
+    ):
+        raise CreditCardReversalChainForbidden(
+            "a credit-card reversal cannot itself be reversed"
+        )
     return _ReversalSource(
         transaction=transaction,
         event=event,
         postings=postings,
+    )
+
+
+def _source_touches_credit_card_account(
+    uow: UnitOfWork,
+    *,
+    book_id: UUID,
+    postings: tuple[JournalPostingFact, ...],
+) -> bool:
+    account_ids = tuple(sorted({posting.account_id for posting in postings}, key=str))
+    if not account_ids:
+        return False
+    return (
+        uow.session.scalar(
+            select(AccountRecord.account_id)
+            .where(
+                AccountRecord.book_id == book_id,
+                AccountRecord.account_id.in_(account_ids),
+                AccountRecord.account_subtype == "credit_card",
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def _closed_credit_card_account_id(
+    uow: UnitOfWork,
+    *,
+    book_id: UUID,
+    postings: tuple[JournalPostingFact, ...],
+) -> UUID | None:
+    account_ids = tuple(sorted({posting.account_id for posting in postings}, key=str))
+    if not account_ids:
+        return None
+    return uow.session.scalar(
+        select(AccountRecord.account_id)
+        .where(
+            AccountRecord.book_id == book_id,
+            AccountRecord.account_id.in_(account_ids),
+            AccountRecord.account_subtype == "credit_card",
+            AccountRecord.status == "closed",
+        )
+        .limit(1)
+    )
+
+
+def _has_active_credit_card_refunds(
+    uow: UnitOfWork,
+    *,
+    book_id: UUID,
+    charge_transaction_id: UUID,
+) -> bool:
+    return (
+        uow.session.execute(
+            select(CreditCardTransactionRecord.transaction_id)
+            .outerjoin(
+                TransactionReversalRecord,
+                and_(
+                    TransactionReversalRecord.book_id
+                    == CreditCardTransactionRecord.book_id,
+                    TransactionReversalRecord.original_transaction_id
+                    == CreditCardTransactionRecord.transaction_id,
+                ),
+            )
+            .where(
+                CreditCardTransactionRecord.book_id == book_id,
+                CreditCardTransactionRecord.intent == CreditCardIntent.REFUND.value,
+                CreditCardTransactionRecord.original_transaction_id
+                == charge_transaction_id,
+                TransactionReversalRecord.reversal_transaction_id.is_(None),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        is not None
     )
 
 
@@ -342,6 +481,10 @@ def _build_reversal_pending(
 
 
 __all__ = [
+    "CreditCardChargeHasActiveRefunds",
+    "CreditCardReversalChainForbidden",
+    "CreditCardReversalPrecedesOriginal",
+    "CreditCardReversalRequiresActiveAccount",
     "InvalidTransactionSource",
     "ReverseTransactionCommand",
     "TransactionAlreadyReversed",

@@ -12,15 +12,22 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Mapping, Sequence
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from sqlalchemy import Connection, create_engine, text
 from sqlalchemy.engine import make_url
 
+from .credit_card_review import (
+    CreditCardSemanticReview,
+    credit_card_transaction_scope,
+    read_credit_card_review,
+)
+from .manifest import read_manifest
 from .reference_reducer import (
     VerificationIssue,
     VerificationReport,
     canonical_json_bytes,
+    reference_backfill_receipts,
     reduce_target,
     verify_source_target_semantics,
 )
@@ -51,6 +58,7 @@ _TARGET_TABLES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "account_id",
             "asset_code",
             "account_type",
+            "account_subtype",
             "system_role",
             "current_name",
             "status",
@@ -165,6 +173,21 @@ _TARGET_TABLES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ),
         ("book_id", "reversal_transaction_id"),
     ),
+    "credit_card_transactions": (
+        (
+            "book_id",
+            "transaction_id",
+            "intent",
+            "card_account_id",
+            "counter_account_id",
+            "asset_code",
+            "units",
+            "original_transaction_id",
+            "source_event_id",
+            "source_position",
+        ),
+        ("book_id", "source_position", "transaction_id"),
+    ),
     "reporting_lines": (
         (
             "book_id",
@@ -179,6 +202,7 @@ _TARGET_TABLES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             "line_kind",
             "dimension",
             "dimension_id",
+            "counterparty_id",
             "description_ref",
             "source_event_id",
         ),
@@ -291,6 +315,15 @@ _SOURCE_COLUMNS: dict[str, tuple[str, ...]] = {
         "valid_from",
         "valid_to",
         "change_reason",
+        "version",
+    ),
+    "counterparties": (
+        "counterparty_id",
+        "book_id",
+        "slug",
+        "name",
+        "kind",
+        "status",
         "version",
     ),
     "transactions": (
@@ -661,32 +694,38 @@ def _read_source_facts(
 
 def _read_backfill_controls(
     target_url: str, snapshot_id: str
-) -> tuple[Counter[str], int, list[Mapping[str, object]]]:
+) -> tuple[
+    list[Mapping[str, object]],
+    int,
+    list[Mapping[str, object]],
+    list[Mapping[str, object]],
+]:
     engine = create_engine(target_url, pool_pre_ping=True)
     try:
         with engine.connect() as connection:
             for table in (
                 "backfill_source_receipts",
                 "backfill_quarantine",
+                "backfill_review_contracts",
                 "backfill_seals",
             ):
                 if not _table_exists(connection, table):
                     raise ValueError(
                         f"target is missing backfill control table: {table}"
                     )
-            receipts = Counter(
-                {
-                    str(row.source_table): int(row.row_count)
-                    for row in connection.execute(
-                        text(
-                            "select source_table, count(*) as row_count "
-                            "from public.backfill_source_receipts "
-                            "where snapshot_id=:snapshot_id group by source_table"
-                        ),
-                        {"snapshot_id": snapshot_id},
-                    )
-                }
-            )
+            receipts = [
+                dict(row)
+                for row in connection.execute(
+                    text(
+                        "select snapshot_id, source_table, source_primary_key, "
+                        "canonical_source_key, book_id, source_hash, "
+                        "target_entity_id from public.backfill_source_receipts "
+                        "where snapshot_id=:snapshot_id "
+                        "order by source_table, source_primary_key"
+                    ),
+                    {"snapshot_id": snapshot_id},
+                ).mappings()
+            ]
             quarantine_count = int(
                 connection.execute(
                     text(
@@ -707,9 +746,187 @@ def _read_backfill_controls(
                     {"snapshot_id": snapshot_id},
                 ).mappings()
             ]
-        return receipts, quarantine_count, seals
+            review_contracts = [
+                dict(row)
+                for row in connection.execute(
+                    text(
+                        "select snapshot_id, review_kind, manifest_hash, review_hash, "
+                        "reviewer, reviewed_at from public.backfill_review_contracts "
+                        "where snapshot_id=:snapshot_id order by review_kind"
+                    ),
+                    {"snapshot_id": snapshot_id},
+                ).mappings()
+            ]
+        return receipts, quarantine_count, seals, review_contracts
     finally:
         engine.dispose()
+
+
+def _verify_source_receipts(
+    *,
+    source_rows: Mapping[str, list[Mapping[str, object]]],
+    manifest_tables: tuple[_ManifestTable, ...],
+    snapshot_id: str,
+    actual_rows: list[Mapping[str, object]],
+) -> tuple[VerificationIssue, ...]:
+    expected_rows = reference_backfill_receipts(
+        source_rows,
+        primary_keys={table.table: table.primary_key for table in manifest_tables},
+        snapshot_id=snapshot_id,
+    )
+    expected = {
+        (row.source_table, row.source_primary_key): row for row in expected_rows
+    }
+    actual = {
+        (str(row["source_table"]), str(row["source_primary_key"])): row
+        for row in actual_rows
+    }
+    issues: list[VerificationIssue] = []
+    for key in sorted(set(expected) - set(actual)):
+        issues.append(
+            VerificationIssue(
+                "source_receipt_missing",
+                f"source-receipt:{key[0]}:{key[1]}",
+                "deterministic receipt identity is missing",
+            )
+        )
+    for key in sorted(set(actual) - set(expected)):
+        issues.append(
+            VerificationIssue(
+                "source_receipt_unexpected",
+                f"source-receipt:{key[0]}:{key[1]}",
+                "receipt identity has no immutable source row",
+            )
+        )
+    for key in sorted(set(expected) & set(actual)):
+        wanted = expected[key]
+        found = actual[key]
+        differences: list[str] = []
+        if str(found["snapshot_id"]) != snapshot_id:
+            differences.append("snapshot_id")
+        if str(found["canonical_source_key"]) != wanted.canonical_source_key:
+            differences.append("canonical_source_key")
+        found_book = None if found["book_id"] is None else str(found["book_id"])
+        wanted_book = None if wanted.book_id is None else str(wanted.book_id)
+        if found_book != wanted_book:
+            differences.append("book_id")
+        if bytes(found["source_hash"]) != wanted.source_hash:
+            differences.append("source_hash")
+        found_target = (
+            None
+            if found["target_entity_id"] is None
+            else str(found["target_entity_id"])
+        )
+        wanted_target = (
+            None if wanted.target_entity_id is None else str(wanted.target_entity_id)
+        )
+        if found_target != wanted_target:
+            differences.append("target_entity_id")
+        if differences:
+            issues.append(
+                VerificationIssue(
+                    "source_receipt_mismatch",
+                    f"source-receipt:{key[0]}:{key[1]}",
+                    f"source-derived fields differ: {','.join(differences)}",
+                )
+            )
+    return tuple(sorted(set(issues)))
+
+
+def _review_target_uuid(kind: str, *parts: str) -> UUID:
+    root = UUID("3f021172-6aa9-5b36-9208-f238bc35c596")
+    namespace = uuid5(root, kind)
+    encoded = json.dumps(list(parts), ensure_ascii=False, separators=(",", ":"))
+    return uuid5(namespace, encoded)
+
+
+def _verify_credit_card_review_evidence(
+    *,
+    review: CreditCardSemanticReview | None,
+    manifest_hash: str,
+    snapshot_id: str,
+    contracts: list[Mapping[str, object]],
+    target_rows: Mapping[str, list[Mapping[str, object]]],
+) -> tuple[VerificationIssue, ...]:
+    issues: list[VerificationIssue] = []
+    if review is None:
+        if contracts:
+            issues.append(
+                VerificationIssue(
+                    "credit_card_review_unexpected",
+                    f"snapshot:{snapshot_id}",
+                    "target contains a credit-card review without verifier input",
+                )
+            )
+        return tuple(issues)
+    if len(contracts) != 1:
+        issues.append(
+            VerificationIssue(
+                "credit_card_review_missing",
+                f"snapshot:{snapshot_id}",
+                f"expected one bound review contract, found {len(contracts)}",
+            )
+        )
+    else:
+        contract = contracts[0]
+        expected = {
+            "snapshot_id": snapshot_id,
+            "review_kind": "credit_card_semantics_v1",
+            "manifest_hash": bytes.fromhex(manifest_hash),
+            "review_hash": bytes.fromhex(review.content_sha256),
+            "reviewer": review.reviewer,
+            "reviewed_at": review.reviewed_at,
+        }
+        different = [
+            field
+            for field, value in expected.items()
+            if contract.get(field) != value
+        ]
+        if different:
+            issues.append(
+                VerificationIssue(
+                    "credit_card_review_mismatch",
+                    f"snapshot:{snapshot_id}",
+                    f"bound review fields differ: {','.join(different)}",
+                )
+            )
+
+    balances = {
+        (
+            str(row["book_id"]),
+            str(row["account_id"]),
+            str(row["asset_code"]),
+        ): int(row["balance_units"])
+        for row in target_rows.get("account_balances", [])
+    }
+    for expected in review.expected_balances:
+        target_key = (
+            str(_review_target_uuid("book", expected.book_id)),
+            str(
+                _review_target_uuid(
+                    "account", expected.book_id, expected.source_account_id
+                )
+            ),
+            expected.asset_code,
+        )
+        raw_units = balances.get(target_key)
+        natural_units = 0 if raw_units is None else -raw_units
+        if natural_units != expected.natural_units:
+            issues.append(
+                VerificationIssue(
+                    "credit_card_review_balance_mismatch",
+                    (
+                        "credit-card-balance:"
+                        f"{expected.book_id}:{expected.source_account_id}:"
+                        f"{expected.asset_code}"
+                    ),
+                    (
+                        f"reviewed natural units={expected.natural_units} "
+                        f"target={natural_units}"
+                    ),
+                )
+            )
+    return tuple(sorted(set(issues)))
 
 
 def verify_backfill(
@@ -718,6 +935,8 @@ def verify_backfill(
     target_url: str,
     manifest_path: Path,
     output_path: Path | None = None,
+    credit_card_review_path: Path | None = None,
+    credit_card_review: CreditCardSemanticReview | None = None,
 ) -> VerificationReport:
     if _database_identity(source_url) == _database_identity(target_url):
         raise ValueError("source and target must be different databases")
@@ -728,6 +947,25 @@ def verify_backfill(
     source_revision, source_counts, source_hashes, source_rows = _read_source_facts(
         source_url, manifest_tables
     )
+    if credit_card_review_path is not None and credit_card_review is not None:
+        raise ValueError("supply either a credit-card review path or object, not both")
+    card_scope = credit_card_transaction_scope(source_rows)
+    if card_scope and credit_card_review_path is None and credit_card_review is None:
+        raise ValueError(
+            "credit-card semantic review is required to verify this snapshot"
+        )
+    if (
+        credit_card_review_path is not None or credit_card_review is not None
+    ) and not card_scope:
+        raise ValueError(
+            "credit-card semantic review was supplied for a snapshot without cards"
+        )
+    if credit_card_review_path is not None:
+        credit_card_review = read_credit_card_review(
+            credit_card_review_path,
+            manifest=read_manifest(manifest_path),
+            rows_by_table=source_rows,
+        )
     target_rows, target_report = _read_target_facts(target_url)
     issues = list(target_report.issues)
     if manifest_tables:
@@ -736,6 +974,7 @@ def verify_backfill(
                 source_rows,
                 target_rows,
                 snapshot_id=snapshot_id,
+                credit_card_review=credit_card_review,
             )
         )
     if source_revision != expected_revision:
@@ -765,8 +1004,21 @@ def verify_backfill(
                 )
             )
     for source_table, target_table in sorted(_SOURCE_TO_TARGET_COUNTS.items()):
-        if source_table in source_counts and (
-            source_counts[source_table] != target_report.counts.get(target_table, 0)
+        expected_target_count = source_counts.get(source_table)
+        if expected_target_count is not None and credit_card_review is not None:
+            neutralized = tuple(
+                decision
+                for decision in credit_card_review.transactions
+                if decision.post_import_action == "exact_reversal"
+            )
+            if source_table == "transactions":
+                expected_target_count += len(neutralized)
+            elif source_table == "postings":
+                expected_target_count += sum(
+                    len(decision.postings) for decision in neutralized
+                )
+        if expected_target_count is not None and (
+            expected_target_count != target_report.counts.get(target_table, 0)
         ):
             issues.append(
                 VerificationIssue(
@@ -776,8 +1028,28 @@ def verify_backfill(
                 )
             )
 
-    receipts, quarantine_count, seals = _read_backfill_controls(target_url, snapshot_id)
-    receipt_count = sum(receipts.values())
+    receipt_rows, quarantine_count, seals, review_contracts = _read_backfill_controls(
+        target_url, snapshot_id
+    )
+    receipts = Counter(str(row["source_table"]) for row in receipt_rows)
+    receipt_count = len(receipt_rows)
+    issues.extend(
+        _verify_source_receipts(
+            source_rows=source_rows,
+            manifest_tables=manifest_tables,
+            snapshot_id=snapshot_id,
+            actual_rows=receipt_rows,
+        )
+    )
+    issues.extend(
+        _verify_credit_card_review_evidence(
+            review=credit_card_review,
+            manifest_hash=manifest_hash,
+            snapshot_id=snapshot_id,
+            contracts=review_contracts,
+            target_rows=target_rows,
+        )
+    )
     for table_name, count in sorted(expected_counts.items()):
         if receipts[table_name] != count:
             issues.append(
@@ -866,6 +1138,11 @@ def verify_backfill(
         quarantine_count=quarantine_count,
         manifest_hash=manifest_hash,
         snapshot_id=snapshot_id,
+        credit_card_review_hash=(
+            None
+            if credit_card_review is None
+            else credit_card_review.content_sha256
+        ),
     )
     if output_path is not None:
         output = Path(output_path)
@@ -882,12 +1159,16 @@ def verify(
     target_url: str,
     manifest_path: Path,
     output_path: Path | None = None,
+    credit_card_review_path: Path | None = None,
+    credit_card_review: CreditCardSemanticReview | None = None,
 ) -> VerificationReport:
     return verify_backfill(
         source_url=source_url,
         target_url=target_url,
         manifest_path=manifest_path,
         output_path=output_path,
+        credit_card_review_path=credit_card_review_path,
+        credit_card_review=credit_card_review,
     )
 
 
@@ -899,6 +1180,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-url", required=True)
     parser.add_argument("--target-url", required=True)
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--credit-card-review", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -911,6 +1193,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             target_url=args.target_url,
             manifest_path=args.manifest,
             output_path=args.output,
+            credit_card_review_path=args.credit_card_review,
         )
     except (FileExistsError, RuntimeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)

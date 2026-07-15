@@ -19,6 +19,7 @@ from .auth import (
 from .backfill import (
     BackfillCheckpointRecord,
     BackfillQuarantineRecord,
+    BackfillReviewContractRecord,
     BackfillSealRecord,
     BackfillSourceReceiptRecord,
 )
@@ -35,6 +36,7 @@ from .event_store import (
     EventStreamHeadRecord,
     LedgerEventRecord,
 )
+from .credit_cards import CreditCardTransactionRecord
 from .investments import InvestmentLotAllocationRecord, InvestmentLotRecord
 from .monthly_summary import MonthlyCategorySummaryRecord
 from .outbox import OutboxMessageRecord
@@ -58,6 +60,7 @@ __all__ = [
     "AuthIdentityRecord",
     "BackfillCheckpointRecord",
     "BackfillQuarantineRecord",
+    "BackfillReviewContractRecord",
     "BackfillSealRecord",
     "BackfillSourceReceiptRecord",
     "BookMemberRecord",
@@ -67,6 +70,7 @@ __all__ = [
     "CategoryRecord",
     "CategoryVersionRecord",
     "CredentialRecord",
+    "CreditCardTransactionRecord",
     "CommandReceiptRecord",
     "EventStreamHeadRecord",
     "LedgerEventRecord",

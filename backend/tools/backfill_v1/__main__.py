@@ -51,6 +51,7 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--target-url", required=True)
     run.add_argument("--dump", type=Path, required=True)
     run.add_argument("--manifest", type=Path, required=True)
+    run.add_argument("--credit-card-review", type=Path)
     run.add_argument("--output-dir", type=Path, required=True)
     run.add_argument("--batch-size", type=int, default=500)
     run.add_argument("--workers", type=int, default=1)
@@ -119,6 +120,7 @@ def _run(args: argparse.Namespace) -> int:
         batch_size=args.batch_size,
         workers=args.workers,
         shuffle_seed=args.shuffle_seed,
+        credit_card_review_path=args.credit_card_review,
     )
     print(result.seal.snapshot_id)
     return 0

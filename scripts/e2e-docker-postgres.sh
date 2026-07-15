@@ -303,7 +303,7 @@ while IFS= read -r generated_id; do
   ids+=("$generated_id")
 done < <("${PY[@]}" - <<'PY'
 from uuid import uuid4
-for _ in range(14):
+for _ in range(23):
     print(uuid4())
 PY
 )
@@ -321,6 +321,15 @@ REPORTING_LINE_VERSION_ID="${ids[10]}"
 REPORTING_COMMAND_ID="${ids[11]}"
 REVERSAL_TRANSACTION_ID="${ids[12]}"
 REVERSAL_COMMAND_ID="${ids[13]}"
+CARD_ACCOUNT_ID="${ids[14]}"
+CARD_CHARGE_TRANSACTION_ID="${ids[15]}"
+CARD_CHARGE_COMMAND_ID="${ids[16]}"
+CARD_PAYMENT_TRANSACTION_ID="${ids[17]}"
+CARD_PAYMENT_COMMAND_ID="${ids[18]}"
+CARD_REFUND_TRANSACTION_ID="${ids[19]}"
+CARD_REFUND_COMMAND_ID="${ids[20]}"
+CARD_FEE_TRANSACTION_ID="${ids[21]}"
+CARD_FEE_COMMAND_ID="${ids[22]}"
 
 post_json "/api/v2/books" "$WORK_DIR/book.json" - \
   "{\"book_id\":\"$BOOK_ID\",\"current_name\":\"Local E2E Book\",\"base_asset_code\":null}"
@@ -350,7 +359,7 @@ get_json "/api/v2/books/$BOOK_ID/journal?limit=10&as_of_book_position=1" "$WORK_
 assert_json_expr "$WORK_DIR/journal-before.json" "data['as_of_book_position'] == 1 and len(data['items']) == 1 and data['items'][0]['transaction_id'] == '$TRANSACTION_ID' and data['items'][0]['is_reversed'] is False and all(isinstance(posting['units'], str) and posting['units'] == '1234' for posting in data['items'][0]['postings'])"
 
 get_json "/api/v2/books/$BOOK_ID/balances?as_of_book_position=1" "$WORK_DIR/balances.json"
-assert_json_expr "$WORK_DIR/balances.json" "data['as_of_book_position'] == 1 and sorted(item['units'] for item in data['items']) == ['-1234', '1234'] and all(isinstance(item['units'], str) for item in data['items'])"
+assert_json_expr "$WORK_DIR/balances.json" "data['as_of_book_position'] == 1 and sorted(item['raw_accounting_units'] for item in data['items']) == ['-1234', '1234'] and sorted(item['natural_units'] for item in data['items']) == ['-1234', '1234'] and {item['normal_side'] for item in data['items']} == {'debit'} and {item['account_type'] for item in data['items']} == {'asset', 'expense'} and {item['account_status'] for item in data['items']} == {'active'} and all(item['outstanding_units'] is None and item['overpayment_units'] is None for item in data['items'])"
 
 "${PY[@]}" - "$RUNTIME_URL" "$BOOK_ID" "$RUNTIME_ROLE" <<'PY'
 import sys
@@ -396,6 +405,73 @@ assert_json_expr "$WORK_DIR/reversed.json" "data['reversal_transaction_id'] == '
 
 get_json "/api/v2/books/$BOOK_ID/journal?limit=10&as_of_book_position=3" "$WORK_DIR/journal-after.json"
 assert_json_expr "$WORK_DIR/journal-after.json" "data['as_of_book_position'] == 3 and len(data['items']) == 2 and any(item['transaction_id'] == '$TRANSACTION_ID' and item['is_reversed'] and item['reversed_by_transaction_id'] == '$REVERSAL_TRANSACTION_ID' for item in data['items']) and any(item['transaction_id'] == '$REVERSAL_TRANSACTION_ID' and item['reverses_transaction_id'] == '$TRANSACTION_ID' for item in data['items'])"
+
+run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+  python -m track_anywhere_cli.main \
+  --base-url http://127.0.0.1:8000 --token "$RAW_API_KEY" --agent \
+  account create "$BOOK_ID" "$CARD_ACCOUNT_ID" \
+  --asset-code USD --type liability --account-subtype credit_card \
+  --name "Local E2E Card" \
+  >"$WORK_DIR/cli-card-account.json"
+assert_json_expr "$WORK_DIR/cli-card-account.json" "data['ok'] and data['status'] == 201 and data['data']['account_id'] == '$CARD_ACCOUNT_ID'"
+
+run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+  python -m track_anywhere_cli.main \
+  --base-url http://127.0.0.1:8000 --token "$RAW_API_KEY" --agent \
+  card charge "$BOOK_ID" "$CARD_CHARGE_TRANSACTION_ID" \
+  --command-id "$CARD_CHARGE_COMMAND_ID" \
+  --card-account-id "$CARD_ACCOUNT_ID" \
+  --expense-account-id "$CREDIT_ACCOUNT_ID" \
+  --asset-code USD --amount 100.00 \
+  --effective-at 2026-07-14T12:33:00Z \
+  --idempotency-key "e2e-card-charge-$CARD_CHARGE_TRANSACTION_ID" \
+  >"$WORK_DIR/cli-card-charge.json"
+assert_json_expr "$WORK_DIR/cli-card-charge.json" "data['ok'] and data['status'] == 201 and data['data']['transaction_id'] == '$CARD_CHARGE_TRANSACTION_ID' and data['data']['intent'] == 'charge'"
+
+run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+  python -m track_anywhere_cli.main \
+  --base-url http://127.0.0.1:8000 --token "$RAW_API_KEY" --agent \
+  card payment "$BOOK_ID" "$CARD_PAYMENT_TRANSACTION_ID" \
+  --command-id "$CARD_PAYMENT_COMMAND_ID" \
+  --card-account-id "$CARD_ACCOUNT_ID" \
+  --source-account-id "$DEBIT_ACCOUNT_ID" \
+  --asset-code USD --amount 30.00 \
+  --effective-at 2026-07-14T12:34:00Z \
+  --idempotency-key "e2e-card-payment-$CARD_PAYMENT_TRANSACTION_ID" \
+  >"$WORK_DIR/cli-card-payment.json"
+assert_json_expr "$WORK_DIR/cli-card-payment.json" "data['ok'] and data['status'] == 201 and data['data']['intent'] == 'payment'"
+
+run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+  python -m track_anywhere_cli.main \
+  --base-url http://127.0.0.1:8000 --token "$RAW_API_KEY" --agent \
+  card refund "$BOOK_ID" "$CARD_REFUND_TRANSACTION_ID" \
+  --command-id "$CARD_REFUND_COMMAND_ID" \
+  --card-account-id "$CARD_ACCOUNT_ID" \
+  --original-transaction-id "$CARD_CHARGE_TRANSACTION_ID" \
+  --asset-code USD --amount 20.00 \
+  --effective-at 2026-07-14T12:35:00Z \
+  --idempotency-key "e2e-card-refund-$CARD_REFUND_TRANSACTION_ID" \
+  >"$WORK_DIR/cli-card-refund.json"
+assert_json_expr "$WORK_DIR/cli-card-refund.json" "data['ok'] and data['status'] == 201 and data['data']['intent'] == 'refund'"
+
+run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+  python -m track_anywhere_cli.main \
+  --base-url http://127.0.0.1:8000 --token "$RAW_API_KEY" --agent \
+  card fee "$BOOK_ID" "$CARD_FEE_TRANSACTION_ID" \
+  --command-id "$CARD_FEE_COMMAND_ID" \
+  --card-account-id "$CARD_ACCOUNT_ID" \
+  --expense-account-id "$CREDIT_ACCOUNT_ID" \
+  --asset-code USD --amount 5.00 \
+  --effective-at 2026-07-14T12:36:00Z \
+  --idempotency-key "e2e-card-fee-$CARD_FEE_TRANSACTION_ID" \
+  >"$WORK_DIR/cli-card-fee.json"
+assert_json_expr "$WORK_DIR/cli-card-fee.json" "data['ok'] and data['status'] == 201 and data['data']['intent'] == 'fee'"
+
+get_json "/api/v2/books/$BOOK_ID/balances?as_of_book_position=7" "$WORK_DIR/card-balances.json"
+assert_json_expr "$WORK_DIR/card-balances.json" "data['as_of_book_position'] == 7 and any(item['account_id'] == '$CARD_ACCOUNT_ID' and item['account_type'] == 'liability' and item['account_subtype'] == 'credit_card' and item['account_status'] == 'active' and item['raw_accounting_units'] == '-5500' and item['natural_units'] == '5500' and item['normal_side'] == 'credit' and item['outstanding_units'] == '5500' and item['overpayment_units'] == '0' for item in data['items'])"
+
+get_json "/api/v2/books/$BOOK_ID/journal?limit=10&as_of_book_position=7" "$WORK_DIR/card-journal.json"
+assert_json_expr "$WORK_DIR/card-journal.json" "data['as_of_book_position'] == 7 and {'credit_card_charge', 'credit_card_payment', 'credit_card_refund', 'credit_card_fee'} <= {item['transaction_kind'] for item in data['items']} and {item['credit_card_relation']['intent'] for item in data['items'] if item['credit_card_relation'] is not None} == {'charge', 'payment', 'refund', 'fee'} and any(item['transaction_id'] == '$CARD_REFUND_TRANSACTION_ID' and item['credit_card_relation']['original_transaction_id'] == '$CARD_CHARGE_TRANSACTION_ID' for item in data['items'])"
 
 if [[ -n "$RESULT_FILE" ]]; then
   "${PY[@]}" - "$RESULT_FILE" "$BOOK_ID" "$TRANSACTION_ID" <<'PY'

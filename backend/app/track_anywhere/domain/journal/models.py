@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
+
+
+ACCOUNT_SUBTYPE_PATTERN = r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+_ACCOUNT_SUBTYPE = re.compile(ACCOUNT_SUBTYPE_PATTERN)
 
 
 class PostingSide(str, Enum):
@@ -21,6 +26,24 @@ class TransactionKind(str, Enum):
 class AccountSystemRole(str, Enum):
     STANDARD = "standard"
     FX_TRADING = "fx_trading"
+
+
+class AccountType(str, Enum):
+    ASSET = "asset"
+    LIABILITY = "liability"
+    EQUITY = "equity"
+    INCOME = "income"
+    EXPENSE = "expense"
+    FUND = "fund"
+    SYSTEM = "system"
+
+
+def is_valid_account_subtype(value: object) -> bool:
+    return value is None or (
+        type(value) is str
+        and len(value) <= 64
+        and _ACCOUNT_SUBTYPE.fullmatch(value) is not None
+    )
 
 
 class JournalError(ValueError):
@@ -46,6 +69,8 @@ class AccountSnapshot:
     account_id: str
     book_id: str
     asset_code: str
+    account_type: AccountType
+    account_subtype: str | None = None
     system_role: AccountSystemRole = AccountSystemRole.STANDARD
     status: str = "active"
 
@@ -71,6 +96,12 @@ class AccountCatalogSnapshot:
                 or not account.book_id
                 or type(account.asset_code) is not str
                 or not account.asset_code
+                or type(account.account_type) is not AccountType
+                or not is_valid_account_subtype(account.account_subtype)
+                or (
+                    account.account_subtype == "credit_card"
+                    and account.account_type is not AccountType.LIABILITY
+                )
                 or type(account.system_role) is not AccountSystemRole
                 or type(account.status) is not str
                 or account.status not in {"active", "closed"}

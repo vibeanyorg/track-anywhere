@@ -13,7 +13,11 @@ from backend.tools.backfill_v1.pipeline import (
     BackfillMappingError,
     load_extracted_rows_to_target,
 )
+from backend.tools.backfill_v1.namespaces import deterministic_uuid
 from backend.tools.backfill_v1.verify import verify_target
+from backend.tests.v2.backfill.credit_card_review_helpers import (
+    approved_mechanical_review,
+)
 
 
 def _synthetic_rows() -> dict[str, list[dict[str, object]]]:
@@ -79,7 +83,7 @@ def _synthetic_rows() -> dict[str, list[dict[str, object]]]:
                 "display_scale": 6,
                 "kind": "crypto",
                 "name": "Tether",
-                "scale": 8,
+                "scale": 6,
                 "status": "active",
                 "version": 1,
             },
@@ -118,6 +122,17 @@ def _synthetic_rows() -> dict[str, list[dict[str, object]]]:
             }
         ],
         "classification_events": [],
+        "counterparties": [
+            {
+                "counterparty_id": "counterparty-market",
+                "book_id": "book-home",
+                "slug": "market",
+                "name": "Market",
+                "kind": "merchant",
+                "status": "active",
+                "version": 1,
+            }
+        ],
         "investment_events": [],
         "investment_valuations": [],
         "ledger_books": [
@@ -187,7 +202,7 @@ def _synthetic_rows() -> dict[str, list[dict[str, object]]]:
                 "category_id": "cat-food",
                 "category_path_snapshot": {"primary": "Food"},
                 "category_version_id": None,
-                "counterparty_id": None,
+                "counterparty_id": "counterparty-market",
                 "currency": "CNY",
                 "line_id": "line-lunch",
                 "line_type": "expense",
@@ -314,6 +329,8 @@ def test_synthetic_pg17_load_is_atomic_resumable_and_sealed(
     tmp_path: Path,
 ) -> None:
     rows = _synthetic_rows()
+    source_usdt = next(row for row in rows["assets"] if row["asset_code"] == "USDT")
+    assert source_usdt["scale"] == 6
     extraction = tmp_path / "extraction"
     manifest = extract_canonical_rows(
         rows_by_table=rows,
@@ -337,6 +354,7 @@ def test_synthetic_pg17_load_is_atomic_resumable_and_sealed(
     assert replay.applied_receipts == 0
     assert replay.replayed_receipts == first.applied_receipts
     assert first.seal.verification_payload() == replay.seal.verification_payload()
+    assert source_usdt["scale"] == 6
 
     engine = create_engine(migrated_postgres_database.runtime_url)
     try:
@@ -357,11 +375,26 @@ def test_synthetic_pg17_load_is_atomic_resumable_and_sealed(
             }
             usdt = connection.execute(
                 text(
-                    "select p.units, a.input_scale from journal_postings p "
+                    "select p.units, a.ledger_scale, a.input_scale "
+                    "from journal_postings p "
                     "join assets a on a.asset_code=p.asset_code "
                     "where p.asset_code='USDT' and p.side='debit'"
                 )
             ).one()
+            counterparty_id = connection.scalar(
+                text(
+                    "select counterparty_id from reporting_lines "
+                    "where transaction_id = :transaction_id"
+                ),
+                {
+                    "transaction_id": deterministic_uuid(
+                        "transaction",
+                        manifest.snapshot_id,
+                        "book-home",
+                        "txn-lunch",
+                    )
+                },
+            )
     finally:
         engine.dispose()
 
@@ -376,9 +409,226 @@ def test_synthetic_pg17_load_is_atomic_resumable_and_sealed(
         "ledger_events": 3,
         "reporting_lines": 1,
     }
-    assert (int(usdt.units), usdt.input_scale) == (112_345_678, 6)
+    assert (int(usdt.units), usdt.ledger_scale, usdt.input_scale) == (
+        112_345_678,
+        8,
+        6,
+    )
+    assert counterparty_id == deterministic_uuid(
+        "counterparty", "book-home", "counterparty-market"
+    )
     independent = verify_target(migrated_postgres_database.runtime_url)
     assert (independent.status, independent.issues) == ("PASS", ())
+
+
+def test_trusted_v1_backfill_preserves_generic_credit_card_history(
+    migrated_postgres_database,
+    tmp_path: Path,
+) -> None:
+    rows = _synthetic_rows()
+    card = rows["accounts"][0]
+    card["type"] = "liability"
+    card["subtype"] = "credit_card"
+    manifest = extract_canonical_rows(
+        rows_by_table=rows,
+        output_dir=tmp_path / "credit-card-history-extraction",
+        dump_sha256="9" * 64,
+        source_revision="v1-synthetic",
+    )
+
+    result = load_extracted_rows_to_target(
+        target_url=migrated_postgres_database.runtime_url,
+        manifest=manifest,
+        rows_by_table=rows,
+        credit_card_review=approved_mechanical_review(
+            tmp_path, manifest=manifest, rows=rows
+        ),
+    )
+
+    engine = create_engine(migrated_postgres_database.runtime_url)
+    try:
+        with engine.connect() as connection:
+            imported = connection.execute(
+                text(
+                    "select transaction.transaction_kind, event.event_type, "
+                    "account.account_type, account.account_subtype "
+                    "from journal_transactions transaction "
+                    "join ledger_events event "
+                    "  on event.book_id=transaction.book_id "
+                    " and event.event_id=transaction.source_event_id "
+                    "join journal_postings posting "
+                    "  on posting.book_id=transaction.book_id "
+                    " and posting.transaction_id=transaction.transaction_id "
+                    "join accounts account "
+                    "  on account.book_id=posting.book_id "
+                    " and account.account_id=posting.account_id "
+                    "where account.account_subtype='credit_card'"
+                )
+            ).one()
+            typed_count = int(
+                connection.scalar(text("select count(*) from credit_card_transactions"))
+            )
+    finally:
+        engine.dispose()
+
+    assert result.seal.snapshot_id == manifest.snapshot_id
+    assert imported == (
+        "standard",
+        "JournalTransactionPosted",
+        "liability",
+        "credit_card",
+    )
+    assert typed_count == 0
+    independent = verify_target(migrated_postgres_database.runtime_url)
+    assert (independent.status, independent.issues) == ("PASS", ())
+
+
+def test_reviewed_card_redirect_neutralization_and_alias_close_are_atomic(
+    migrated_postgres_database,
+    tmp_path: Path,
+) -> None:
+    rows = _synthetic_rows()
+    old_card = rows["accounts"][0]
+    old_card["type"] = "liability"
+    old_card["subtype"] = "legacy_credit_card"
+    rows["accounts"].append(
+        {
+            **old_card,
+            "account_id": "acc-card-shared",
+            "name": "Shared card",
+            "subtype": "credit_card",
+        }
+    )
+    rows["transactions"].append(
+        {
+            **rows["transactions"][0],
+            "memo": "legacy-only sign compensation",
+            "occurred_at": "2026-01-04T03:04:05.000000Z",
+            "purpose": "correction",
+            "transaction_id": "txn-card-compensation",
+        }
+    )
+    rows["postings"].extend(
+        [
+            {
+                **rows["postings"][0],
+                "account_id": "acc-card-shared",
+                "amount": "24.68",
+                "id": 5,
+                "side": "credit",
+                "transaction_id": "txn-card-compensation",
+            },
+            {
+                **rows["postings"][3],
+                "account_id": "acc-expense",
+                "amount": "24.68",
+                "currency": "CNY",
+                "id": 6,
+                "side": "debit",
+                "transaction_id": "txn-card-compensation",
+            },
+        ]
+    )
+    manifest = extract_canonical_rows(
+        rows_by_table=rows,
+        output_dir=tmp_path / "reviewed-card-extraction",
+        dump_sha256="7" * 64,
+        source_revision="v1-synthetic",
+    )
+    review = approved_mechanical_review(
+        tmp_path,
+        manifest=manifest,
+        rows=rows,
+        posting_overrides={"1": ("acc-card-shared", "credit")},
+        neutralized_transaction_ids=frozenset({"txn-card-compensation"}),
+        closed_account_ids=frozenset({"acc-cash"}),
+    )
+
+    result = load_extracted_rows_to_target(
+        target_url=migrated_postgres_database.runtime_url,
+        manifest=manifest,
+        rows_by_table=rows,
+        credit_card_review=review,
+    )
+
+    engine = create_engine(migrated_postgres_database.runtime_url)
+    try:
+        with engine.connect() as connection:
+            statuses = dict(
+                connection.execute(
+                    text(
+                        "select current_name, status from accounts "
+                        "where account_subtype='credit_card'"
+                    )
+                ).tuples().all()
+            )
+            shared_raw = int(
+                connection.scalar(
+                    text(
+                        "select balance.balance_units from account_balances balance "
+                        "join accounts account on account.book_id=balance.book_id "
+                        "and account.account_id=balance.account_id "
+                        "where account.current_name='Shared card'"
+                    )
+                )
+            )
+            counts = {
+                table: int(connection.scalar(text(f"select count(*) from {table}")))
+                for table in (
+                    "backfill_review_contracts",
+                    "journal_transactions",
+                    "transaction_reversals",
+                )
+            }
+    finally:
+        engine.dispose()
+
+    assert result.seal.snapshot_id == manifest.snapshot_id
+    assert statuses == {"Cash": "closed", "Shared card": "active"}
+    assert shared_raw == -1234
+    assert counts == {
+        "backfill_review_contracts": 1,
+        "journal_transactions": 4,
+        "transaction_reversals": 1,
+    }
+    assert verify_target(migrated_postgres_database.runtime_url).status == "PASS"
+
+
+def test_card_snapshot_without_review_fails_before_target_write(
+    migrated_postgres_database,
+    tmp_path: Path,
+) -> None:
+    rows = _synthetic_rows()
+    rows["accounts"][0]["type"] = "liability"
+    rows["accounts"][0]["subtype"] = "credit_card"
+    manifest = extract_canonical_rows(
+        rows_by_table=rows,
+        output_dir=tmp_path / "missing-card-review-extraction",
+        dump_sha256="8" * 64,
+        source_revision="v1-synthetic",
+    )
+
+    with pytest.raises(ValueError, match="semantic review is required"):
+        load_extracted_rows_to_target(
+            target_url=migrated_postgres_database.runtime_url,
+            manifest=manifest,
+            rows_by_table=rows,
+        )
+
+    engine = create_engine(migrated_postgres_database.runtime_url)
+    try:
+        with engine.connect() as connection:
+            assert int(connection.scalar(text("select count(*) from books"))) == 0
+            assert (
+                int(
+                    connection.scalar(
+                        text("select count(*) from backfill_review_contracts")
+                    )
+                )
+                == 0
+            )
+    finally:
+        engine.dispose()
 
 
 def test_v1_investment_activity_is_imported_exactly_without_fabricating_a_v2_lot(
@@ -1032,7 +1282,7 @@ def test_financial_and_historical_events_share_one_canonical_per_book_schedule(
     ]
 
 
-def test_same_time_reversal_runs_after_its_original_even_when_raw_id_sorts_first(
+def test_inferred_same_time_reversal_runs_after_original_when_raw_id_sorts_first(
     migrated_postgres_database,
     tmp_path: Path,
 ) -> None:
@@ -1046,7 +1296,7 @@ def test_same_time_reversal_runs_after_its_original_even_when_raw_id_sorts_first
             "occurred_at": original["occurred_at"],
             "purpose": "correction",
             "reversed_by": None,
-            "reverses_transaction_id": "txn-lunch",
+            "reverses_transaction_id": None,
             "transaction_id": "aaa-reversal",
             "version": 1,
         }
@@ -1104,11 +1354,13 @@ def test_same_time_reversal_runs_after_its_original_even_when_raw_id_sorts_first
     ]
 
 
-def test_reversal_before_its_original_fails_before_any_target_write(
+def test_credit_card_reversal_before_its_original_fails_before_any_target_write(
     migrated_postgres_database,
     tmp_path: Path,
 ) -> None:
     rows = _synthetic_rows()
+    rows["accounts"][0]["type"] = "liability"
+    rows["accounts"][0]["subtype"] = "credit_card"
     original = rows["transactions"][0]
     original["reversed_by"] = "early-reversal"
     rows["transactions"].append(
@@ -1151,6 +1403,9 @@ def test_reversal_before_its_original_fails_before_any_target_write(
             target_url=migrated_postgres_database.runtime_url,
             manifest=manifest,
             rows_by_table=rows,
+            credit_card_review=approved_mechanical_review(
+                tmp_path, manifest=manifest, rows=rows
+            ),
         )
 
     engine = create_engine(migrated_postgres_database.runtime_url)
@@ -1172,6 +1427,74 @@ def test_reversal_before_its_original_fails_before_any_target_write(
                 "ledger_events": 0,
                 "users": 0,
             }
+    finally:
+        engine.dispose()
+
+
+def test_generic_reversal_preserves_an_earlier_historical_effective_time(
+    migrated_postgres_database,
+    tmp_path: Path,
+) -> None:
+    rows = _synthetic_rows()
+    original = rows["transactions"][0]
+    original["reversed_by"] = "early-generic-reversal"
+    rows["transactions"].append(
+        {
+            "book_id": "book-home",
+            "memo": "historical early correction",
+            "occurred_at": "2026-01-01T03:04:05.000000Z",
+            "purpose": "correction",
+            "reversed_by": None,
+            "reverses_transaction_id": "txn-lunch",
+            "transaction_id": "early-generic-reversal",
+            "version": 1,
+        }
+    )
+    rows["postings"].extend(
+        [
+            {
+                **rows["postings"][0],
+                "id": 10,
+                "side": "debit",
+                "transaction_id": "early-generic-reversal",
+            },
+            {
+                **rows["postings"][3],
+                "id": 11,
+                "side": "credit",
+                "transaction_id": "early-generic-reversal",
+            },
+        ]
+    )
+    manifest = extract_canonical_rows(
+        rows_by_table=rows,
+        output_dir=tmp_path / "early-generic-reversal-extraction",
+        dump_sha256="4" * 64,
+        source_revision="v1-synthetic",
+    )
+
+    load_extracted_rows_to_target(
+        target_url=migrated_postgres_database.runtime_url,
+        manifest=manifest,
+        rows_by_table=rows,
+    )
+
+    engine = create_engine(migrated_postgres_database.runtime_url)
+    try:
+        with engine.connect() as connection:
+            reversal_time, original_time = connection.execute(
+                text(
+                    "select reversal.effective_at, original.effective_at "
+                    "from transaction_reversals relation "
+                    "join journal_transactions reversal "
+                    "on reversal.book_id=relation.book_id and "
+                    "reversal.transaction_id=relation.reversal_transaction_id "
+                    "join journal_transactions original "
+                    "on original.book_id=relation.book_id and "
+                    "original.transaction_id=relation.original_transaction_id"
+                )
+            ).one()
+        assert reversal_time < original_time
     finally:
         engine.dispose()
 
@@ -1415,6 +1738,7 @@ def test_multi_book_same_time_aggregates_share_execution_and_checkpoint_rank(
             "category_id": "cat-other",
             "category_path_snapshot": {"primary": "Other category"},
             "category_version_id": "catv-other-1",
+            "counterparty_id": None,
             "line_id": "line-other",
             "transaction_id": "aaa-other",
         }

@@ -13,11 +13,13 @@ from backend.tests.v2.fixtures.synchronous import (
     seed_journal_scenario,
 )
 from track_anywhere.application.idempotency import CommandActor
+from track_anywhere.application.event_batch import PendingEvent
 from track_anywhere.application.journal.assign_reporting_lines import (
     AssignReportingLinesCommand,
     ReportingAllocationExceeded,
     ReportingLineInput,
     UnsupportedReportingDimension,
+    UnsupportedReportingMetadata,
     execute_assign_reporting_lines,
 )
 from track_anywhere.application.journal.clear_reporting_lines import (
@@ -29,10 +31,14 @@ from track_anywhere.application.journal.post_transaction import (
     PostTransactionPosting,
     execute_post_transaction,
 )
+from track_anywhere.application.ledger_committer import LedgerCommitter
 from track_anywhere.domain.journal.models import PostingSide, TransactionKind
 from track_anywhere.domain.reporting.events import (
     ReportingDimension,
+    ReportingLine as ReportingLineEvent,
     ReportingLineKind,
+    ReportingLinesAssigned,
+    ReportingLinesCleared,
 )
 from track_anywhere.infrastructure.db.event_store import StreamVersionConflict
 from track_anywhere.infrastructure.db.models.event_store import (
@@ -46,6 +52,7 @@ from track_anywhere.infrastructure.db.models.projections import (
 )
 from track_anywhere.infrastructure.db.repositories.catalogs import CatalogNotFound
 from track_anywhere.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
+from track_anywhere.queries.reporting import list_current_reporting_lines
 
 
 EFFECTIVE_AT = datetime(2026, 7, 14, 16, tzinfo=UTC)
@@ -185,6 +192,176 @@ def _balances(session):
             for row in session.scalars(select(AccountBalanceRecord))
         )
     )
+
+
+def _append_reporting_event(
+    engine,
+    scenario: JournalScenario,
+    *,
+    expected_revision: int,
+    payload: ReportingLinesAssigned | ReportingLinesCleared,
+) -> None:
+    event_id = uuid4()
+    with Session(engine) as session, session.begin():
+        committer = LedgerCommitter()
+        locked_head = committer.execute_under_book_lock(session, scenario.book_id)
+        committer.append_and_project(
+            session,
+            locked_head=locked_head,
+            expected_stream_versions={
+                ("reporting_lines", scenario.transaction_id): expected_revision
+            },
+            events=(
+                PendingEvent(
+                    event_id=event_id,
+                    stream_type="reporting_lines",
+                    stream_id=scenario.transaction_id,
+                    payload=payload,
+                    command_id=uuid4(),
+                    actor_subject_id=scenario.actor_subject_id,
+                    correlation_id=uuid4(),
+                    causation_event_id=None,
+                    effective_at=EFFECTIVE_AT
+                    + timedelta(minutes=expected_revision + 1),
+                ),
+            ),
+        )
+
+
+def test_reporting_query_reduces_assign_reclassify_and_clear_at_exact_positions(
+    pg_engine,
+) -> None:
+    scenario = JournalScenario.create()
+    seed_journal_scenario(pg_engine, scenario)
+    category_a_id, version_a_id = _seed_category(pg_engine, scenario)
+    category_b_id, version_b_id = _seed_category(pg_engine, scenario)
+    counterparty_a_id = uuid4()
+    counterparty_b_id = uuid4()
+    line_a_id = uuid4()
+    line_a_version_id = uuid4()
+    line_b_id = uuid4()
+    line_b_version_id = uuid4()
+    _post_original(pg_engine, scenario)
+    _append_reporting_event(
+        pg_engine,
+        scenario,
+        expected_revision=0,
+        payload=ReportingLinesAssigned(
+            transaction_id=scenario.transaction_id,
+            classification_revision=1,
+            lines=(
+                ReportingLineEvent(
+                    line_id=line_a_id,
+                    line_version_id=line_a_version_id,
+                    catalog_id=version_a_id,
+                    position=0,
+                    asset_code="USD",
+                    units="1000",
+                    line_kind=ReportingLineKind.EXPENSE,
+                    dimension=ReportingDimension.CATEGORY,
+                    dimension_id=category_a_id,
+                    counterparty_id=counterparty_a_id,
+                ),
+            ),
+        ),
+    )
+    _append_reporting_event(
+        pg_engine,
+        scenario,
+        expected_revision=1,
+        payload=ReportingLinesAssigned(
+            transaction_id=scenario.transaction_id,
+            classification_revision=2,
+            lines=(
+                ReportingLineEvent(
+                    line_id=line_b_id,
+                    line_version_id=line_b_version_id,
+                    catalog_id=version_b_id,
+                    position=0,
+                    asset_code="USD",
+                    units="1000",
+                    line_kind=ReportingLineKind.EXPENSE,
+                    dimension=ReportingDimension.CATEGORY,
+                    dimension_id=category_b_id,
+                    counterparty_id=counterparty_b_id,
+                ),
+            ),
+        ),
+    )
+    _append_reporting_event(
+        pg_engine,
+        scenario,
+        expected_revision=2,
+        payload=ReportingLinesCleared(
+            transaction_id=scenario.transaction_id,
+            classification_revision=3,
+        ),
+    )
+
+    with Session(pg_engine) as session:
+        before_assignment = list_current_reporting_lines(
+            session,
+            scenario.book_id,
+            as_of_book_position=1,
+        )
+        assigned = list_current_reporting_lines(
+            session,
+            scenario.book_id,
+            as_of_book_position=2,
+        )
+        reclassified = list_current_reporting_lines(
+            session,
+            scenario.book_id,
+            as_of_book_position=3,
+        )
+        cleared = list_current_reporting_lines(
+            session,
+            scenario.book_id,
+            as_of_book_position=4,
+        )
+
+    assert before_assignment == ()
+    assert [
+        (
+            row.classification_revision,
+            row.line_id,
+            row.line_version_id,
+            row.catalog_id,
+            row.dimension_id,
+            row.counterparty_id,
+        )
+        for row in assigned
+    ] == [
+        (
+            1,
+            line_a_id,
+            line_a_version_id,
+            version_a_id,
+            category_a_id,
+            counterparty_a_id,
+        )
+    ]
+    assert [
+        (
+            row.classification_revision,
+            row.line_id,
+            row.line_version_id,
+            row.catalog_id,
+            row.dimension_id,
+            row.counterparty_id,
+        )
+        for row in reclassified
+    ] == [
+        (
+            2,
+            line_b_id,
+            line_b_version_id,
+            version_b_id,
+            category_b_id,
+            counterparty_b_id,
+        )
+    ]
+    assert cleared == ()
 
 
 def test_assignment_starts_at_revision_one_and_replaces_the_full_current_set(
@@ -361,6 +538,25 @@ def test_unbacked_reporting_dimensions_fail_closed(pg_engine) -> None:
     )
 
     with pytest.raises(UnsupportedReportingDimension):
+        _assign(
+            pg_engine,
+            scenario,
+            expected_revision=0,
+            lines=(line,),
+        )
+
+
+def test_online_assignment_rejects_unbacked_counterparty_metadata(pg_engine) -> None:
+    scenario = JournalScenario.create()
+    seed_journal_scenario(pg_engine, scenario)
+    category_id, version_id = _seed_category(pg_engine, scenario)
+    _post_original(pg_engine, scenario)
+    line = replace(
+        _line(category_id, version_id),
+        counterparty_id=uuid4(),
+    )
+
+    with pytest.raises(UnsupportedReportingMetadata):
         _assign(
             pg_engine,
             scenario,

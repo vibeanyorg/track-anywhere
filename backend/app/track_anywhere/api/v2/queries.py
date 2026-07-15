@@ -38,6 +38,15 @@ class JournalPostingResponse(BaseModel):
     units: str
 
 
+class CreditCardRelationResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    intent: str
+    card_account_id: UUID
+    counter_account_id: UUID
+    original_transaction_id: UUID | None
+
+
 class JournalItemResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -49,6 +58,7 @@ class JournalItemResponse(BaseModel):
     is_reversed: bool
     reversed_by_transaction_id: UUID | None
     reverses_transaction_id: UUID | None
+    credit_card_relation: CreditCardRelationResponse | None
 
 
 class JournalPageResponse(BaseModel):
@@ -64,7 +74,15 @@ class BalanceItemResponse(BaseModel):
 
     account_id: UUID
     asset_code: str
-    units: str
+    account_type: str
+    account_subtype: str | None
+    account_status: str
+    raw_accounting_units: str
+    natural_units: str
+    normal_side: str
+    balance_semantics: str
+    outstanding_units: str | None
+    overpayment_units: str | None
 
 
 class BalanceSnapshotResponse(BaseModel):
@@ -82,12 +100,14 @@ class ReportingLineResponse(BaseModel):
     classification_revision: int
     line_id: UUID
     line_version_id: UUID
+    catalog_id: UUID
     line_position: int
     asset_code: str
     units: str
     line_kind: str
     dimension: str
     dimension_id: UUID | None
+    counterparty_id: UUID | None
 
 
 class ReportingLinesResponse(BaseModel):
@@ -301,6 +321,20 @@ def _serialize_journal_page(page: JournalPage) -> JournalPageResponse:
                 is_reversed=item.reversed_by_transaction_id is not None,
                 reversed_by_transaction_id=item.reversed_by_transaction_id,
                 reverses_transaction_id=item.reverses_transaction_id,
+                credit_card_relation=(
+                    None
+                    if item.credit_card_relation is None
+                    else CreditCardRelationResponse(
+                        intent=item.credit_card_relation.intent,
+                        card_account_id=item.credit_card_relation.card_account_id,
+                        counter_account_id=(
+                            item.credit_card_relation.counter_account_id
+                        ),
+                        original_transaction_id=(
+                            item.credit_card_relation.original_transaction_id
+                        ),
+                    )
+                ),
             )
             for item in page.items
         ),
@@ -317,7 +351,23 @@ def _serialize_balance_snapshot(
             BalanceItemResponse(
                 account_id=item.account_id,
                 asset_code=item.asset_code,
-                units=str(item.units),
+                account_type=item.account_type.value,
+                account_subtype=item.account_subtype,
+                account_status=item.account_status,
+                raw_accounting_units=str(item.raw_accounting_units),
+                natural_units=str(item.natural_units),
+                normal_side=item.normal_side.value,
+                balance_semantics=item.balance_semantics,
+                outstanding_units=(
+                    None
+                    if item.outstanding_units is None
+                    else str(item.outstanding_units)
+                ),
+                overpayment_units=(
+                    None
+                    if item.overpayment_units is None
+                    else str(item.overpayment_units)
+                ),
             )
             for item in snapshot.items
         ),
@@ -337,12 +387,14 @@ def _serialize_reporting_lines(
                 classification_revision=line.classification_revision,
                 line_id=line.line_id,
                 line_version_id=line.line_version_id,
+                catalog_id=line.catalog_id,
                 line_position=line.line_position,
                 asset_code=line.asset_code,
                 units=str(line.units),
                 line_kind=line.line_kind,
                 dimension=line.dimension,
                 dimension_id=line.dimension_id,
+                counterparty_id=line.counterparty_id,
             )
             for line in lines
         ),

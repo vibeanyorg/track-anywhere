@@ -8,6 +8,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
+from track_anywhere.api.v2.schemas import call_application
+from track_anywhere.application.catalogs.close_account import (
+    AccountBalanceProjectionMismatch,
+)
 from track_anywhere.infrastructure.db.models.auth import CredentialRecord, UserRecord
 from track_anywhere.infrastructure.db.models.catalog import AccountRecord
 from track_anywhere.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
@@ -124,8 +128,9 @@ def test_catalog_routes_delegate_to_handlers_and_return_book_positions(
         json={
             "account_id": str(account_id),
             "asset_code": "USD",
-            "account_type": "asset",
-            "current_name": "Cash",
+            "account_type": "liability",
+            "account_subtype": "credit_card",
+            "current_name": "Card",
             "system_role": None,
         },
     )
@@ -156,9 +161,61 @@ def test_catalog_routes_delegate_to_handlers_and_return_book_positions(
         "as_of_book_position": 0,
         "status": "closed",
     }
+    reopened = client.post(
+        f"/api/v2/books/{book_id}/accounts/{account_id}/reopen",
+        headers=_headers(),
+    )
+    assert reopened.status_code == 200
+    assert reopened.json() == {
+        "account_id": str(account_id),
+        "as_of_book_position": 0,
+        "status": "active",
+    }
 
     with Session(pg_engine) as session:
-        assert session.get(AccountRecord, (book_id, account_id)).status == "closed"
+        account = session.get(AccountRecord, (book_id, account_id))
+        assert account is not None
+        assert account.status == "active"
+        assert account.account_type == "liability"
+        assert account.account_subtype == "credit_card"
+
+
+def test_catalog_account_request_fails_closed_for_type_and_subtype(pg_engine) -> None:
+    _seed_actor(pg_engine)
+    client = _catalog_client(pg_engine)
+    book_id = uuid4()
+
+    created_book = client.post(
+        "/api/v2/books",
+        headers=_headers(),
+        json={
+            "book_id": str(book_id),
+            "current_name": "Household",
+            "base_asset_code": None,
+        },
+    )
+    assert created_book.status_code == 201
+
+    for account_type, account_subtype in (
+        ("receivable", None),
+        ("ASSET", None),
+        ("liability", "Credit_Card"),
+        ("liability", "credit-card"),
+        ("asset", "credit_card"),
+    ):
+        response = client.post(
+            f"/api/v2/books/{book_id}/accounts",
+            headers=_headers(),
+            json={
+                "account_id": str(uuid4()),
+                "asset_code": "USD",
+                "account_type": account_type,
+                "account_subtype": account_subtype,
+                "current_name": "Invalid",
+                "system_role": None,
+            },
+        )
+        assert response.status_code == 422
 
 
 def test_catalog_write_requires_an_authenticated_request_actor(pg_engine) -> None:
@@ -176,3 +233,19 @@ def test_catalog_write_requires_an_authenticated_request_actor(pg_engine) -> Non
 
     assert response.status_code == 401
     assert response.json() == {"detail": "authentication is required"}
+
+
+def test_account_balance_projection_mismatch_is_an_api_conflict() -> None:
+    app = FastAPI()
+
+    @app.post("/close")
+    def close_with_corrupt_projection() -> object:
+        def fail() -> object:
+            raise AccountBalanceProjectionMismatch("projection is corrupt")
+
+        return call_application(fail)
+
+    response = TestClient(app, raise_server_exceptions=False).post("/close")
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "command conflict"}

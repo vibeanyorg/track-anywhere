@@ -7,6 +7,10 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from ...domain.credit_cards.events import (
+    CreditCardIntent,
+    CreditCardTransactionRecorded,
+)
 from ...domain.journal.events import (
     JournalTransactionPosted,
     JournalTransactionReversed,
@@ -49,8 +53,11 @@ def cold_replay_monthly_summary(
         session.scalars(statement.order_by(LedgerEventRecord.book_position))
     )
     transaction_times: dict[UUID, date] = {}
+    transaction_reporting_signs: dict[UUID, int] = {}
+    transaction_card_intents: dict[UUID, CreditCardIntent] = {}
     reporting: dict[UUID, tuple[ReportingLine, ...]] = {}
     reversals: dict[UUID, date] = {}
+    reversal_transaction_ids: set[UUID] = set()
     for record in records:
         payload = PRODUCTION_EVENT_REGISTRY.validate_stored(
             record.event_type,
@@ -59,12 +66,40 @@ def cold_replay_monthly_summary(
         )
         if type(payload) is JournalTransactionPosted:
             transaction_times[payload.transaction_id] = record.effective_at.date()
+            transaction_reporting_signs[payload.transaction_id] = 1
+        elif type(payload) is CreditCardTransactionRecorded:
+            transaction_times[payload.transaction_id] = record.effective_at.date()
+            transaction_card_intents[payload.transaction_id] = payload.intent
+            transaction_reporting_signs[payload.transaction_id] = {
+                CreditCardIntent.CHARGE: 1,
+                CreditCardIntent.FEE: 1,
+                CreditCardIntent.PAYMENT: 0,
+                CreditCardIntent.REFUND: -1,
+            }[payload.intent]
         elif type(payload) is JournalTransactionReversed:
             transaction_times[payload.reversal_transaction_id] = (
                 record.effective_at.date()
             )
             reversals[payload.reverses_transaction_id] = record.effective_at.date()
+            reversal_transaction_ids.add(payload.reversal_transaction_id)
         elif type(payload) is ReportingLinesAssigned:
+            if payload.transaction_id in reversal_transaction_ids:
+                raise ValueError(
+                    "reversal transactions cannot define independent reporting lines"
+                )
+            card_intent = transaction_card_intents.get(payload.transaction_id)
+            if card_intent is CreditCardIntent.PAYMENT:
+                raise ValueError("credit-card payments cannot have reporting lines")
+            if card_intent in {
+                CreditCardIntent.CHARGE,
+                CreditCardIntent.FEE,
+                CreditCardIntent.REFUND,
+            } and any(
+                line.line_kind.value != "expense" for line in payload.lines
+            ):
+                raise ValueError(
+                    "credit-card reporting lines must use expense semantics"
+                )
             reporting[payload.transaction_id] = payload.lines
         elif type(payload) is ReportingLinesCleared:
             reporting.pop(payload.transaction_id, None)
@@ -74,10 +109,23 @@ def cold_replay_monthly_summary(
         effective_date = transaction_times.get(transaction_id)
         if effective_date is None:
             continue
-        _add_lines(totals, month_start(effective_date), lines, sign=1)
+        reporting_sign = transaction_reporting_signs.get(transaction_id, 1)
+        if reporting_sign == 0:
+            continue
+        _add_lines(
+            totals,
+            month_start(effective_date),
+            lines,
+            sign=reporting_sign,
+        )
         reversed_at = reversals.get(transaction_id)
         if reversed_at is not None:
-            _add_lines(totals, month_start(reversed_at), lines, sign=-1)
+            _add_lines(
+                totals,
+                month_start(reversed_at),
+                lines,
+                sign=-reporting_sign,
+            )
     by_period: dict[date, list[MonthlySummaryValue]] = {}
     for (
         period,

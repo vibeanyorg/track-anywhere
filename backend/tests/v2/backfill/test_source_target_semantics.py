@@ -4,23 +4,80 @@ import copy
 import hashlib
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
 from backend.tests.v2.postgres_factory import ProvisionedDatabase
+from backend.tests.v2.backfill.credit_card_review_helpers import (
+    approved_mechanical_review,
+)
+from backend.tools.backfill_v1.credit_card_review import credit_card_transaction_scope
 from backend.tools.backfill_v1.extract import extract_canonical_rows
-from backend.tools.backfill_v1.pipeline import load_extracted_rows_to_target
+from backend.tools.backfill_v1.pipeline import (
+    load_extracted_rows_to_target as _load_extracted_rows_to_target,
+)
+from backend.tools.backfill_v1.manifest import read_manifest
 from backend.tools.backfill_v1.verify import (
     _SOURCE_COLUMNS,
-    verify_backfill,
+    verify_backfill as _verify_backfill,
     verify_target,
 )
+from track_anywhere.application.credit_cards.record import (
+    ChargeCreditCardCommand,
+    CreditCardRefundSourceInvalid,
+    RefundCreditCardCommand,
+    execute_charge_credit_card,
+    execute_refund_credit_card,
+)
+from track_anywhere.application.idempotency import CommandActor
+from track_anywhere.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
 
 
 Rows = dict[str, list[dict[str, object]]]
 Mutation = Callable[[Rows], None]
+_REVIEWS = {}
+
+
+def load_extracted_rows_to_target(
+    *,
+    target_url: str,
+    manifest,
+    rows_by_table: Rows,
+):
+    review = (
+        approved_mechanical_review(Path(), manifest=manifest, rows=rows_by_table)
+        if credit_card_transaction_scope(rows_by_table)
+        else None
+    )
+    _REVIEWS[manifest.snapshot_id] = review
+    return _load_extracted_rows_to_target(
+        target_url=target_url,
+        manifest=manifest,
+        rows_by_table=rows_by_table,
+        credit_card_review=review,
+    )
+
+
+def verify_backfill(
+    *,
+    source_url: str,
+    target_url: str,
+    manifest_path: Path,
+    output_path: Path | None = None,
+):
+    manifest = read_manifest(manifest_path)
+    return _verify_backfill(
+        source_url=source_url,
+        target_url=target_url,
+        manifest_path=manifest_path,
+        output_path=output_path,
+        credit_card_review=_REVIEWS.get(manifest.snapshot_id),
+    )
 
 
 def _rows() -> Rows:
@@ -33,16 +90,23 @@ def _rows() -> Rows:
                 "institution": None,
                 "institution_type": None,
                 "name": name,
-                "subtype": None,
+                "subtype": account_subtype,
                 "type": account_type,
                 "version": 1,
             }
-            for account_id, currency, name, account_type in (
-                ("acc-cash", "CNY", "Cash", "asset"),
-                ("acc-cash-alt", "CNY", "Other cash", "asset"),
-                ("acc-expense", "CNY", "Expense", "expense"),
-                ("acc-usdt-wallet", "USDT", "USDT wallet", "asset"),
-                ("acc-usdt-equity", "USDT", "USDT equity", "equity"),
+            for account_id, currency, name, account_type, account_subtype in (
+                ("acc-cash", "CNY", "Cash", "asset", None),
+                ("acc-cash-alt", "CNY", "Other cash", "asset", None),
+                ("acc-expense", "CNY", "Expense", "expense", None),
+                ("acc-usdt-wallet", "USDT", "USDT wallet", "asset", None),
+                ("acc-usdt-equity", "USDT", "USDT equity", "equity", None),
+                (
+                    "acc-card",
+                    "CNY",
+                    "Legacy card",
+                    "liability",
+                    "legacy_credit_card",
+                ),
             )
         ],
         "assets": [
@@ -60,7 +124,7 @@ def _rows() -> Rows:
                 "display_scale": 6,
                 "kind": "crypto",
                 "name": "Tether",
-                "scale": 8,
+                "scale": 6,
                 "status": "active",
                 "version": 1,
             },
@@ -107,6 +171,17 @@ def _rows() -> Rows:
             )
         ],
         "classification_events": [],
+        "counterparties": [
+            {
+                "counterparty_id": "counterparty-market",
+                "book_id": "book-home",
+                "slug": "market",
+                "name": "Market",
+                "kind": "merchant",
+                "status": "active",
+                "version": 1,
+            }
+        ],
         "investment_events": [],
         "investment_valuations": [],
         "ledger_books": [
@@ -170,7 +245,7 @@ def _rows() -> Rows:
                 "category_id": "cat-food",
                 "category_path_snapshot": {"primary": "Food"},
                 "category_version_id": "catv-food-1",
-                "counterparty_id": None,
+                "counterparty_id": "counterparty-market",
                 "currency": "CNY",
                 "line_id": "line-lunch",
                 "line_type": "expense",
@@ -655,6 +730,11 @@ def _category_version(rows: Rows) -> None:
     line["category_version_id"] = "catv-travel-1"
 
 
+def _counterparty(rows: Rows) -> None:
+    rows["transaction_lines"][0]["counterparty_id"] = "counterparty-other"
+    rows["counterparties"][0]["counterparty_id"] = "counterparty-other"
+
+
 def _transaction_identity(rows: Rows) -> None:
     transaction = next(
         transaction
@@ -727,6 +807,11 @@ def _classification_actor(rows: Rows) -> None:
             _category_version,
             "source_reporting_line_mismatch",
             id="category-version",
+        ),
+        pytest.param(
+            _counterparty,
+            "source_reporting_line_mismatch",
+            id="counterparty",
         ),
         pytest.param(
             _transaction_identity,
@@ -805,6 +890,305 @@ def test_source_semantics_accept_the_exact_deterministic_backfill(
         f"{issue.code} {issue.scope} {issue.detail}" for issue in report.issues
     )
     assert report.issues == ()
+
+    engine = create_engine(target.runtime_url)
+    try:
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(
+                    text(
+                        "select account_subtype from accounts "
+                        "where current_name = 'Legacy card'"
+                    )
+                )
+                == "credit_card"
+            )
+    finally:
+        engine.dispose()
+
+
+def test_full_verifier_rejects_mutated_counterparty_receipt_fields(
+    postgres_database_factory,
+    tmp_path: Path,
+) -> None:
+    source = postgres_database_factory.create(
+        purpose="receipt-fields-source", schema="empty"
+    )
+    target = postgres_database_factory.create(
+        purpose="receipt-fields-target", schema="v2"
+    )
+    rows = _rows()
+    _seed_source(source, rows)
+    manifest = extract_canonical_rows(
+        rows_by_table=rows,
+        output_dir=tmp_path / "receipt-fields-extraction",
+        dump_sha256="6" * 64,
+        source_revision="v1-synthetic",
+    )
+    manifest_path = tmp_path / "receipt-fields-extraction" / "manifest.json"
+    load_extracted_rows_to_target(
+        target_url=target.runtime_url,
+        manifest=manifest,
+        rows_by_table=rows,
+    )
+    assert (
+        verify_backfill(
+            source_url=source.runtime_url,
+            target_url=target.runtime_url,
+            manifest_path=manifest_path,
+        ).status
+        == "PASS"
+    )
+
+    engine = create_engine(target.migrator_url)
+    try:
+        with engine.connect() as connection:
+            connection.exec_driver_sql(f'SET ROLE "{target.owner_role}"')
+            original = dict(
+                connection.execute(
+                    text(
+                        "select snapshot_id, source_table, source_primary_key, "
+                        "canonical_source_key, book_id, source_hash, target_entity_id "
+                        "from backfill_source_receipts "
+                        "where source_table='counterparties'"
+                    )
+                )
+                .mappings()
+                .one()
+            )
+
+        field_mutations: tuple[tuple[str, object, str], ...] = (
+            ("canonical_source_key", "tampered-counterparty-order", "mismatch"),
+            ("book_id", None, "mismatch"),
+            ("source_hash", b"x" * 32, "mismatch"),
+            ("target_entity_id", uuid4(), "mismatch"),
+            ("source_primary_key", '["counterparty-tampered"]', "identity"),
+            ("source_table", "counterparties_tampered", "identity"),
+            ("snapshot_id", f"sha256:{'9' * 64}", "identity"),
+        )
+        for field, mutated_value, expected_shape in field_mutations:
+            with engine.begin() as connection:
+                connection.exec_driver_sql(f'SET ROLE "{target.owner_role}"')
+                connection.execute(
+                    text(
+                        f"update backfill_source_receipts set {field}=:value "
+                        "where snapshot_id=:snapshot_id "
+                        "and source_table=:source_table "
+                        "and source_primary_key=:source_primary_key"
+                    ),
+                    {
+                        "value": mutated_value,
+                        "snapshot_id": original["snapshot_id"],
+                        "source_table": original["source_table"],
+                        "source_primary_key": original["source_primary_key"],
+                    },
+                )
+
+            report = verify_backfill(
+                source_url=source.runtime_url,
+                target_url=target.runtime_url,
+                manifest_path=manifest_path,
+            )
+            assert report.status == "FAIL"
+            if expected_shape == "mismatch":
+                assert any(
+                    issue.code == "source_receipt_mismatch" and field in issue.detail
+                    for issue in report.issues
+                )
+            else:
+                assert "source_receipt_missing" in report.issue_codes
+
+            mutated_identity = {
+                "snapshot_id": (
+                    mutated_value if field == "snapshot_id" else original["snapshot_id"]
+                ),
+                "source_table": (
+                    mutated_value
+                    if field == "source_table"
+                    else original["source_table"]
+                ),
+                "source_primary_key": (
+                    mutated_value
+                    if field == "source_primary_key"
+                    else original["source_primary_key"]
+                ),
+            }
+            with engine.begin() as connection:
+                connection.exec_driver_sql(f'SET ROLE "{target.owner_role}"')
+                connection.execute(
+                    text(
+                        f"update backfill_source_receipts set {field}=:value "
+                        "where snapshot_id=:snapshot_id "
+                        "and source_table=:source_table "
+                        "and source_primary_key=:source_primary_key"
+                    ),
+                    {
+                        "value": original[field],
+                        **mutated_identity,
+                    },
+                )
+    finally:
+        engine.dispose()
+
+
+def test_credit_card_cutover_keeps_legacy_history_generic_and_new_writes_typed(
+    postgres_database_factory,
+    tmp_path: Path,
+) -> None:
+    source = postgres_database_factory.create(
+        purpose="card-cutover-source", schema="empty"
+    )
+    target = postgres_database_factory.create(
+        purpose="card-cutover-target", schema="v2"
+    )
+    rows = _rows()
+    rows["transactions"].append(
+        _transaction("txn-legacy-card", "2026-01-05T03:04:05.000000Z", "expense")
+    )
+    rows["postings"].extend(
+        (
+            _posting(
+                7,
+                "txn-legacy-card",
+                "acc-card",
+                "credit",
+                "20.00",
+                "CNY",
+                0,
+            ),
+            _posting(
+                8,
+                "txn-legacy-card",
+                "acc-expense",
+                "debit",
+                "20.00",
+                "CNY",
+                1,
+            ),
+        )
+    )
+    _seed_source(source, rows)
+    manifest = extract_canonical_rows(
+        rows_by_table=rows,
+        output_dir=tmp_path / "card-cutover-extraction",
+        dump_sha256="c" * 64,
+        source_revision="v1-synthetic",
+    )
+    load_extracted_rows_to_target(
+        target_url=target.runtime_url,
+        manifest=manifest,
+        rows_by_table=rows,
+    )
+
+    engine = create_engine(target.runtime_url)
+    factory = sessionmaker(engine, expire_on_commit=False)
+    try:
+        with engine.connect() as connection:
+            book_id, actor_subject_id = connection.execute(
+                text(
+                    "select member.book_id, member.user_id from book_members member "
+                    "order by member.book_id, member.user_id limit 1"
+                )
+            ).one()
+            card_account_id = connection.scalar(
+                text(
+                    "select account_id from accounts "
+                    "where book_id=:book_id and account_subtype='credit_card'"
+                ),
+                {"book_id": book_id},
+            )
+            expense_account_id = connection.scalar(
+                text(
+                    "select account_id from accounts "
+                    "where book_id=:book_id and current_name='Expense'"
+                ),
+                {"book_id": book_id},
+            )
+            legacy_transaction_id, legacy_event_type = connection.execute(
+                text(
+                    "select transaction.transaction_id, event.event_type "
+                    "from journal_transactions transaction "
+                    "join ledger_events event "
+                    "  on event.book_id=transaction.book_id "
+                    " and event.event_id=transaction.source_event_id "
+                    "join journal_postings posting "
+                    "  on posting.book_id=transaction.book_id "
+                    " and posting.transaction_id=transaction.transaction_id "
+                    "where transaction.book_id=:book_id "
+                    "  and posting.account_id=:card_account_id "
+                    "order by transaction.source_position desc limit 1"
+                ),
+                {"book_id": book_id, "card_account_id": card_account_id},
+            ).one()
+            assert (
+                connection.scalar(text("select count(*) from credit_card_transactions"))
+                == 0
+            )
+        assert legacy_event_type == "JournalTransactionPosted"
+        assert card_account_id is not None
+        assert expense_account_id is not None
+
+        actor = CommandActor(subject_id=actor_subject_id)
+        effective_at = datetime(2026, 1, 6, tzinfo=UTC)
+        legacy_refund = RefundCreditCardCommand(
+            book_id=book_id,
+            command_id=uuid4(),
+            transaction_id=uuid4(),
+            expected_stream_version=0,
+            card_account_id=card_account_id,
+            original_transaction_id=legacy_transaction_id,
+            asset_code="CNY",
+            amount="1.00",
+            effective_at=effective_at,
+        )
+        with pytest.raises(CreditCardRefundSourceInvalid):
+            execute_refund_credit_card(
+                legacy_refund,
+                raw_key=f"card-cutover:{legacy_refund.command_id}",
+                actor=actor,
+                uow_factory=lambda: SqlAlchemyUnitOfWork(factory),
+            )
+
+        charge = ChargeCreditCardCommand(
+            book_id=book_id,
+            command_id=uuid4(),
+            transaction_id=uuid4(),
+            expected_stream_version=0,
+            card_account_id=card_account_id,
+            expense_account_id=expense_account_id,
+            asset_code="CNY",
+            amount="10.00",
+            effective_at=effective_at,
+        )
+        execute_charge_credit_card(
+            charge,
+            raw_key=f"card-cutover:{charge.command_id}",
+            actor=actor,
+            uow_factory=lambda: SqlAlchemyUnitOfWork(factory),
+        )
+        refund = RefundCreditCardCommand(
+            book_id=book_id,
+            command_id=uuid4(),
+            transaction_id=uuid4(),
+            expected_stream_version=0,
+            card_account_id=card_account_id,
+            original_transaction_id=charge.transaction_id,
+            asset_code="CNY",
+            amount="4.00",
+            effective_at=effective_at + timedelta(minutes=1),
+        )
+        execute_refund_credit_card(
+            refund,
+            raw_key=f"card-cutover:{refund.command_id}",
+            actor=actor,
+            uow_factory=lambda: SqlAlchemyUnitOfWork(factory),
+        )
+
+        report = verify_target(target.runtime_url)
+        assert report.status == "PASS", report.issues
+        assert report.counts["credit_card_transactions"] == 2
+    finally:
+        engine.dispose()
 
 
 def test_source_semantics_accept_all_three_typed_history_contracts(

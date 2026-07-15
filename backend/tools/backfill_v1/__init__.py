@@ -2,7 +2,12 @@
 
 from .config import BackfillConfig
 from .extract import extract_canonical_rows, extract_database
-from .inventory import InventoryIssue, InventoryReport, inventory_rows
+from .inventory import (
+    InventoryIssue,
+    InventoryReport,
+    InventoryResolution,
+    inventory_rows,
+)
 from .load import (
     BackfillChangedSourceError,
     BackfillSeal,
@@ -21,6 +26,7 @@ __all__ = [
     "FrozenSourceManifest",
     "InventoryIssue",
     "InventoryReport",
+    "InventoryResolution",
     "ResumableBackfillLoader",
     "SourceLoadItem",
     "TableManifest",

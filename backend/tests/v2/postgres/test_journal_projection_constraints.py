@@ -19,6 +19,7 @@ from backend.tests.v2.postgres.test_deferred_balance_trigger import (
 
 PROJECTION_TABLES = {
     "account_balances",
+    "credit_card_transactions",
     "journal_postings",
     "journal_transactions",
     "reporting_lines",
@@ -188,6 +189,7 @@ def test_projection_relations_native_type_and_model_metadata_are_complete(
     assert all(relations.values())
     assert tuple(posting_side) == ("e", ["debit", "credit"])
     assert [tuple(row) for row in sync_event_types] == [
+        ("CreditCardTransactionRecorded", 1, 1),
         ("FinancialExternalReferenceCorrected", 1, 1),
         ("InvestmentLotAcquired", 1, 1),
         ("InvestmentLotDisposed", 1, 1),

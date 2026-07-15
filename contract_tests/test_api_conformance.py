@@ -21,7 +21,7 @@ def test_public_route_contract_matches_snapshot(
 ) -> None:
     expected = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
 
-    assert {"paths": backend_client.openapi_paths()} == expected
+    assert backend_client.openapi_paths() == expected["paths"]
     assert all(path.startswith("/api/v2/") for path in expected["paths"])
 
 
@@ -85,10 +85,24 @@ def test_post_query_classify_and_reverse_contract(
         "1234",
     ]
     assert balances.status_code == 200
-    assert sorted(item["units"] for item in balances.data["items"]) == [
+    assert sorted(item["raw_accounting_units"] for item in balances.data["items"]) == [
         "-1234",
         "1234",
     ]
+    assert sorted(item["natural_units"] for item in balances.data["items"]) == [
+        "-1234",
+        "1234",
+    ]
+    assert {item["normal_side"] for item in balances.data["items"]} == {"debit"}
+    assert {item["account_type"] for item in balances.data["items"]} == {
+        "asset",
+        "expense",
+    }
+    assert {item["account_subtype"] for item in balances.data["items"]} == {None}
+    assert all(
+        item["outstanding_units"] is None and item["overpayment_units"] is None
+        for item in balances.data["items"]
+    )
 
     classified = backend_client.post(
         f"/api/v2/books/{ledger['book_id']}/journal/transactions/"

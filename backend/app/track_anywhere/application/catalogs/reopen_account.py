@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from uuid import UUID
+
+from sqlalchemy import select
+
+from ...infrastructure.db.models.catalog import AccountRecord
+from ..idempotency import CommandActor
+from ..ledger_committer import LedgerCommitter
+from ..unit_of_work import UnitOfWork
+from ._authorization import require_catalog_write
+from .close_account import AccountUnavailable
+
+
+class AccountAlreadyActive(ValueError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ReopenAccount:
+    book_id: UUID
+    account_id: UUID
+
+    def __post_init__(self) -> None:
+        if type(self.book_id) is not UUID or type(self.account_id) is not UUID:
+            raise ValueError("account identifiers must be UUIDs")
+
+
+def reopen_account(
+    command: ReopenAccount,
+    *,
+    actor: CommandActor,
+    uow_factory: Callable[[], UnitOfWork],
+    ledger_committer: LedgerCommitter | None = None,
+) -> dict[str, object]:
+    committer = ledger_committer or LedgerCommitter()
+    with uow_factory() as uow:
+        require_catalog_write(uow.session, actor, command.book_id)
+        locked_head = committer.execute_under_book_lock(uow.session, command.book_id)
+        account = uow.session.scalar(
+            select(AccountRecord)
+            .where(
+                AccountRecord.book_id == command.book_id,
+                AccountRecord.account_id == command.account_id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if account is None:
+            raise AccountUnavailable("account not found in requested Book")
+        if account.status == "active":
+            raise AccountAlreadyActive("account is already active")
+        account.status = "active"
+        uow.session.flush()
+        return {
+            "account_id": str(command.account_id),
+            "as_of_book_position": locked_head.last_position,
+            "status": "active",
+        }
+
+
+__all__ = ["AccountAlreadyActive", "ReopenAccount", "reopen_account"]

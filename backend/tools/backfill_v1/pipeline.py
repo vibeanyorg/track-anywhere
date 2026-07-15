@@ -18,6 +18,7 @@ from track_anywhere.application.catalogs.create_account import (
     CreateAccount,
     create_account,
 )
+from track_anywhere.application.catalogs.close_account import CloseAccount, close_account
 from track_anywhere.application.catalogs.create_asset import CreateAsset, create_asset
 from track_anywhere.application.catalogs.create_book import CreateBook, create_book
 from track_anywhere.application.catalogs.create_category import (
@@ -29,12 +30,12 @@ from track_anywhere.application.event_batch import PendingEvent
 from track_anywhere.application.journal.assign_reporting_lines import (
     AssignReportingLinesCommand,
     ReportingLineInput,
-    execute_assign_reporting_lines,
+    _execute_trusted_v1_backfill_assign_reporting_lines,
 )
 from track_anywhere.application.journal.post_transaction import (
     PostTransactionCommand,
     PostTransactionPosting,
-    execute_post_transaction,
+    _execute_trusted_v1_backfill_post_transaction,
 )
 from track_anywhere.application.journal.reverse_transaction import (
     ReverseTransactionCommand,
@@ -64,6 +65,7 @@ from track_anywhere.infrastructure.db.models.auth import UserRecord
 from track_anywhere.infrastructure.db.models.backfill import (
     BackfillCheckpointRecord,
     BackfillQuarantineRecord,
+    BackfillReviewContractRecord,
     BackfillSealRecord,
     BackfillSourceReceiptRecord,
 )
@@ -107,11 +109,29 @@ from .namespaces import deterministic_uuid
 from .normalize import decimal_to_units, normalize_legacy_signed_posting
 from .quarantine import record_quarantine
 from .config import BackfillConfig, current_v2_head
+from .credit_card_review import (
+    CreditCardSemanticReview,
+    credit_card_transaction_scope,
+    read_credit_card_review,
+)
+from .reversal_links import resolve_reversal_links
 
 
 _PRIMARY_KEYS = {spec.table: spec.primary_key for spec in TABLE_SPECS}
 _TABLE_ORDER = tuple(spec.table for spec in TABLE_SPECS)
 _SOURCE_ACTOR_HASH_DOMAIN_V1 = b"track-anywhere:v2:backfill:source-actor:v1\x00"
+_USDT_V2_LEDGER_SCALE = 8
+
+
+def _target_ledger_scale(asset_code: str, source_scale: int) -> int:
+    """Derive the V2 scale without mutating the frozen V1 source fact."""
+
+    # The fixed V1 dump declares USDT at scale 6 but contains immutable
+    # 8-decimal postings. V2 promotes only the target catalog so those facts
+    # remain exact and the raw extraction/manifest hashes remain unchanged.
+    if asset_code == "USDT":
+        return max(source_scale, _USDT_V2_LEDGER_SCALE)
+    return source_scale
 
 
 class BackfillMappingError(ValueError):
@@ -186,6 +206,7 @@ def _assert_target_control_scope(
             BackfillSourceReceiptRecord,
             BackfillCheckpointRecord,
             BackfillQuarantineRecord,
+            BackfillReviewContractRecord,
             BackfillSealRecord,
         ):
             observed_snapshot_ids.update(
@@ -227,6 +248,64 @@ def _assert_target_control_scope(
             raise BackfillChangedSourceError(
                 "snapshot seal belongs to a different manifest"
             )
+
+
+def _bind_credit_card_review(
+    factory: sessionmaker[Session],
+    *,
+    snapshot_id: str,
+    manifest_hash: bytes,
+    review: CreditCardSemanticReview,
+) -> None:
+    key = (snapshot_id, "credit_card_semantics_v1")
+    with factory() as session, session.begin():
+        existing = session.get(BackfillReviewContractRecord, key)
+        expected = (
+            manifest_hash,
+            bytes.fromhex(review.content_sha256),
+            review.reviewer,
+            review.reviewed_at,
+        )
+        if existing is not None:
+            observed = (
+                existing.manifest_hash,
+                existing.review_hash,
+                existing.reviewer,
+                existing.reviewed_at,
+            )
+            if observed != expected:
+                raise BackfillChangedSourceError(
+                    "snapshot credit-card review contract is immutable"
+                )
+            return
+        has_prior_state = any(
+            session.scalar(
+                select(func.count())
+                .select_from(model)
+                .where(model.snapshot_id == snapshot_id)
+            )
+            for model in (
+                BackfillSourceReceiptRecord,
+                BackfillCheckpointRecord,
+                BackfillQuarantineRecord,
+                BackfillSealRecord,
+            )
+        )
+        if has_prior_state:
+            raise BackfillChangedSourceError(
+                "credit-card review must be bound before any snapshot write"
+            )
+        session.add(
+            BackfillReviewContractRecord(
+                snapshot_id=snapshot_id,
+                review_kind="credit_card_semantics_v1",
+                manifest_hash=manifest_hash,
+                review_hash=bytes.fromhex(review.content_sha256),
+                reviewer=review.reviewer,
+                reviewed_at=review.reviewed_at,
+            )
+        )
+        session.flush()
 
 
 def _assert_target_url_control_scope(
@@ -295,6 +374,12 @@ def _account_id(source_book_id: object, source_account_id: object) -> UUID:
 
 def _category_id(source_book_id: object, source_category_id: object) -> UUID:
     return deterministic_uuid("category", str(source_book_id), str(source_category_id))
+
+
+def _counterparty_id(source_book_id: object, source_counterparty_id: object) -> UUID:
+    return deterministic_uuid(
+        "counterparty", str(source_book_id), str(source_counterparty_id)
+    )
 
 
 def _category_version_id(
@@ -464,6 +549,7 @@ def _posting_fact(
     *,
     transaction: Mapping[str, object],
     scales: Mapping[str, int],
+    credit_card_review: CreditCardSemanticReview | None = None,
 ) -> tuple[UUID, UUID, str, PostingSide, int]:
     table = "postings"
     primary_key = _source_key(table, row)
@@ -523,6 +609,18 @@ def _posting_fact(
             "ambiguous_posting_semantics",
             "posting semantics are not recognized",
         )
+    reviewed = (
+        None
+        if credit_card_review is None
+        else credit_card_review.posting_decision(
+            book_id=source_book_id,
+            transaction_id=row["transaction_id"],
+            posting_id=row["id"],
+        )
+    )
+    if reviewed is not None:
+        side = PostingSide(reviewed.target_side)
+        account_id = _account_id(source_book_id, reviewed.target_account_id)
     if len(str(units)) > 38:
         raise BackfillMappingError(
             table, primary_key, "amount_overflow", "V2 posting units exceed NUMERIC(38)"
@@ -532,6 +630,9 @@ def _posting_fact(
 
 def _preflight_mapping(
     rows: Mapping[str, Sequence[Mapping[str, object]]],
+    *,
+    reversal_links: Mapping[str, str],
+    credit_card_review: CreditCardSemanticReview | None = None,
 ) -> None:
     for table in ("investment_valuations",):
         if rows.get(table):
@@ -610,13 +711,31 @@ def _preflight_mapping(
                 "invalid_asset",
                 "asset display scale",
             )
-        scales[code] = scale
+        scales[code] = _target_ledger_scale(code, scale)
 
     for row in rows.get("accounts", ()):
         require_nonblank("accounts", row, "account_id")
         require_nonblank("accounts", row, "name")
         require_nonblank("accounts", row, "type")
         require_nonblank("accounts", row, "currency")
+    for row in rows.get("counterparties", ()):
+        for field in (
+            "counterparty_id",
+            "book_id",
+            "slug",
+            "name",
+            "kind",
+            "status",
+        ):
+            require_nonblank("counterparties", row, field)
+        version = row.get("version")
+        if type(version) is not int or version < 1:
+            raise BackfillMappingError(
+                "counterparties",
+                _source_key("counterparties", row),
+                "invalid_catalog_value",
+                "counterparty source version must be positive",
+            )
     for row in rows.get("categories", ()):
         require_nonblank("categories", row, "category_id")
         require_nonblank("categories", row, "name")
@@ -643,6 +762,12 @@ def _preflight_mapping(
         postings[str(row["transaction_id"])].append(row)
     for row in rows.get("transaction_lines", ()):
         lines[str(row["transaction_id"])].append(row)
+    credit_card_account_ids = {
+        str(row["account_id"])
+        for row in rows.get("accounts", ())
+        if str(row.get("type")) == "liability"
+        and str(row.get("subtype")) in {"credit_card", "legacy_credit_card"}
+    }
 
     source_line_ids = {
         (str(row["transaction_id"]), str(row["line_id"]))
@@ -881,7 +1006,12 @@ def _preflight_mapping(
                 "transaction has fewer than two postings",
             )
         facts = [
-            _posting_fact(row, transaction=transaction, scales=scales)
+            _posting_fact(
+                row,
+                transaction=transaction,
+                scales=scales,
+                credit_card_review=credit_card_review,
+            )
             for row in transaction_postings
         ]
         sums: dict[str, dict[PostingSide, int]] = defaultdict(
@@ -904,8 +1034,18 @@ def _preflight_mapping(
         allocated: dict[str, int] = defaultdict(int)
         for line in lines.get(transaction_id, []):
             key = _source_key("transaction_lines", line)
+            source_counterparty_id = line.get("counterparty_id")
+            if source_counterparty_id is not None and (
+                type(source_counterparty_id) is not str
+                or not source_counterparty_id.strip()
+            ):
+                raise BackfillMappingError(
+                    "transaction_lines",
+                    key,
+                    "invalid_catalog_value",
+                    "counterparty_id must be null or nonblank",
+                )
             for field, supported_value in (
-                ("counterparty_id", None),
                 ("project_id", None),
                 ("necessity", "unknown"),
                 ("reimbursement_status", "none"),
@@ -926,6 +1066,16 @@ def _preflight_mapping(
                     key,
                     "unsupported_reporting_dimension",
                     "V2 backfill requires a category or category-version identity",
+                )
+            if (
+                source_counterparty_id is not None
+                and _historical_reporting_line_kind(line) is not None
+            ):
+                raise BackfillMappingError(
+                    "transaction_lines",
+                    key,
+                    "unsupported_reporting_metadata",
+                    "historical non-category counterparty metadata has no V2 mapping",
                 )
             code = str(line.get("currency", ""))
             if code not in scales:
@@ -956,7 +1106,7 @@ def _preflight_mapping(
             )
 
     for transaction_id, transaction in transactions.items():
-        original_id = transaction.get("reverses_transaction_id")
+        original_id = reversal_links.get(transaction_id)
         if original_id is None:
             continue
         original = normalized_by_transaction.get(str(original_id))
@@ -969,7 +1119,14 @@ def _preflight_mapping(
                 "reversal postings do not match their source",
             )
         original_row = transactions[str(original_id)]
-        if _parse_time(
+        touches_credit_card = any(
+            str(posting.get("account_id")) in credit_card_account_ids
+            for posting in (
+                *postings.get(transaction_id, ()),
+                *postings.get(str(original_id), ()),
+            )
+        )
+        if touches_credit_card and _parse_time(
             transaction["occurred_at"],
             table="transactions",
             primary_key=_source_key("transactions", transaction),
@@ -1008,6 +1165,8 @@ def _preflight_mapping(
 
 def _aggregate_schedule(
     rows: Mapping[str, Sequence[Mapping[str, object]]],
+    *,
+    reversal_links: Mapping[str, str],
 ) -> tuple[_ScheduledAggregate, ...]:
     NodeId = tuple[str, int, str]
     nodes: dict[NodeId, tuple[str, Mapping[str, object], datetime, bytes]] = {}
@@ -1031,7 +1190,7 @@ def _aggregate_schedule(
             source_id.encode("utf-8"),
         )
     for row in rows["transactions"]:
-        original = row.get("reverses_transaction_id")
+        original = reversal_links.get(str(row["transaction_id"]))
         if original is not None:
             node_id = (str(row["book_id"]), 0, str(row["transaction_id"]))
             dependencies[node_id].add(
@@ -1139,8 +1298,18 @@ def load_extracted_rows_to_target(
     target_url: str,
     manifest: FrozenSourceManifest,
     rows_by_table: Mapping[str, Sequence[Mapping[str, object]]],
+    credit_card_review: CreditCardSemanticReview | None = None,
 ) -> BackfillPipelineResult:
     rows = {table: tuple(rows_by_table.get(table, ())) for table in _TABLE_ORDER}
+    card_scope = credit_card_transaction_scope(rows)
+    if card_scope and credit_card_review is None:
+        raise ValueError(
+            "credit-card semantic review is required before loading this snapshot"
+        )
+    if credit_card_review is not None and not card_scope:
+        raise ValueError(
+            "credit-card semantic review was supplied for a snapshot without cards"
+        )
     manifest_hash_hex = manifest.content_sha256 or manifest.calculated_content_sha256()
     manifest_hash = bytes.fromhex(manifest_hash_hex)
     snapshot_id = manifest.snapshot_id or f"sha256:{manifest_hash_hex}"
@@ -1162,7 +1331,14 @@ def load_extracted_rows_to_target(
             issue.code,
             issue.relation,
         )
-    _preflight_mapping(rows)
+    reversal_links = dict(
+        resolve_reversal_links(rows["transactions"], rows["postings"]).links
+    )
+    _preflight_mapping(
+        rows,
+        reversal_links=reversal_links,
+        credit_card_review=credit_card_review,
+    )
 
     actor = CommandActor(subject_id=f"backfill:{manifest_hash_hex[:32]}")
     engine = create_engine(target_url, pool_pre_ping=True)
@@ -1172,6 +1348,13 @@ def load_extracted_rows_to_target(
         snapshot_id=snapshot_id,
         manifest_hash=manifest_hash,
     )
+    if credit_card_review is not None:
+        _bind_credit_card_review(
+            factory,
+            snapshot_id=snapshot_id,
+            manifest_hash=manifest_hash,
+            review=credit_card_review,
+        )
     totals = {"applied": 0, "replayed": 0}
 
     def collect(result: LoadResult) -> None:
@@ -1223,6 +1406,28 @@ def load_extracted_rows_to_target(
             )
         )
 
+        def apply_counterparty(session: Session, item: SourceLoadItem) -> None:
+            row = item.payload
+            if session.get(BookRecord, _book_id(row["book_id"])) is None:
+                raise BackfillRunBlocked(
+                    "counterparty source receipt has no imported Book"
+                )
+
+        collect(
+            loader(apply_counterparty).load(
+                tuple(
+                    _item(
+                        "counterparties",
+                        row,
+                        target_id=_counterparty_id(
+                            row["book_id"], row["counterparty_id"]
+                        ),
+                    )
+                    for row in rows["counterparties"]
+                )
+            )
+        )
+
         first_book = min(
             (_book_id(row["book_id"]) for row in rows["ledger_books"]),
             key=str,
@@ -1233,14 +1438,15 @@ def load_extracted_rows_to_target(
             if first_book is None:
                 raise BackfillRunBlocked("assets cannot be imported without a Book")
             row = item.payload
-            scale = int(row["scale"])
+            asset_code = str(row["asset_code"])
+            scale = _target_ledger_scale(asset_code, int(row["scale"]))
             create_asset(
                 CreateAsset(
                     book_id=first_book,
-                    asset_code=str(row["asset_code"]),
+                    asset_code=asset_code,
                     kind=str(row["kind"]),
                     ledger_scale=scale,
-                    input_scale=scale,
+                    input_scale=min(6, scale) if asset_code == "USDT" else scale,
                     display_scale=int(row["display_scale"]),
                     current_name=str(row["name"]),
                 ),
@@ -1277,7 +1483,7 @@ def load_extracted_rows_to_target(
             source_book_id = str(transaction["book_id"])
             transaction_postings = source_postings_by_transaction[source_transaction_id]
             if (
-                transaction.get("reverses_transaction_id") is not None
+                source_transaction_id in reversal_links
                 or len(transaction_postings) != 4
                 or not any(
                     _historical_reporting_line_kind(line)
@@ -1352,12 +1558,21 @@ def load_extracted_rows_to_target(
 
         def apply_account(session: Session, item: SourceLoadItem) -> None:
             row = item.payload
+            source_subtype = row.get("subtype")
+            account_subtype = (
+                None
+                if source_subtype is None or not str(source_subtype).strip()
+                else str(source_subtype).strip()
+            )
+            if account_subtype == "legacy_credit_card":
+                account_subtype = "credit_card"
             create_account(
                 CreateAccount(
                     book_id=_book_id(row["book_id"]),
                     account_id=_account_id(row["book_id"], row["account_id"]),
                     asset_code=str(row["currency"]),
                     account_type=str(row["type"]),
+                    account_subtype=account_subtype,
                     current_name=str(row["name"]),
                     system_role=(
                         "fx_trading"
@@ -1539,7 +1754,12 @@ def load_extracted_rows_to_target(
             )
         )
 
-        scales = {str(row["asset_code"]): int(row["scale"]) for row in rows["assets"]}
+        scales = {
+            str(row["asset_code"]): _target_ledger_scale(
+                str(row["asset_code"]), int(row["scale"])
+            )
+            for row in rows["assets"]
+        }
         postings_by_transaction: dict[str, list[Mapping[str, object]]] = defaultdict(
             list
         )
@@ -1549,7 +1769,7 @@ def load_extracted_rows_to_target(
         for row in rows["transaction_lines"]:
             lines_by_transaction[str(row["transaction_id"])].append(row)
 
-        aggregate_schedule = _aggregate_schedule(rows)
+        aggregate_schedule = _aggregate_schedule(rows, reversal_links=reversal_links)
         scheduled_transactions = tuple(
             aggregate
             for aggregate in aggregate_schedule
@@ -1601,6 +1821,13 @@ def load_extracted_rows_to_target(
             sequence = scheduled_transaction.rank
             transaction = scheduled_transaction.row
             source_transaction_id = str(transaction["transaction_id"])
+            credit_card_decision = (
+                None
+                if credit_card_review is None
+                else credit_card_review.transaction_index.get(
+                    (str(transaction["book_id"]), source_transaction_id)
+                )
+            )
             transaction_postings = sorted(
                 postings_by_transaction[source_transaction_id],
                 key=lambda value: (int(value["position"]), str(value["id"])),
@@ -1667,6 +1894,7 @@ def load_extracted_rows_to_target(
                 category_lines=category_lines,
                 historical_reporting_lines=historical_reporting_lines,
                 source_transaction_id=source_transaction_id,
+                credit_card_decision=credit_card_decision,
             ) -> None:
                 book_id = _book_id(transaction["book_id"])
                 target_transaction_id = _transaction_id(
@@ -1683,7 +1911,10 @@ def load_extracted_rows_to_target(
                 def borrowed() -> _BorrowedUnitOfWork:
                     return _BorrowedUnitOfWork(session)
 
-                if transaction.get("reverses_transaction_id") is None:
+                original_source_transaction_id = reversal_links.get(
+                    source_transaction_id
+                )
+                if original_source_transaction_id is None:
                     if source_transaction_id in pure_fx_transaction_ids:
                         posting_facts: list[JournalPostingFact] = []
                         for position, posting in enumerate(transaction_postings):
@@ -1692,6 +1923,7 @@ def load_extracted_rows_to_target(
                                     posting,
                                     transaction=transaction,
                                     scales=scales,
+                                    credit_card_review=credit_card_review,
                                 )
                             )
                             posting_facts.append(
@@ -1744,6 +1976,7 @@ def load_extracted_rows_to_target(
                                     posting,
                                     transaction=transaction,
                                     scales=scales,
+                                    credit_card_review=credit_card_review,
                                 )
                             )
                             posting_inputs.append(
@@ -1762,7 +1995,7 @@ def load_extracted_rows_to_target(
                             source_transaction_id,
                             "journal.post",
                         )
-                        execute_post_transaction(
+                        _execute_trusted_v1_backfill_post_transaction(
                             PostTransactionCommand(
                                 book_id=book_id,
                                 command_id=command_id,
@@ -1796,7 +2029,7 @@ def load_extracted_rows_to_target(
                             reverses_transaction_id=_transaction_id(
                                 snapshot_id,
                                 transaction["book_id"],
-                                transaction["reverses_transaction_id"],
+                                original_source_transaction_id,
                             ),
                             expected_stream_version=0,
                             reason_code=ReversalReasonCode.IMPORT_CORRECTION,
@@ -1899,6 +2132,14 @@ def load_extracted_rows_to_target(
                                 dimension_id=_category_id(
                                     transaction["book_id"], source_category_id
                                 ),
+                                counterparty_id=(
+                                    None
+                                    if line.get("counterparty_id") is None
+                                    else _counterparty_id(
+                                        transaction["book_id"],
+                                        line["counterparty_id"],
+                                    )
+                                ),
                             )
                         )
                     reporting_command_id = deterministic_uuid(
@@ -1908,7 +2149,7 @@ def load_extracted_rows_to_target(
                         source_transaction_id,
                         "reporting.assign",
                     )
-                    execute_assign_reporting_lines(
+                    _execute_trusted_v1_backfill_assign_reporting_lines(
                         AssignReportingLinesCommand(
                             book_id=book_id,
                             command_id=reporting_command_id,
@@ -1984,6 +2225,43 @@ def load_extracted_rows_to_target(
                             causation_event_id=parent_journal_event_id,
                             effective_at=effective_at,
                         ),
+                    )
+
+                if (
+                    credit_card_decision is not None
+                    and credit_card_decision.post_import_action == "exact_reversal"
+                ):
+                    semantic_reversal_id = deterministic_uuid(
+                        "transaction",
+                        snapshot_id,
+                        str(transaction["book_id"]),
+                        source_transaction_id,
+                        "credit-card-semantic-neutralization",
+                    )
+                    semantic_command_id = deterministic_uuid(
+                        "command",
+                        snapshot_id,
+                        str(transaction["book_id"]),
+                        source_transaction_id,
+                        "credit-card-semantic-neutralization",
+                    )
+                    execute_reverse_transaction(
+                        ReverseTransactionCommand(
+                            book_id=book_id,
+                            command_id=semantic_command_id,
+                            reversal_transaction_id=semantic_reversal_id,
+                            reverses_transaction_id=target_transaction_id,
+                            expected_stream_version=0,
+                            reason_code=ReversalReasonCode.IMPORT_CORRECTION,
+                            effective_at=effective_at,
+                        ),
+                        raw_key=(
+                            f"backfill:{snapshot_id}:credit-card-neutralize:"
+                            f"{source_transaction_id}"
+                        ),
+                        actor=actor,
+                        uow_factory=borrowed,
+                        max_attempts=1,
                     )
 
             def run_transaction_load(
@@ -2096,6 +2374,7 @@ def load_extracted_rows_to_target(
                             line_kind=ReportingLineKind(projected.line_kind),
                             dimension=ReportingDimension(projected.dimension),
                             dimension_id=dimension_id,
+                            counterparty_id=projected.counterparty_id,
                             description_ref=projected.description_ref,
                         )
                     )
@@ -2110,7 +2389,7 @@ def load_extracted_rows_to_target(
                     source_event_id,
                     "reporting.reclassify",
                 )
-                execute_assign_reporting_lines(
+                _execute_trusted_v1_backfill_assign_reporting_lines(
                     AssignReportingLinesCommand(
                         book_id=book_id,
                         command_id=reporting_command_id,
@@ -2342,6 +2621,22 @@ def load_extracted_rows_to_target(
         ):
             run_scheduled_load()
 
+        if credit_card_review is not None:
+            for decision in credit_card_review.accounts:
+                with factory() as session, session.begin():
+                    close_account(
+                        CloseAccount(
+                            book_id=_book_id(decision.book_id),
+                            account_id=_account_id(
+                                decision.book_id, decision.source_account_id
+                            ),
+                        ),
+                        actor=actor,
+                        uow_factory=lambda session=session: _BorrowedUnitOfWork(
+                            session
+                        ),
+                    )
+
         # Valuation rows cannot be represented without changing their meaning;
         # preflight blocks any non-empty source instead of receipting a no-op.
         if rows["investment_valuations"]:
@@ -2364,8 +2659,6 @@ def load_extracted_rows_to_target(
                     if str(source_asset.get("status", "active")) == "active"
                     else "disabled"
                 )
-                if asset.asset_code == "USDT":
-                    asset.input_scale = min(6, asset.ledger_scale)
             for source_category in rows["categories"]:
                 category = session.get(
                     CategoryRecord,
@@ -2445,6 +2738,7 @@ def run_backfill(
     batch_size: int,
     workers: int,
     shuffle_seed: int,
+    credit_card_review_path: Path | None = None,
 ) -> BackfillPipelineResult:
     output_dir = Path(output_dir)
     extraction_dir = output_dir / "extraction"
@@ -2509,11 +2803,21 @@ def run_backfill(
         )
     if frozen.tables and extracted_manifest.to_dict() != frozen.to_dict():
         raise ValueError("canonical extraction does not match the frozen manifest")
+    credit_card_review = (
+        None
+        if credit_card_review_path is None
+        else read_credit_card_review(
+            credit_card_review_path,
+            manifest=extracted_manifest,
+            rows_by_table=rows,
+        )
+    )
     try:
         result = load_extracted_rows_to_target(
             target_url=target_url,
             manifest=extracted_manifest,
             rows_by_table=rows,
+            credit_card_review=credit_card_review,
         )
     except BackfillMappingError as error:
         _record_blocker(

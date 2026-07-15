@@ -57,10 +57,10 @@ uv run ta --help
 ```
 
 Implemented V2 operations cover Books, assets, accounts, categories, exact
-journal posting, reversal/correction, classification, FX, investment lots,
-balances, and journal/reporting queries. Every financial write requires a
-stable idempotency key and sends amounts as decimal strings; the ledger stores
-integer units at the asset's fixed scale.
+journal posting, typed credit-card charge/payment/refund/fee, reversal,
+classification, FX, investment lots, balances, and journal/reporting queries.
+Every financial write requires a stable idempotency key and sends amounts as
+decimal strings; the ledger stores integer units at the asset's fixed scale.
 
 Examples:
 
@@ -69,10 +69,27 @@ uv run ta auth login --agent
 uv run ta book create --help
 uv run ta asset create --help
 uv run ta account create --help
+uv run ta account reopen --help
 uv run ta tx record --help
 uv run ta tx list --help
 uv run ta book balances --help
+uv run ta card charge --help
+uv run ta card payment --help
+uv run ta card refund --help
+uv run ta card fee --help
 ```
+
+Credit-card accounts are strict liabilities and are created explicitly:
+
+```bash
+uv run ta account create <book_id> <account_id> \
+  --asset-code USD --type liability --account-subtype credit_card \
+  --name "Primary card" --json
+```
+
+Card commands accept only a positive business amount. They choose the canonical
+debit/credit legs server-side; callers cannot submit posting sides through this
+surface.
 
 Draft capture, recurring rules, payment-profile helpers, attachments,
 client-side backup/restore, and broad search are not compatibility-backed V2

@@ -1,3 +1,31 @@
+export function resolvePublicOrigin(sourceHeaders, fallbackOrigin) {
+  const headers = new Headers(sourceHeaders);
+  const fallback = new URL(fallbackOrigin);
+  const forwardedHost = firstHeaderValue(headers.get("x-forwarded-host"));
+  const host = forwardedHost ?? firstHeaderValue(headers.get("host"));
+  const forwardedProto = firstHeaderValue(headers.get("x-forwarded-proto"));
+  const protocol = forwardedProto ?? fallback.protocol.replace(":", "");
+
+  if (!host || (protocol !== "http" && protocol !== "https")) {
+    return fallback.origin;
+  }
+  try {
+    const resolved = new URL(`${protocol}://${host}`);
+    if (
+      resolved.username ||
+      resolved.password ||
+      resolved.pathname !== "/" ||
+      resolved.search ||
+      resolved.hash
+    ) {
+      return fallback.origin;
+    }
+    return resolved.origin;
+  } catch {
+    return fallback.origin;
+  }
+}
+
 export function normalizeSameSiteRequestHeaders(
   sourceHeaders,
   publicOrigin,
@@ -102,4 +130,9 @@ function safeUrl(value) {
   } catch {
     return null;
   }
+}
+
+function firstHeaderValue(value) {
+  const first = value?.split(",", 1)[0]?.trim();
+  return first || null;
 }

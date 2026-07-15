@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   normalizeSameSiteRequestHeaders,
+  resolvePublicOrigin,
   rewriteUpstreamJsonUrls,
   rewriteUpstreamLocation
 } from "../../../lib/proxy-origin.mjs";
@@ -46,6 +47,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
   const { path } = await context.params;
   const target = new URL(`/api/v2/${path.map(encodeURIComponent).join("/")}`, backendUrl);
   target.search = request.nextUrl.search;
+  const publicOrigin = resolvePublicOrigin(request.headers, request.nextUrl.origin);
 
   const forwardedHeaders = new Headers();
   request.headers.forEach((value, key) => {
@@ -55,7 +57,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
   });
   const headers = normalizeSameSiteRequestHeaders(
     forwardedHeaders,
-    request.nextUrl.origin,
+    publicOrigin,
     target.origin
   );
   headers.set("x-forwarded-host", request.headers.get("host") ?? "");
@@ -81,7 +83,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
   });
   responseHeaders = rewriteUpstreamLocation(
     responseHeaders,
-    request.nextUrl.origin,
+    publicOrigin,
     target.origin
   );
 
@@ -92,7 +94,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
     body = contentType.toLowerCase().includes("application/json")
       ? rewriteUpstreamJsonUrls(
           new TextDecoder().decode(rawBody),
-          request.nextUrl.origin,
+          publicOrigin,
           target.origin
         )
       : rawBody;

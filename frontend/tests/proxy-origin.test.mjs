@@ -3,12 +3,34 @@ import test from "node:test";
 
 import {
   normalizeSameSiteRequestHeaders,
+  resolvePublicOrigin,
   rewriteUpstreamJsonUrls,
   rewriteUpstreamLocation
 } from "../app/lib/proxy-origin.mjs";
 
 const publicOrigin = "https://ledger.example.com";
 const upstreamOrigin = "http://api:8000";
+
+test("resolves the browser-facing origin from proxy request headers", () => {
+  assert.equal(
+    resolvePublicOrigin(
+      { host: "127.0.0.1:13000" },
+      "http://localhost:3000"
+    ),
+    "http://127.0.0.1:13000"
+  );
+  assert.equal(
+    resolvePublicOrigin(
+      {
+        host: "next:3000",
+        "x-forwarded-host": "ledger.example.com",
+        "x-forwarded-proto": "https"
+      },
+      "http://next:3000"
+    ),
+    "https://ledger.example.com"
+  );
+});
 
 test("normalizes only same-site Origin and Referer for the trusted upstream", () => {
   const normalized = normalizeSameSiteRequestHeaders(

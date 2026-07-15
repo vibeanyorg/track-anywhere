@@ -107,13 +107,17 @@ def _register_assets(root: click.Group) -> None:
 def _register_accounts(root: click.Group) -> None:
     @root.group()
     def account() -> None:
-        """Create and close V2 accounts."""
+        """Create, close, and reopen V2 accounts."""
 
     @account.command("create")
     @click.argument("book_id")
     @click.argument("account_id")
     @click.option("--asset-code", required=True)
     @click.option("--type", "account_type", required=True)
+    @click.option(
+        "--account-subtype",
+        help="Optional lowercase subtype slug, for example credit_card.",
+    )
     @click.option("--name", required=True)
     @click.option("--system-role")
     @output_options
@@ -145,6 +149,23 @@ def _register_accounts(root: click.Group) -> None:
             account_id=account_id,
         )
         return run_api(args, state=state, command_path="account.close")
+
+    @account.command("reopen")
+    @click.argument("book_id")
+    @click.argument("account_id")
+    @output_options
+    @pass_state
+    def reopen_account(state, json_mode, no_color, book_id, account_id):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="account",
+            account_command="reopen",
+            book_id=book_id,
+            account_id=account_id,
+        )
+        return run_api(args, state=state, command_path="account.reopen")
 
 
 def _register_categories(root: click.Group) -> None:

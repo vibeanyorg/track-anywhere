@@ -316,12 +316,14 @@ historical-code exclusion allowed by the post-retirement scan.
 | retain | `cli/track_anywhere_cli/click_auth.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/click_catalog.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/click_common.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
+| retain | `cli/track_anywhere_cli/click_credit_card.py` | [typed credit-card CLI contract](../../cli/tests/test_cli_v2_credit_cards.py) | V2 semantic credit-card commands expose business intent without caller-selected posting sides. |
 | retain | `cli/track_anywhere_cli/click_investment.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/click_ledger.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/click_payment.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/click_recurring.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/click_system.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/command_catalog.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
+| retain | `cli/track_anywhere_cli/command_credit_card.py` | [typed credit-card CLI contract](../../cli/tests/test_cli_v2_credit_cards.py) | V2 semantic credit-card request adapter with strict idempotent routes. |
 | retain | `cli/track_anywhere_cli/command_investment.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/command_ledger.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/command_payment.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
@@ -346,6 +348,7 @@ historical-code exclusion allowed by the post-retirement scan.
 | retain | `cli/track_anywhere_cli/release_version.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/renderers.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
 | retain | `cli/track_anywhere_cli/runtime.py` | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Task 23 V2-only CLI utility; unsupported V1 capabilities fail before HTTP. |
+| retain | `cli/track_anywhere_cli/structured_inputs.py` | [typed credit-card CLI contract](../../cli/tests/test_cli_v2_credit_cards.py) | Shared strict parser for V2 account subtype and external-reference inputs. |
 | rewrite | `conftest.py` | [V2 PostgreSQL test boundary](../../backend/tests/v2/conftest.py) | Remove the root SQLite default before V1 deletion. |
 | rewrite | `contract_tests/api_clients.py` | [V2 contract tests](../../contract_tests/test_api_conformance.py) | Retain only V2 FastAPI client behavior and no SQLite fallback. |
 | rewrite | `contract_tests/conftest.py` | [V2 contract client](../../contract_tests/api_clients.py) | Retain only isolated PG17 V2 fixture composition. |

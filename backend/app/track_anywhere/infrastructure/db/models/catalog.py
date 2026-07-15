@@ -104,7 +104,20 @@ class AccountRecord(V2Base):
             "asset_code",
             name="uq_accounts_book_account_asset",
         ),
-        CheckConstraint("btrim(account_type) <> ''", name="account_type_nonblank"),
+        CheckConstraint(
+            "account_type in "
+            "('asset','liability','equity','income','expense','fund','system')",
+            name="account_type_valid",
+        ),
+        CheckConstraint(
+            "account_subtype is null or account_subtype ~ "
+            "'^[a-z][a-z0-9]*(_[a-z0-9]+)*$'",
+            name="account_subtype_valid",
+        ),
+        CheckConstraint(
+            "account_subtype <> 'credit_card' or account_type = 'liability'",
+            name="credit_card_type_valid",
+        ),
         CheckConstraint(
             "system_role is null or btrim(system_role) <> ''",
             name="system_role_nonblank",
@@ -125,6 +138,7 @@ class AccountRecord(V2Base):
     account_id: Mapped[UUID] = mapped_column(primary_key=True)
     asset_code: Mapped[str] = mapped_column(String(16))
     account_type: Mapped[str] = mapped_column(String(32))
+    account_subtype: Mapped[str | None] = mapped_column(String(64), nullable=True)
     system_role: Mapped[str | None] = mapped_column(String(32), nullable=True)
     current_name: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16))

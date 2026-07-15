@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 from .config import CliConfig
 from .http import with_query
+from .structured_inputs import validate_account_semantics
 
 
 Requester = Callable[
@@ -40,7 +41,7 @@ def infer_catalog_command_path(args: Namespace) -> str | None:
         return f"book.{subcommand.replace('-', '_')}"
     if command == "asset" and subcommand == "create":
         return "asset.create"
-    if command == "account" and subcommand in {"create", "close"}:
+    if command == "account" and subcommand in {"create", "close", "reopen"}:
         return f"account.{subcommand}"
     if command == "category" and subcommand == "create":
         return "category.create"
@@ -89,11 +90,18 @@ def request_create_account(
     config: CliConfig,
     requester: Requester,
 ) -> tuple[int, Any]:
+    account_subtype = getattr(args, "account_subtype", None)
+    try:
+        validate_account_semantics(args.account_type, account_subtype)
+    except ValueError as error:
+        return _invalid_input(error)
+
     payload = compact_payload(
         {
             "account_id": args.account_id,
             "asset_code": args.asset_code,
             "account_type": args.account_type,
+            "account_subtype": account_subtype,
             "current_name": args.name,
             "system_role": args.system_role,
         }
@@ -118,6 +126,23 @@ def request_close_account(
         (
             f"/api/v2/books/{_path(args.book_id)}/accounts/"
             f"{_path(args.account_id)}/close"
+        ),
+        None,
+        None,
+    )
+
+
+def request_reopen_account(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    return requester(
+        config,
+        "POST",
+        (
+            f"/api/v2/books/{_path(args.book_id)}/accounts/"
+            f"{_path(args.account_id)}/reopen"
         ),
         None,
         None,
@@ -175,11 +200,24 @@ def _path(value: object) -> str:
     return quote(str(value), safe="")
 
 
+def _invalid_input(error: ValueError) -> tuple[int, dict[str, Any]]:
+    return 422, {
+        "detail": str(error),
+        "error": {
+            "code": "invalid_v2_cli_input",
+            "category": "validation",
+            "message": str(error),
+            "retryable": False,
+        },
+    }
+
+
 CATALOG_COMMAND_HANDLERS: dict[str, CommandHandler] = {
     "book.create": request_create_book,
     "asset.create": request_create_asset,
     "account.create": request_create_account,
     "account.close": request_close_account,
+    "account.reopen": request_reopen_account,
     "category.create": request_create_category,
     "book.balances": request_book_balances,
     "book.reporting_lines": request_book_reporting_lines,

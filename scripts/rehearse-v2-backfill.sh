@@ -9,13 +9,14 @@ COMPOSE=(docker compose -p track-anywhere-v2-test -f "$ROOT_DIR/compose.e2e.yaml
 DUMP_PATH=""
 MANIFEST_PATH=""
 OUTPUT_ROOT=""
+CREDIT_CARD_REVIEW_PATH=""
 
 usage() {
-  echo "usage: rehearse-v2-backfill.sh --dump PATH --manifest PATH --output-root DIR" >&2
+  echo "usage: rehearse-v2-backfill.sh --dump PATH --manifest PATH --credit-card-review PATH --output-root DIR" >&2
   exit 2
 }
 
-if (($# != 6)); then
+if (($# != 8)); then
   usage
 fi
 while (($#)); do
@@ -35,12 +36,18 @@ while (($#)); do
       OUTPUT_ROOT="$2"
       shift 2
       ;;
+    --credit-card-review)
+      [[ -z "$CREDIT_CARD_REVIEW_PATH" ]] || usage
+      CREDIT_CARD_REVIEW_PATH="$2"
+      shift 2
+      ;;
     *) usage ;;
   esac
 done
 
 [[ -f "$DUMP_PATH" ]] || { echo "frozen dump is not a regular file" >&2; exit 2; }
 [[ -f "$MANIFEST_PATH" ]] || { echo "frozen manifest is not a regular file" >&2; exit 2; }
+[[ -f "$CREDIT_CARD_REVIEW_PATH" ]] || { echo "credit-card review is not a regular file" >&2; exit 2; }
 [[ ! -e "$OUTPUT_ROOT" ]] || { echo "output root already exists" >&2; exit 2; }
 
 SOURCE_URL=""
@@ -98,6 +105,7 @@ done
 
 SOURCE_URL="$("${FACTORY[@]}" create --purpose backfill_source --schema empty --emit-role migrator)"
 SOURCE_OWNER="$("${FACTORY[@]}" role-name --kind owner)"
+MIGRATOR_ROLE="$("${FACTORY[@]}" role-name --kind migrator)"
 SOURCE_LIBPQ_URL="$("${FACTORY[@]}" libpq-url --url "$SOURCE_URL" --host postgres --port 5432)"
 TRACK_ANYWHERE_LIBPQ_URL="$SOURCE_LIBPQ_URL" uv run python - <<'PY'
 import os
@@ -114,13 +122,16 @@ PY
   --no-owner \
   --no-acl \
   --role "$SOURCE_OWNER" < "$DUMP_PATH"
+"$PG17_CLIENT" psql \
+  --dbname "$SOURCE_LIBPQ_URL" \
+  --set ON_ERROR_STOP=1 \
+  --command "set role \"$SOURCE_OWNER\"; grant usage on schema public to \"$MIGRATOR_ROLE\"; grant select on all tables in schema public to \"$MIGRATOR_ROLE\";"
 unset SOURCE_LIBPQ_URL
 
 SOURCE_READ_ONLY_URL="$("${FACTORY[@]}" read-only-url --url "$SOURCE_URL")"
 TARGET_A_URL="$("${FACTORY[@]}" create --purpose backfill_target_a --schema v2 --emit-role runtime)"
 TARGET_B_URL="$("${FACTORY[@]}" create --purpose backfill_target_b --schema v2 --emit-role runtime)"
 RUNTIME_ROLE="$("${FACTORY[@]}" role-name --kind runtime)"
-MIGRATOR_ROLE="$("${FACTORY[@]}" role-name --kind migrator)"
 
 for target_variable in TARGET_A_URL TARGET_B_URL; do
   TRACK_ANYWHERE_TARGET_URL="${!target_variable}" uv run python - <<'PY'
@@ -177,26 +188,53 @@ uv run python -m backend.tools.backfill_v1 run \
   --target-url "$TARGET_A_URL" \
   --dump "$DUMP_PATH" \
   --manifest "$MANIFEST_PATH" \
+  --credit-card-review "$CREDIT_CARD_REVIEW_PATH" \
   --batch-size 37 \
   --workers 1 \
   --shuffle-seed 0 \
   --output-dir "$OUTPUT_ROOT/run-a"
+
+RUN_A_MANIFEST="$OUTPUT_ROOT/run-a/extraction/manifest.json"
+[[ -f "$RUN_A_MANIFEST" ]] || {
+  echo "first backfill run omitted its canonical extraction manifest" >&2
+  exit 1
+}
+TRACK_ANYWHERE_FROZEN_MANIFEST="$MANIFEST_PATH" \
+TRACK_ANYWHERE_RUN_A_MANIFEST="$RUN_A_MANIFEST" \
+uv run python - <<'PY'
+import os
+from pathlib import Path
+
+from backend.tools.backfill_v1.manifest import read_manifest
+
+frozen = read_manifest(Path(os.environ["TRACK_ANYWHERE_FROZEN_MANIFEST"]))
+run_a = read_manifest(Path(os.environ["TRACK_ANYWHERE_RUN_A_MANIFEST"]))
+if not run_a.tables:
+    raise SystemExit("canonical extraction manifest has no source tables")
+if (
+    run_a.dump_sha256 != frozen.dump_sha256
+    or run_a.source_revision != frozen.source_revision
+):
+    raise SystemExit("canonical extraction is not bound to the frozen source")
+if frozen.tables and run_a.to_dict() != frozen.to_dict():
+    raise SystemExit("canonical extraction does not match the fixed full manifest")
+PY
 
 TZ=Pacific/Auckland LC_ALL=en_US.UTF-8 PYTHONHASHSEED=731 \
 uv run python -m backend.tools.backfill_v1 run \
   --source-url "$SOURCE_READ_ONLY_URL" \
   --target-url "$TARGET_B_URL" \
   --dump "$DUMP_PATH" \
-  --manifest "$MANIFEST_PATH" \
+  --manifest "$RUN_A_MANIFEST" \
+  --credit-card-review "$CREDIT_CARD_REVIEW_PATH" \
   --batch-size 13 \
   --workers 4 \
   --shuffle-seed 731 \
   --output-dir "$OUTPUT_ROOT/run-b"
 
-RUN_A_MANIFEST="$OUTPUT_ROOT/run-a/extraction/manifest.json"
 RUN_B_MANIFEST="$OUTPUT_ROOT/run-b/extraction/manifest.json"
-[[ -f "$RUN_A_MANIFEST" && -f "$RUN_B_MANIFEST" ]] || {
-  echo "backfill run omitted its canonical extraction manifest" >&2
+[[ -f "$RUN_B_MANIFEST" ]] || {
+  echo "second backfill run omitted its canonical extraction manifest" >&2
   exit 1
 }
 cmp -s "$RUN_A_MANIFEST" "$RUN_B_MANIFEST" || {
@@ -232,11 +270,13 @@ uv run python -m backend.tools.backfill_v1.verify \
   --source-url "$SOURCE_READ_ONLY_URL" \
   --target-url "$TARGET_A_URL" \
   --manifest "$RUN_A_MANIFEST" \
+  --credit-card-review "$CREDIT_CARD_REVIEW_PATH" \
   --output "$OUTPUT_ROOT/run-a/independent-verification.json"
 uv run python -m backend.tools.backfill_v1.verify \
   --source-url "$SOURCE_READ_ONLY_URL" \
   --target-url "$TARGET_B_URL" \
   --manifest "$RUN_B_MANIFEST" \
+  --credit-card-review "$CREDIT_CARD_REVIEW_PATH" \
   --output "$OUTPUT_ROOT/run-b/independent-verification.json"
 uv run python -m backend.tools.backfill_v1.verify_determinism \
   --run-a "$OUTPUT_ROOT/run-a/independent-verification.json" \
@@ -290,6 +330,7 @@ event_evidence = {
     "counts": reports[0].get("counts"),
     "receipt_count": reports[0].get("receipt_count"),
     "snapshot_id": reports[0].get("snapshot_id"),
+    "credit_card_review_hash": reports[0].get("credit_card_review_hash"),
 }
 event_hash = hashlib.sha256(
     json.dumps(
@@ -308,6 +349,7 @@ summary = {
     "event_hash": event_hash,
     "independent_report_hashes": independent_hashes,
     "manifest_hash": reports[0].get("manifest_hash"),
+    "credit_card_review_hash": reports[0].get("credit_card_review_hash"),
     "projection_hashes": reports[0].get("projection_hashes"),
     "quarantine_count": reports[0].get("quarantine_count"),
     "receipt_count": reports[0].get("receipt_count"),
@@ -323,6 +365,7 @@ summary = {
 for required in (
     "book_terminal_hashes",
     "manifest_hash",
+    "credit_card_review_hash",
     "projection_hashes",
     "quarantine_count",
     "receipt_count",

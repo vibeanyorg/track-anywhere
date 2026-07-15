@@ -18,6 +18,7 @@ uv run --extra postgres pytest backend/tests/v2/replay backend/tests/v2/backfill
 uv run --extra postgres pytest backend/tests/v2/contract cli/tests contract_tests -q
 
 npm --prefix frontend ci
+npm --prefix frontend run test:proxy
 npm --prefix frontend run lint
 npm --prefix frontend run build
 

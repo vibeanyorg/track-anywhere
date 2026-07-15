@@ -20,6 +20,7 @@ pytestmark = pytest.mark.frozen_dump
 
 EXPECTED_SOURCE_COUNTS = {
     "accounts": 121,
+    "counterparties": 2,
     "postings": 284,
     "transaction_lines": 43,
     "transactions": 135,
@@ -80,7 +81,7 @@ def test_frozen_dump_matches_manifest_and_restored_read_only_source() -> None:
                 )
                 for table in EXPECTED_SOURCE_COUNTS
             }
-            usdt_scale = connection.execute(
+            usdt_declared_scale = connection.execute(
                 text("select scale from public.assets where asset_code = 'USDT'")
             ).scalar_one()
             usdt_rows = tuple(
@@ -89,7 +90,7 @@ def test_frozen_dump_matches_manifest_and_restored_read_only_source() -> None:
                         "select id::text, amount "
                         "from public.postings "
                         "where currency = 'USDT' "
-                        "and amount <> trunc(amount, 6) "
+                        "and amount::numeric <> trunc(amount::numeric, 6) "
                         'order by id::text collate "C"'
                     )
                 )
@@ -116,7 +117,9 @@ def test_frozen_dump_matches_manifest_and_restored_read_only_source() -> None:
                         "select line_type, count(*) from public.transaction_lines "
                         "where category_id is null group by line_type"
                     )
-                ).tuples()
+                )
+                .tuples()
+                .all()
             )
             classification_rows = tuple(
                 connection.execute(
@@ -158,11 +161,14 @@ def test_frozen_dump_matches_manifest_and_restored_read_only_source() -> None:
         assert {
             table: manifest_counts[table] for table in EXPECTED_SOURCE_COUNTS
         } == EXPECTED_SOURCE_COUNTS
-    assert usdt_scale == 8
-    assert usdt_rows, "the frozen source must retain its 8-decimal USDT identities"
+    assert usdt_declared_scale == 6
+    assert usdt_rows, (
+        "the frozen source must retain 8-decimal USDT identities even though "
+        "the legacy catalog declares scale 6"
+    )
     assert dict(line_shape) == {
         "categorized": 38,
-        "counterparties": 0,
+        "counterparties": 2,
         "historical": 5,
         "necessities": 0,
         "projects": 0,

@@ -100,6 +100,8 @@ def test_catalog_reads_are_book_scoped_immutable_snapshots(pg_engine) -> None:
 
     assert account_a.current_name == "Book A"
     assert account_b.current_name == "Book B"
+    assert account_a.account_type == "asset"
+    assert account_a.account_subtype is None
     assert category.current_name == "Book A"
     assert version.name == "A version"
     with pytest.raises(FrozenInstanceError):

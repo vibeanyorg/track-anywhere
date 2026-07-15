@@ -24,6 +24,9 @@
     "/api/v2/books/{book_id}/accounts/{account_id}/close": [
       "post"
     ],
+    "/api/v2/books/{book_id}/accounts/{account_id}/reopen": [
+      "post"
+    ],
     "/api/v2/books/{book_id}/assets": [
       "post"
     ],
@@ -31,6 +34,18 @@
       "get"
     ],
     "/api/v2/books/{book_id}/categories": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/credit-cards/charges": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/credit-cards/fees": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/credit-cards/payments": [
+      "post"
+    ],
+    "/api/v2/books/{book_id}/credit-cards/refunds": [
       "post"
     ],
     "/api/v2/books/{book_id}/investments/lots/acquire": [
@@ -93,5 +108,95 @@
     "/api/v2/ready": [
       "get"
     ]
+  },
+  "schemas": {
+    "ReportingLineResponse": {
+      "properties": {
+        "asset_code": {
+          "title": "Asset Code",
+          "type": "string"
+        },
+        "catalog_id": {
+          "format": "uuid",
+          "title": "Catalog Id",
+          "type": "string"
+        },
+        "classification_revision": {
+          "title": "Classification Revision",
+          "type": "integer"
+        },
+        "counterparty_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Counterparty Id"
+        },
+        "dimension": {
+          "title": "Dimension",
+          "type": "string"
+        },
+        "dimension_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dimension Id"
+        },
+        "line_id": {
+          "format": "uuid",
+          "title": "Line Id",
+          "type": "string"
+        },
+        "line_kind": {
+          "title": "Line Kind",
+          "type": "string"
+        },
+        "line_position": {
+          "title": "Line Position",
+          "type": "integer"
+        },
+        "line_version_id": {
+          "format": "uuid",
+          "title": "Line Version Id",
+          "type": "string"
+        },
+        "transaction_id": {
+          "format": "uuid",
+          "title": "Transaction Id",
+          "type": "string"
+        },
+        "units": {
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "transaction_id",
+        "classification_revision",
+        "line_id",
+        "line_version_id",
+        "catalog_id",
+        "line_position",
+        "asset_code",
+        "units",
+        "line_kind",
+        "dimension",
+        "dimension_id",
+        "counterparty_id"
+      ],
+      "title": "ReportingLineResponse",
+      "type": "object"
+    }
   }
 }

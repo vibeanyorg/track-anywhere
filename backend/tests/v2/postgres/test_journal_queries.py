@@ -7,6 +7,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.tests.v2.fixtures.synchronous import JournalScenario, seed_journal_scenario
+from track_anywhere.application.credit_cards import (
+    ChargeCreditCardCommand,
+    PaymentCreditCardCommand,
+    RefundCreditCardCommand,
+    execute_charge_credit_card,
+    execute_payment_credit_card,
+    execute_refund_credit_card,
+)
 from track_anywhere.application.idempotency import CommandActor
 from track_anywhere.application.journal.post_transaction import (
     PostTransactionCommand,
@@ -33,7 +41,15 @@ def _uow_factory(engine):
     return lambda: SqlAlchemyUnitOfWork(factory)
 
 
-def _post(engine, scenario: JournalScenario, *, when: datetime, amount: str):
+def _post(
+    engine,
+    scenario: JournalScenario,
+    *,
+    when: datetime,
+    amount: str,
+    debit_account_id=None,
+    credit_account_id=None,
+):
     transaction_id = uuid4()
     outcome = execute_post_transaction(
         PostTransactionCommand(
@@ -45,14 +61,14 @@ def _post(engine, scenario: JournalScenario, *, when: datetime, amount: str):
             postings=(
                 PostTransactionPosting(
                     posting_id=uuid4(),
-                    account_id=scenario.debit_account_id,
+                    account_id=debit_account_id or scenario.debit_account_id,
                     asset_code="USD",
                     side=PostingSide.DEBIT,
                     amount=amount,
                 ),
                 PostTransactionPosting(
                     posting_id=uuid4(),
-                    account_id=scenario.credit_account_id,
+                    account_id=credit_account_id or scenario.credit_account_id,
                     asset_code="USD",
                     side=PostingSide.CREDIT,
                     amount=amount,
@@ -67,7 +83,12 @@ def _post(engine, scenario: JournalScenario, *, when: datetime, amount: str):
     return transaction_id, outcome.result.last_book_position
 
 
-def _seed(engine):
+def _seed(
+    engine,
+    *,
+    credit_account_type: str = "asset",
+    credit_account_subtype: str | None = None,
+):
     base = JournalScenario.create()
     scenario = JournalScenario(
         book_id=base.book_id,
@@ -80,7 +101,12 @@ def _seed(engine):
         credit_posting_id=base.credit_posting_id,
         actor_subject_id=ACTOR.subject_id,
     )
-    seed_journal_scenario(engine, scenario)
+    seed_journal_scenario(
+        engine,
+        scenario,
+        credit_account_type=credit_account_type,
+        credit_account_subtype=credit_account_subtype,
+    )
     return scenario
 
 
@@ -152,17 +178,236 @@ def test_balance_query_matches_posting_reference_and_survives_account_close(
             session, scenario.book_id, as_of_book_position=original_position
         )
         journal = list_journal(session, scenario.book_id, limit=10)
+        historical_journal = list_journal(
+            session,
+            scenario.book_id,
+            limit=10,
+            as_of_book_position=original_position,
+        )
 
-    assert {(row.account_id, row.units) for row in current.items} == {
+    assert {(row.account_id, row.natural_units) for row in current.items} == {
         (scenario.debit_account_id, 0),
         (scenario.credit_account_id, 0),
     }
+    current_by_account = {row.account_id: row for row in current.items}
+    assert current_by_account[scenario.debit_account_id].account_status == "closed"
+    assert current_by_account[scenario.credit_account_id].account_status == "active"
     assert current.projection_matches_reference is True
-    assert {(row.account_id, row.units) for row in historical.items} == {
+    assert {(row.account_id, row.raw_accounting_units) for row in historical.items} == {
         (scenario.debit_account_id, 1234),
         (scenario.credit_account_id, -1234),
     }
     by_id = {item.transaction_id: item for item in journal.items}
     assert by_id[original_id].reversed_by_transaction_id == reversal_id
     assert by_id[reversal_id].reverses_transaction_id == original_id
+    historical_by_id = {item.transaction_id: item for item in historical_journal.items}
+    assert historical_by_id[original_id].reversed_by_transaction_id is None
+    assert reversal_id not in historical_by_id
     assert outcome.result.last_book_position == 2
+
+
+def test_balance_query_preserves_raw_projection_and_exposes_natural_liability(
+    pg_engine,
+) -> None:
+    scenario = _seed(
+        pg_engine,
+        credit_account_type="liability",
+        credit_account_subtype="credit_card",
+    )
+    expense_account_id = uuid4()
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "insert into accounts (book_id, account_id, asset_code, "
+                "account_type, account_subtype, current_name, status) values "
+                "(:book_id, :account_id, 'USD', 'expense', null, "
+                "'Card expense', 'active')"
+            ),
+            {"book_id": scenario.book_id, "account_id": expense_account_id},
+        )
+
+    charge = ChargeCreditCardCommand(
+        book_id=scenario.book_id,
+        command_id=uuid4(),
+        transaction_id=uuid4(),
+        expected_stream_version=0,
+        card_account_id=scenario.credit_account_id,
+        expense_account_id=expense_account_id,
+        asset_code="USD",
+        amount="12.34",
+        effective_at=BASE_TIME,
+    )
+    execute_charge_credit_card(
+        charge,
+        raw_key=f"query-card-charge:{charge.command_id}",
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+    with Session(pg_engine) as session:
+        charged = get_book_balances(session, scenario.book_id)
+        charged_journal = list_journal(session, scenario.book_id, limit=10)
+
+    charged_by_id = {item.account_id: item for item in charged.items}
+    card = charged_by_id[scenario.credit_account_id]
+    assert card.account_type == "liability"
+    assert card.account_subtype == "credit_card"
+    assert card.account_status == "active"
+    assert card.raw_accounting_units == -1234
+    assert card.natural_units == 1234
+    assert card.normal_side == "credit"
+    assert card.balance_semantics == "natural_liability_balance"
+    assert card.outstanding_units == 1234
+    assert card.overpayment_units == 0
+    expense = charged_by_id[expense_account_id]
+    assert expense.account_type == "expense"
+    assert expense.account_subtype is None
+    assert expense.raw_accounting_units == 1234
+    assert expense.natural_units == 1234
+    assert expense.normal_side == "debit"
+    assert expense.balance_semantics == "natural_expense_balance"
+    assert expense.outstanding_units is None
+    assert expense.overpayment_units is None
+    assert charged.projection_matches_reference is True
+    charge_item = next(
+        item
+        for item in charged_journal.items
+        if item.transaction_id == charge.transaction_id
+    )
+    assert charge_item.credit_card_relation is not None
+    assert charge_item.credit_card_relation.intent == "charge"
+    assert charge_item.credit_card_relation.card_account_id == (
+        scenario.credit_account_id
+    )
+    assert charge_item.credit_card_relation.counter_account_id == expense_account_id
+    assert charge_item.credit_card_relation.original_transaction_id is None
+
+    payment = PaymentCreditCardCommand(
+        book_id=scenario.book_id,
+        command_id=uuid4(),
+        transaction_id=uuid4(),
+        expected_stream_version=0,
+        card_account_id=scenario.credit_account_id,
+        source_account_id=scenario.debit_account_id,
+        asset_code="USD",
+        amount="20.00",
+        effective_at=BASE_TIME + timedelta(days=1),
+    )
+    execute_payment_credit_card(
+        payment,
+        raw_key=f"query-card-payment:{payment.command_id}",
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+    with Session(pg_engine) as session:
+        paid = get_book_balances(session, scenario.book_id)
+        paid_journal = list_journal(session, scenario.book_id, limit=10)
+
+    paid_card = {item.account_id: item for item in paid.items}[
+        scenario.credit_account_id
+    ]
+    assert paid_card.raw_accounting_units == 766
+    assert paid_card.natural_units == -766
+    assert paid_card.outstanding_units == 0
+    assert paid_card.overpayment_units == 766
+    assert paid.projection_matches_reference is True
+    payment_item = next(
+        item
+        for item in paid_journal.items
+        if item.transaction_id == payment.transaction_id
+    )
+    assert payment_item.credit_card_relation is not None
+    assert payment_item.credit_card_relation.intent == "payment"
+    assert payment_item.credit_card_relation.counter_account_id == (
+        scenario.debit_account_id
+    )
+
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "update account_balances set balance_units=balance_units + 1 "
+                "where book_id=:book_id and account_id=:account_id"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "account_id": scenario.credit_account_id,
+            },
+        )
+    with Session(pg_engine) as session:
+        corrupted_projection = get_book_balances(session, scenario.book_id)
+
+    safe_card = {item.account_id: item for item in corrupted_projection.items}[
+        scenario.credit_account_id
+    ]
+    assert corrupted_projection.projection_matches_reference is False
+    assert safe_card.raw_accounting_units == 766
+    assert safe_card.natural_units == -766
+
+
+def test_journal_query_exposes_refund_source_transaction(pg_engine) -> None:
+    scenario = _seed(
+        pg_engine,
+        credit_account_type="liability",
+        credit_account_subtype="credit_card",
+    )
+    expense_account_id = uuid4()
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "insert into accounts (book_id, account_id, asset_code, "
+                "account_type, account_subtype, current_name, status) values "
+                "(:book_id, :account_id, 'USD', 'expense', null, "
+                "'Refund source expense', 'active')"
+            ),
+            {"book_id": scenario.book_id, "account_id": expense_account_id},
+        )
+
+    charge = ChargeCreditCardCommand(
+        book_id=scenario.book_id,
+        command_id=uuid4(),
+        transaction_id=uuid4(),
+        expected_stream_version=0,
+        card_account_id=scenario.credit_account_id,
+        expense_account_id=expense_account_id,
+        asset_code="USD",
+        amount="12.34",
+        effective_at=BASE_TIME,
+    )
+    execute_charge_credit_card(
+        charge,
+        raw_key=f"query-refund-charge:{charge.command_id}",
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+    refund = RefundCreditCardCommand(
+        book_id=scenario.book_id,
+        command_id=uuid4(),
+        transaction_id=uuid4(),
+        expected_stream_version=0,
+        card_account_id=scenario.credit_account_id,
+        original_transaction_id=charge.transaction_id,
+        asset_code="USD",
+        amount="2.34",
+        effective_at=BASE_TIME + timedelta(days=1),
+    )
+    execute_refund_credit_card(
+        refund,
+        raw_key=f"query-refund:{refund.command_id}",
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+
+    with Session(pg_engine) as session:
+        journal = list_journal(session, scenario.book_id, limit=10)
+
+    refund_item = next(
+        item for item in journal.items if item.transaction_id == refund.transaction_id
+    )
+    assert refund_item.credit_card_relation is not None
+    assert refund_item.credit_card_relation.intent == "refund"
+    assert refund_item.credit_card_relation.card_account_id == (
+        scenario.credit_account_id
+    )
+    assert refund_item.credit_card_relation.counter_account_id == expense_account_id
+    assert refund_item.credit_card_relation.original_transaction_id == (
+        charge.transaction_id
+    )

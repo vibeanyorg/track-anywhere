@@ -45,6 +45,7 @@ class AccountSnapshot:
     account_id: UUID
     asset_code: str
     account_type: str
+    account_subtype: str | None
     system_role: str | None
     current_name: str
     status: str
@@ -144,6 +145,7 @@ class CatalogRepository:
             account_id=record.account_id,
             asset_code=record.asset_code,
             account_type=record.account_type,
+            account_subtype=record.account_subtype,
             system_role=record.system_role,
             current_name=record.current_name,
             status=record.status,

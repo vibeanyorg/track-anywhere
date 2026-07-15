@@ -7,6 +7,7 @@ from urllib.parse import quote
 from .command_catalog import compact_payload
 from .config import CliConfig, command_idempotency_key
 from .http import with_query
+from .structured_inputs import parse_external_reference
 
 
 Requester = Callable[
@@ -55,7 +56,9 @@ def request_record_transaction(
 ) -> tuple[int, Any]:
     try:
         postings = [_posting(value) for value in args.posting]
-        references = [_external_reference(value) for value in args.external_reference]
+        references = [
+            parse_external_reference(value) for value in args.external_reference
+        ]
     except ValueError as error:
         return _invalid_input(error)
     payload = compact_payload(
@@ -130,7 +133,8 @@ def request_correct_transaction(
     try:
         postings = [_posting(value) for value in args.replacement_posting]
         references = [
-            _external_reference(value) for value in args.replacement_external_reference
+            parse_external_reference(value)
+            for value in args.replacement_external_reference
         ]
     except ValueError as error:
         return _invalid_input(error)
@@ -199,7 +203,9 @@ def request_record_fx(
     requester: Requester,
 ) -> tuple[int, Any]:
     try:
-        references = [_external_reference(value) for value in args.external_reference]
+        references = [
+            parse_external_reference(value) for value in args.external_reference
+        ]
     except ValueError as error:
         return _invalid_input(error)
     payload = compact_payload(
@@ -293,18 +299,6 @@ def _posting(raw: str) -> dict[str, str]:
         "asset_code": asset_code,
         "side": side,
         "amount": amount,
-    }
-
-
-def _external_reference(raw: str) -> dict[str, str]:
-    parts = raw.split(":", 2)
-    if len(parts) != 3 or any(not value for value in parts):
-        raise ValueError("--external-reference must be PROVIDER_CODE:KIND:REFERENCE")
-    provider_code, kind, reference = parts
-    return {
-        "provider_code": provider_code,
-        "kind": kind,
-        "reference": reference,
     }
 
 

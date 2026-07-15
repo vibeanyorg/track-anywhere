@@ -43,3 +43,32 @@ def test_float_never_enters_backfill_amount_normalization() -> None:
             ledger_scale=8,
             backfill_mode=True,
         )
+
+
+@pytest.mark.parametrize(
+    ("amount", "expected_units"),
+    [("1E-8", 10_000_000_000), ("-1E-8", -10_000_000_000)],
+)
+def test_historical_scientific_decimal_is_exactly_normalized(
+    amount: str,
+    expected_units: int,
+) -> None:
+    assert (
+        decimal_to_units(
+            amount,
+            asset_code="ETH",
+            ledger_scale=18,
+            backfill_mode=True,
+        )
+        == expected_units
+    )
+
+
+def test_scientific_decimal_is_rejected_outside_backfill_mode() -> None:
+    with pytest.raises(ValueError, match="plain decimal"):
+        decimal_to_units(
+            "1E-8",
+            asset_code="ETH",
+            ledger_scale=18,
+            backfill_mode=False,
+        )

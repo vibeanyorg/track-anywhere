@@ -141,9 +141,33 @@ class BackfillSealRecord(V2Base):
     )
 
 
+class BackfillReviewContractRecord(V2Base):
+    __tablename__ = "backfill_review_contracts"
+    __table_args__ = (
+        CheckConstraint("btrim(snapshot_id) <> ''", name="snapshot_nonblank"),
+        CheckConstraint(
+            "review_kind = 'credit_card_semantics_v1'", name="kind_supported"
+        ),
+        CheckConstraint("octet_length(manifest_hash) = 32", name="manifest_hash_length"),
+        CheckConstraint("octet_length(review_hash) = 32", name="review_hash_length"),
+        CheckConstraint("btrim(reviewer) <> ''", name="reviewer_nonblank"),
+    )
+
+    snapshot_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    review_kind: Mapped[str] = mapped_column(String(64), primary_key=True)
+    manifest_hash: Mapped[bytes] = mapped_column(LargeBinary)
+    review_hash: Mapped[bytes] = mapped_column(LargeBinary)
+    reviewer: Mapped[str] = mapped_column(String(128))
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    bound_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("clock_timestamp()")
+    )
+
+
 __all__ = [
     "BackfillCheckpointRecord",
     "BackfillQuarantineRecord",
+    "BackfillReviewContractRecord",
     "BackfillSealRecord",
     "BackfillSourceReceiptRecord",
 ]

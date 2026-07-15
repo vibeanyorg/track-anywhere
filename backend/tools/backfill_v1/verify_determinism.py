@@ -13,6 +13,7 @@ from .reference_reducer import canonical_json_bytes
 _COMPARABLE_FIELDS = (
     "snapshot_id",
     "manifest_hash",
+    "credit_card_review_hash",
     "source_counts",
     "receipt_count",
     "quarantine_count",

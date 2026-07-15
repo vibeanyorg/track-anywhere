@@ -7,6 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from ...domain.credit_cards.events import CreditCardTransactionRecorded
 from ...domain.journal.events import (
     FinancialExternalReferenceCorrected,
     JournalTransactionPosted,
@@ -19,11 +20,13 @@ from ...domain.investments.events import (
 )
 from ...domain.reporting.events import (
     ReportingDimension,
+    ReportingLineKind,
     ReportingLinesAssigned,
     ReportingLinesCleared,
 )
 from ...serialization.event_registry import PRODUCTION_EVENT_REGISTRY
 from ..db.models.catalog import CategoryVersionRecord
+from ..db.models.credit_cards import CreditCardTransactionRecord
 from ..db.models.event_store import LedgerEventRecord
 from ..db.models.investments import (
     InvestmentLotAllocationRecord,
@@ -115,6 +118,8 @@ class SynchronousProjector:
 
     @staticmethod
     def _applier_for(payload):
+        if type(payload) is CreditCardTransactionRecorded:
+            return SynchronousProjector._apply_credit_card_recorded
         if type(payload) is JournalTransactionPosted:
             return SynchronousProjector._apply_journal_posted
         if type(payload) is JournalTransactionReversed:
@@ -131,6 +136,48 @@ class SynchronousProjector:
             return SynchronousProjector._apply_investment_lot_disposed
         raise SynchronousProjectionError(
             "registered synchronous event has no projection applier"
+        )
+
+    @staticmethod
+    def _apply_credit_card_recorded(
+        session: Session,
+        stored: LedgerEventRecord,
+        payload: CreditCardTransactionRecorded,
+    ) -> None:
+        SynchronousProjector._apply_financial_transaction(
+            session,
+            stored,
+            transaction_id=payload.transaction_id,
+            transaction_kind=payload.intent.transaction_kind,
+            description_ref=payload.description_ref,
+            postings=payload.postings,
+        )
+        session.add_all(
+            [
+                TransactionExternalReferenceRecord(
+                    book_id=stored.book_id,
+                    transaction_id=payload.transaction_id,
+                    provider_code=reference.provider_code,
+                    reference_kind=reference.kind.value,
+                    reference_value=reference.reference,
+                    source_event_id=stored.event_id,
+                )
+                for reference in payload.external_references
+            ]
+        )
+        session.add(
+            CreditCardTransactionRecord(
+                book_id=stored.book_id,
+                transaction_id=payload.transaction_id,
+                intent=payload.intent.value,
+                card_account_id=payload.card_account_id,
+                counter_account_id=payload.counter_account_id,
+                asset_code=payload.postings[0].asset_code,
+                units=int(payload.postings[0].units),
+                original_transaction_id=payload.original_transaction_id,
+                source_event_id=stored.event_id,
+                source_position=stored.book_position,
+            )
         )
 
     @staticmethod
@@ -196,7 +243,13 @@ class SynchronousProjector:
             original_event.event_schema_version,
             original_event.payload,
         )
-        if type(original_payload) is JournalTransactionPosted:
+        if type(original_payload) is CreditCardTransactionRecorded:
+            if original_payload.transaction_id != payload.reverses_transaction_id:
+                raise SynchronousProjectionError(
+                    "reversal source transaction identity does not match"
+                )
+            original_postings = original_payload.postings
+        elif type(original_payload) is JournalTransactionPosted:
             if original_payload.transaction_id != payload.reverses_transaction_id:
                 raise SynchronousProjectionError(
                     "reversal source transaction identity does not match"
@@ -267,6 +320,13 @@ class SynchronousProjector:
             raise SynchronousProjectionError(
                 "reporting target does not precede its classification event"
             )
+        if session.get(
+            TransactionReversalRecord,
+            (stored.book_id, transaction_id),
+        ) is not None:
+            raise SynchronousProjectionError(
+                "reversal transactions inherit the original reporting lines"
+            )
         return transaction
 
     @staticmethod
@@ -274,7 +334,22 @@ class SynchronousProjector:
         session: Session,
         stored: LedgerEventRecord,
         payload: ReportingLinesAssigned,
+        transaction: JournalTransactionRecord,
     ) -> None:
+        if transaction.transaction_kind == "credit_card_payment":
+            raise SynchronousProjectionError(
+                "credit-card payments cannot have reporting lines"
+            )
+        if transaction.transaction_kind in {
+            "credit_card_charge",
+            "credit_card_fee",
+            "credit_card_refund",
+        } and any(
+            line.line_kind is not ReportingLineKind.EXPENSE for line in payload.lines
+        ):
+            raise SynchronousProjectionError(
+                "credit-card reporting lines must use expense semantics"
+            )
         postings = tuple(
             session.scalars(
                 select(JournalPostingRecord).where(
@@ -345,13 +420,18 @@ class SynchronousProjector:
         stored: LedgerEventRecord,
         payload: ReportingLinesAssigned,
     ) -> None:
-        SynchronousProjector._validate_reporting_source(
+        transaction = SynchronousProjector._validate_reporting_source(
             session,
             stored,
             transaction_id=payload.transaction_id,
             classification_revision=payload.classification_revision,
         )
-        SynchronousProjector._validate_reporting_lines(session, stored, payload)
+        SynchronousProjector._validate_reporting_lines(
+            session,
+            stored,
+            payload,
+            transaction,
+        )
         SynchronousProjector._delete_current_reporting_lines(
             session,
             book_id=stored.book_id,
@@ -372,6 +452,7 @@ class SynchronousProjector:
                     line_kind=line.line_kind.value,
                     dimension=line.dimension.value,
                     dimension_id=line.dimension_id,
+                    counterparty_id=line.counterparty_id,
                     description_ref=line.description_ref,
                     source_event_id=stored.event_id,
                 )

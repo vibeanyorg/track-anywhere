@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 import re
 from typing import Mapping
 from uuid import UUID
@@ -10,6 +9,56 @@ from .namespaces import deterministic_uuid
 
 
 _PLAIN_DECIMAL = re.compile(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$")
+_HISTORICAL_DECIMAL = re.compile(
+    r"^(?P<sign>-?)(?P<whole>0|[1-9][0-9]*)"
+    r"(?:\.(?P<fraction>[0-9]+))?"
+    r"(?:[eE](?P<exponent>[+-]?[0-9]+))?$"
+)
+
+
+def _exact_units_from_historical_decimal(amount: str, *, scale: int) -> int:
+    match = _HISTORICAL_DECIMAL.fullmatch(amount)
+    if match is None:
+        raise ValueError("backfill amount must be an exact decimal string")
+
+    fraction = match.group("fraction") or ""
+    coefficient = (match.group("whole") + fraction).lstrip("0")
+    if not coefficient:
+        return 0
+
+    raw_exponent = match.group("exponent") or "0"
+    exponent_digits = raw_exponent.lstrip("+-").lstrip("0")
+    if len(exponent_digits) > 6:
+        raise ValueError("backfill amount exponent is outside the supported range")
+    normalized_exponent = exponent_digits or "0"
+    exponent = int(
+        f"-{normalized_exponent}"
+        if raw_exponent.startswith("-")
+        else normalized_exponent
+    )
+    unit_exponent = exponent - len(fraction) + scale
+
+    if unit_exponent >= 0:
+        if len(coefficient) + unit_exponent > 48:
+            raise ValueError("backfill amount exceeds the V2 unit bound")
+        magnitude = int(coefficient) * (10**unit_exponent)
+    else:
+        discarded_digits = -unit_exponent
+        if (
+            discarded_digits > len(coefficient)
+            or coefficient[-discarded_digits:] != "0" * discarded_digits
+        ):
+            raise ValueError(
+                "backfill amount is not exactly representable at ledger scale"
+            )
+        retained = coefficient[:-discarded_digits]
+        if len(retained) > 48:
+            raise ValueError("backfill amount exceeds the V2 unit bound")
+        magnitude = 0 if not retained else int(retained)
+
+    if len(str(magnitude)) > 48:
+        raise ValueError("backfill amount exceeds the V2 unit bound")
+    return -magnitude if match.group("sign") else magnitude
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +87,8 @@ def decimal_to_units(
 ) -> int:
     if type(amount) is not str:
         raise TypeError("backfill amount must be an exact decimal string")
-    if not _PLAIN_DECIMAL.fullmatch(amount):
+    accepted_pattern = _HISTORICAL_DECIMAL if backfill_mode else _PLAIN_DECIMAL
+    if not accepted_pattern.fullmatch(amount):
         raise ValueError("backfill amount must be a plain decimal string")
     if type(asset_code) is not str or not asset_code:
         raise ValueError("asset code must be nonblank")
@@ -48,20 +98,7 @@ def decimal_to_units(
         raise TypeError("backfill_mode must be a boolean")
     if asset_code == "USDT" and ledger_scale == 8 and not backfill_mode:
         raise ValueError("USDT eight-decimal values require backfill mode")
-    try:
-        parsed = Decimal(amount)
-    except InvalidOperation:
-        raise ValueError("backfill amount is invalid") from None
-    if not parsed.is_finite():
-        raise ValueError("backfill amount must be finite")
-    scaled = parsed * (Decimal(10) ** ledger_scale)
-    integral = scaled.to_integral_value()
-    if scaled != integral:
-        raise ValueError("backfill amount is not exactly representable at ledger scale")
-    units = int(integral)
-    if len(str(abs(units))) > 48:
-        raise ValueError("backfill amount exceeds the V2 unit bound")
-    return units
+    return _exact_units_from_historical_decimal(amount, scale=ledger_scale)
 
 
 def normalize_legacy_signed_posting(

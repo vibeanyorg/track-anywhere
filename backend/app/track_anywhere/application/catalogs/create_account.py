@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
+from ...domain.journal import AccountType, is_valid_account_subtype
 from ...infrastructure.db.models.catalog import AccountRecord, AssetRecord
 from ...infrastructure.db.models.event_store import BookEventHeadRecord
 from ..idempotency import CommandActor
@@ -22,6 +23,7 @@ class CreateAccount:
     asset_code: str
     account_type: str
     current_name: str
+    account_subtype: str | None = None
     system_role: str | None = None
 
     def __post_init__(self) -> None:
@@ -32,8 +34,19 @@ class CreateAccount:
             or self.asset_code != self.asset_code.upper()
         ):
             raise ValueError("asset_code is invalid")
-        if type(self.account_type) is not str or not self.account_type.strip():
-            raise ValueError("account_type must be nonblank")
+        if type(self.account_type) is not str:
+            raise ValueError("account_type is invalid")
+        try:
+            AccountType(self.account_type)
+        except ValueError:
+            raise ValueError("account_type is invalid") from None
+        if not is_valid_account_subtype(self.account_subtype):
+            raise ValueError("account_subtype must be null or a lowercase slug")
+        if (
+            self.account_subtype == "credit_card"
+            and self.account_type != AccountType.LIABILITY.value
+        ):
+            raise ValueError("credit_card subtype requires liability account_type")
         if type(self.current_name) is not str or not self.current_name.strip():
             raise ValueError("current_name must be nonblank")
         if self.system_role is not None and (
@@ -61,7 +74,8 @@ def create_account(
                 book_id=command.book_id,
                 account_id=command.account_id,
                 asset_code=command.asset_code,
-                account_type=command.account_type.strip(),
+                account_type=command.account_type,
+                account_subtype=command.account_subtype,
                 system_role=(
                     None if command.system_role is None else command.system_role.strip()
                 ),

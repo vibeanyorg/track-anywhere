@@ -66,6 +66,8 @@ def _seed_fx_scenario(
     scenario: FxScenario,
     *,
     source_trading_role: str | None = "fx_trading",
+    target_account_type: str = "asset",
+    target_account_subtype: str | None = None,
 ) -> None:
     with pg_engine.begin() as connection:
         connection.execute(
@@ -100,31 +102,49 @@ def _seed_fx_scenario(
             {"book_id": scenario.book_id, "zero_hash": bytes(32)},
         )
         accounts = (
-            (scenario.source_account_id, "CNY", None, "CNY Bank"),
+            (scenario.source_account_id, "CNY", "asset", None, None, "CNY Bank"),
             (
                 scenario.source_trading_account_id,
                 "CNY",
+                "asset",
+                None,
                 source_trading_role,
                 "CNY FX Trading",
             ),
             (
                 scenario.target_trading_account_id,
                 "USD",
+                "asset",
+                None,
                 "fx_trading",
                 "USD FX Trading",
             ),
-            (scenario.target_account_id, "USD", None, "USD Wallet"),
+            (
+                scenario.target_account_id,
+                "USD",
+                target_account_type,
+                target_account_subtype,
+                None,
+                "USD Wallet",
+            ),
         )
-        for account_id, asset_code, system_role, name in accounts:
+        for (
+            account_id,
+            asset_code,
+            account_type,
+            account_subtype,
+            system_role,
+            name,
+        ) in accounts:
             connection.execute(
                 text(
                     """
                     insert into accounts (
                         book_id, account_id, asset_code, account_type,
-                        system_role, current_name, status
+                        account_subtype, system_role, current_name, status
                     ) values (
-                        :book_id, :account_id, :asset_code, 'asset',
-                        :system_role, :name, 'active'
+                        :book_id, :account_id, :asset_code, :account_type,
+                        :account_subtype, :system_role, :name, 'active'
                     )
                     """
                 ),
@@ -132,6 +152,8 @@ def _seed_fx_scenario(
                     "book_id": scenario.book_id,
                     "account_id": account_id,
                     "asset_code": asset_code,
+                    "account_type": account_type,
+                    "account_subtype": account_subtype,
                     "system_role": system_role,
                     "name": name,
                 },
@@ -294,6 +316,27 @@ def test_rejects_non_exact_fx_amounts_without_partial_writes(
     with pytest.raises((IdempotencyValidationError, MoneyError)):
         command = replace(_command(scenario), **{field: raw})
         _execute(pg_engine, scenario, command)
+
+    with Session(pg_engine) as session:
+        assert session.scalar(select(func.count()).select_from(LedgerEventRecord)) == 0
+        assert (
+            session.scalar(select(func.count()).select_from(CommandReceiptRecord)) == 0
+        )
+        head = session.get(BookEventHeadRecord, scenario.book_id)
+        assert head is not None and head.last_position == 0
+
+
+def test_fx_rejects_credit_card_accounts_without_partial_writes(pg_engine) -> None:
+    scenario = FxScenario.create()
+    _seed_fx_scenario(
+        pg_engine,
+        scenario,
+        target_account_type="liability",
+        target_account_subtype="credit_card",
+    )
+
+    with pytest.raises(RuntimeError, match="credit-card semantic command"):
+        _execute(pg_engine, scenario, _command(scenario))
 
     with Session(pg_engine) as session:
         assert session.scalar(select(func.count()).select_from(LedgerEventRecord)) == 0

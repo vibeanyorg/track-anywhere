@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session, aliased
 
+from ..infrastructure.db.models.credit_cards import CreditCardTransactionRecord
 from ..infrastructure.db.models.event_store import BookEventHeadRecord
 from ..infrastructure.db.models.projections import (
     JournalPostingRecord,
@@ -32,6 +33,14 @@ class JournalPosting:
 
 
 @dataclass(frozen=True, slots=True)
+class CreditCardRelation:
+    intent: str
+    card_account_id: UUID
+    counter_account_id: UUID
+    original_transaction_id: UUID | None
+
+
+@dataclass(frozen=True, slots=True)
 class JournalItem:
     transaction_id: UUID
     effective_at: datetime
@@ -40,6 +49,7 @@ class JournalItem:
     postings: tuple[JournalPosting, ...]
     reversed_by_transaction_id: UUID | None
     reverses_transaction_id: UUID | None
+    credit_card_relation: CreditCardRelation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,11 +84,13 @@ def list_journal(
 
     reversed_relation = aliased(TransactionReversalRecord)
     reversal_relation = aliased(TransactionReversalRecord)
+    reversed_transaction = aliased(JournalTransactionRecord)
+    original_transaction = aliased(JournalTransactionRecord)
     statement = (
         select(
             JournalTransactionRecord,
-            reversed_relation.reversal_transaction_id,
-            reversal_relation.original_transaction_id,
+            reversed_transaction.transaction_id,
+            original_transaction.transaction_id,
         )
         .outerjoin(
             reversed_relation,
@@ -94,6 +106,24 @@ def list_journal(
                 reversal_relation.book_id == JournalTransactionRecord.book_id,
                 reversal_relation.reversal_transaction_id
                 == JournalTransactionRecord.transaction_id,
+            ),
+        )
+        .outerjoin(
+            reversed_transaction,
+            and_(
+                reversed_transaction.book_id == reversed_relation.book_id,
+                reversed_transaction.transaction_id
+                == reversed_relation.reversal_transaction_id,
+                reversed_transaction.source_position <= as_of,
+            ),
+        )
+        .outerjoin(
+            original_transaction,
+            and_(
+                original_transaction.book_id == reversal_relation.book_id,
+                original_transaction.transaction_id
+                == reversal_relation.original_transaction_id,
+                original_transaction.source_position <= as_of,
             ),
         )
         .where(
@@ -132,6 +162,7 @@ def list_journal(
     postings_by_transaction: dict[UUID, list[JournalPosting]] = {
         transaction_id: [] for transaction_id in transaction_ids
     }
+    card_relations: dict[UUID, CreditCardRelation] = {}
     if transaction_ids:
         postings = session.scalars(
             select(JournalPostingRecord)
@@ -155,6 +186,18 @@ def list_journal(
                     units=int(posting.units),
                 )
             )
+        for relation in session.scalars(
+            select(CreditCardTransactionRecord).where(
+                CreditCardTransactionRecord.book_id == book_id,
+                CreditCardTransactionRecord.transaction_id.in_(transaction_ids),
+            )
+        ):
+            card_relations[relation.transaction_id] = CreditCardRelation(
+                intent=relation.intent,
+                card_account_id=relation.card_account_id,
+                counter_account_id=relation.counter_account_id,
+                original_transaction_id=relation.original_transaction_id,
+            )
     items = tuple(
         JournalItem(
             transaction_id=transaction.transaction_id,
@@ -164,6 +207,7 @@ def list_journal(
             postings=tuple(postings_by_transaction[transaction.transaction_id]),
             reversed_by_transaction_id=reversed_by,
             reverses_transaction_id=reverses,
+            credit_card_relation=card_relations.get(transaction.transaction_id),
         )
         for transaction, reversed_by, reverses in page_rows
     )
@@ -212,6 +256,7 @@ def _decode_cursor(value: str) -> tuple[datetime, int, UUID]:
 
 __all__ = [
     "InvalidJournalCursor",
+    "CreditCardRelation",
     "JournalItem",
     "JournalPage",
     "JournalPosting",

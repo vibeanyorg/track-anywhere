@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from ...domain.reporting.events import ReportingLinesAssigned, ReportingLinesCleared
+from ...serialization.event_registry import PRODUCTION_EVENT_REGISTRY
 from ..db.models.async_projection import ProjectionDirtyPeriodRecord
+from ..db.models.projections import (
+    JournalTransactionRecord,
+    TransactionReversalRecord,
+)
 from .checkpoints import LockedProjectionState, PROJECTION_NAME, PROJECTOR_VERSION
 from .event_reader import StoredEventSnapshot
 
@@ -28,10 +34,10 @@ def mark_dirty_periods(
 ) -> tuple[date, ...]:
     latest_by_period: dict[date, StoredEventSnapshot] = {}
     for event in events:
-        period = month_start(event.effective_at.date())
-        previous = latest_by_period.get(period)
-        if previous is None or event.book_position > previous.book_position:
-            latest_by_period[period] = event
+        for period in _affected_periods(session, event):
+            previous = latest_by_period.get(period)
+            if previous is None or event.book_position > previous.book_position:
+                latest_by_period[period] = event
     for period, event in latest_by_period.items():
         statement = insert(ProjectionDirtyPeriodRecord).values(
             projection_name=PROJECTION_NAME,
@@ -63,6 +69,43 @@ def mark_dirty_periods(
         )
         session.execute(statement)
     return tuple(sorted(latest_by_period))
+
+
+def _affected_periods(
+    session: Session,
+    event: StoredEventSnapshot,
+) -> tuple[date, ...]:
+    payload = PRODUCTION_EVENT_REGISTRY.validate_stored(
+        event.event_type,
+        event.event_schema_version,
+        event.payload,
+    )
+    if type(payload) not in {ReportingLinesAssigned, ReportingLinesCleared}:
+        return (month_start(event.effective_at.date()),)
+
+    transaction = session.get(
+        JournalTransactionRecord,
+        (event.book_id, payload.transaction_id),
+    )
+    if transaction is None:
+        raise RuntimeError("reporting event target transaction is unavailable")
+    periods = {month_start(transaction.effective_at.date())}
+    reversal_id = session.scalar(
+        select(TransactionReversalRecord.reversal_transaction_id).where(
+            TransactionReversalRecord.book_id == event.book_id,
+            TransactionReversalRecord.original_transaction_id
+            == payload.transaction_id,
+        )
+    )
+    if reversal_id is not None:
+        reversal = session.get(
+            JournalTransactionRecord,
+            (event.book_id, reversal_id),
+        )
+        if reversal is None:
+            raise RuntimeError("reporting event reversal transaction is unavailable")
+        periods.add(month_start(reversal.effective_at.date()))
+    return tuple(sorted(periods))
 
 
 def clear_dirty_periods(

@@ -7,6 +7,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from .reversal_links import resolve_reversal_links
+
 
 Row = Mapping[str, object]
 
@@ -27,10 +29,27 @@ class InventoryIssue:
         }
 
 
+@dataclass(frozen=True, order=True)
+class InventoryResolution:
+    code: str
+    source_table: str
+    source_primary_key: str
+    relation: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "code": self.code,
+            "relation": self.relation,
+            "source_primary_key": self.source_primary_key,
+            "source_table": self.source_table,
+        }
+
+
 @dataclass(frozen=True)
 class InventoryReport:
     counts: tuple[tuple[str, int], ...]
     issues: tuple[InventoryIssue, ...]
+    resolutions: tuple[InventoryResolution, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -41,6 +60,8 @@ class InventoryReport:
             "counts": dict(self.counts),
             "issue_count": len(self.issues),
             "issues": [issue.to_dict() for issue in self.issues],
+            "resolution_count": len(self.resolutions),
+            "resolutions": [resolution.to_dict() for resolution in self.resolutions],
             "status": "PASS" if self.ok else "BLOCKED",
         }
 
@@ -51,6 +72,7 @@ _PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "categories": ("category_id",),
     "category_versions": ("category_version_id",),
     "classification_events": ("classification_event_id",),
+    "counterparties": ("counterparty_id",),
     "investment_events": ("event_id",),
     "investment_valuations": ("valuation_id",),
     "ledger_books": ("book_id",),
@@ -181,26 +203,32 @@ def _check_duplicate_positions(
         seen.add(key)
 
 
-def _check_reversals(issues: list[InventoryIssue], transactions: Sequence[Row]) -> None:
+def _check_reversals(
+    issues: list[InventoryIssue],
+    transactions: Sequence[Row],
+    postings: Sequence[Row],
+) -> tuple[InventoryResolution, ...]:
     by_id = _identifier_index(transactions, "transaction_id")
+    resolved = resolve_reversal_links(transactions, postings)
+    effective_links = dict(resolved.links)
     reverse_edges: dict[str, str] = {}
     target_counts: Counter[str] = Counter()
     for row in transactions:
         source = str(row.get("transaction_id"))
-        raw_target = row.get("reverses_transaction_id")
-        if raw_target is None:
+        target = effective_links.get(source)
+        if target is None:
             continue
-        target = str(raw_target)
         reverse_edges[source] = target
         target_counts[target] += 1
-        target_row = _check_reference(
-            issues,
-            table="transactions",
-            row=row,
-            field="reverses_transaction_id",
-            targets=by_id,
-            target_label="transactions.transaction_id",
-        )
+        target_row = by_id.get(target)
+        if target_row is None:
+            _issue(
+                issues,
+                "orphan_reference",
+                "transactions",
+                row,
+                "reverses_transaction_id->transactions.transaction_id",
+            )
         _check_same_book(
             issues,
             table="transactions",
@@ -239,9 +267,9 @@ def _check_reversals(issues: list[InventoryIssue], transactions: Sequence[Row]) 
             other=reverse_row,
             relation="reversed_by transaction",
         )
-        if reverse_row is not None and str(
-            reverse_row.get("reverses_transaction_id")
-        ) != str(row.get("transaction_id")):
+        if reverse_row is not None and effective_links.get(str(reversed_by)) != str(
+            row.get("transaction_id")
+        ):
             _issue(
                 issues,
                 "reversal_inconsistent",
@@ -255,7 +283,7 @@ def _check_reversals(issues: list[InventoryIssue], transactions: Sequence[Row]) 
             representative = next(
                 row
                 for row in transactions
-                if str(row.get("reverses_transaction_id")) == target
+                if effective_links.get(str(row.get("transaction_id"))) == target
             )
             _issue(
                 issues,
@@ -284,6 +312,15 @@ def _check_reversals(issues: list[InventoryIssue], transactions: Sequence[Row]) 
             by_id[transaction_id],
             "reverses_transaction_id cycle",
         )
+    return tuple(
+        InventoryResolution(
+            code="inferred_reversal_link",
+            source_table="transactions",
+            source_primary_key=item.reversal_transaction_id,
+            relation=f"reverses_transaction_id:{item.original_transaction_id}",
+        )
+        for item in resolved.inferred
+    )
 
 
 def inventory_rows(rows_by_table: Mapping[str, Sequence[Row]]) -> InventoryReport:
@@ -300,6 +337,9 @@ def inventory_rows(rows_by_table: Mapping[str, Sequence[Row]]) -> InventoryRepor
     categories = _identifier_index(rows.get("categories", ()), "category_id")
     category_versions = _identifier_index(
         rows.get("category_versions", ()), "category_version_id"
+    )
+    counterparties = _identifier_index(
+        rows.get("counterparties", ()), "counterparty_id"
     )
 
     for row in rows.get("ledger_books", ()):
@@ -322,7 +362,12 @@ def inventory_rows(rows_by_table: Mapping[str, Sequence[Row]]) -> InventoryRepor
         )
         _check_asset(issues, table="accounts", row=row, field="currency", assets=assets)
 
-    for table in ("transactions", "categories", "category_versions"):
+    for table in (
+        "transactions",
+        "categories",
+        "category_versions",
+        "counterparties",
+    ):
         for row in rows.get(table, ()):
             _check_reference(
                 issues,
@@ -458,10 +503,23 @@ def inventory_rows(rows_by_table: Mapping[str, Sequence[Row]]) -> InventoryRepor
             target_label="category_versions.category_version_id",
             nullable=True,
         )
+        counterparty = None
+        source_counterparty_id = row.get("counterparty_id")
+        if source_counterparty_id is not None:
+            counterparty = counterparties.get(str(source_counterparty_id))
+            if counterparty is None:
+                _issue(
+                    issues,
+                    "counterparty_reference_missing",
+                    "transaction_lines",
+                    row,
+                    "counterparty_id->counterparties.counterparty_id",
+                )
         for other, relation in (
             (transaction, "transaction line transaction"),
             (category, "transaction line category"),
             (category_version, "transaction line category version"),
+            (counterparty, "transaction line counterparty"),
         ):
             _check_same_book(
                 issues,
@@ -576,11 +634,19 @@ def inventory_rows(rows_by_table: Mapping[str, Sequence[Row]]) -> InventoryRepor
     _check_duplicate_positions(
         issues, "transaction_lines", rows.get("transaction_lines", ())
     )
-    _check_reversals(issues, rows.get("transactions", ()))
+    resolutions = _check_reversals(
+        issues,
+        rows.get("transactions", ()),
+        rows.get("postings", ()),
+    )
 
     unique_issues = tuple(sorted(set(issues)))
     counts = tuple(sorted((table, len(values)) for table, values in rows.items()))
-    return InventoryReport(counts=counts, issues=unique_issues)
+    return InventoryReport(
+        counts=counts,
+        issues=unique_issues,
+        resolutions=resolutions,
+    )
 
 
 def write_inventory(report: InventoryReport, path: Path) -> None:
@@ -600,6 +666,7 @@ def write_inventory(report: InventoryReport, path: Path) -> None:
 __all__ = [
     "InventoryIssue",
     "InventoryReport",
+    "InventoryResolution",
     "inventory_rows",
     "write_inventory",
 ]

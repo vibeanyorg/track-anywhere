@@ -11,8 +11,14 @@ from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy.orm import Session
 
+from track_anywhere.domain.journal import AccountType, PostingSide
 from track_anywhere.queries.balances import BalanceItem, BalanceSnapshot
-from track_anywhere.queries.journal import JournalItem, JournalPage, JournalPosting
+from track_anywhere.queries.journal import (
+    CreditCardRelation,
+    JournalItem,
+    JournalPage,
+    JournalPosting,
+)
 from track_anywhere.queries.reporting import ReportingLine
 
 
@@ -24,6 +30,7 @@ REVERSAL_ID = UUID("55555555-5555-4555-8555-555555555555")
 LINE_ID = UUID("66666666-6666-4666-8666-666666666666")
 LINE_VERSION_ID = UUID("77777777-7777-4777-8777-777777777777")
 DIMENSION_ID = UUID("88888888-8888-4888-8888-888888888888")
+CATALOG_ID = UUID("99999999-9999-4999-8999-999999999999")
 PRECISE_UNITS = 9_007_199_254_740_993_123_456
 DUMMY_RUNTIME_URL = (
     "postgresql+psycopg://track_anywhere_runtime:secret@127.0.0.1:9/track_anywhere"
@@ -116,6 +123,12 @@ def test_journal_contract_forwards_cursor_and_as_of_and_stringifies_units(
                     ),
                     reversed_by_transaction_id=REVERSAL_ID,
                     reverses_transaction_id=None,
+                    credit_card_relation=CreditCardRelation(
+                        intent="refund",
+                        card_account_id=ACCOUNT_ID,
+                        counter_account_id=ACCOUNT_ID,
+                        original_transaction_id=REVERSAL_ID,
+                    ),
                 ),
             ),
             next_cursor="cursor-next",
@@ -154,6 +167,12 @@ def test_journal_contract_forwards_cursor_and_as_of_and_stringifies_units(
                 "is_reversed": True,
                 "reversed_by_transaction_id": str(REVERSAL_ID),
                 "reverses_transaction_id": None,
+                "credit_card_relation": {
+                    "intent": "refund",
+                    "card_account_id": str(ACCOUNT_ID),
+                    "counter_account_id": str(ACCOUNT_ID),
+                    "original_transaction_id": str(REVERSAL_ID),
+                },
             }
         ],
         "next_cursor": "cursor-next",
@@ -167,7 +186,7 @@ def test_journal_contract_forwards_cursor_and_as_of_and_stringifies_units(
     assert authorization_calls[0][2] == BOOK_ID
 
 
-def test_balance_contract_stringifies_signed_units(
+def test_balance_contract_names_raw_and_natural_liability_semantics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from track_anywhere.api.v2 import queries as query_api
@@ -186,7 +205,15 @@ def test_balance_contract_stringifies_signed_units(
                 BalanceItem(
                     account_id=ACCOUNT_ID,
                     asset_code="JPY",
-                    units=-PRECISE_UNITS,
+                    account_type=AccountType.LIABILITY,
+                    account_subtype="credit_card",
+                    account_status="closed",
+                    raw_accounting_units=-PRECISE_UNITS,
+                    natural_units=PRECISE_UNITS,
+                    normal_side=PostingSide.CREDIT,
+                    balance_semantics="natural_liability_balance",
+                    outstanding_units=PRECISE_UNITS,
+                    overpayment_units=0,
                 ),
             ),
             as_of_book_position=19,
@@ -206,7 +233,15 @@ def test_balance_contract_stringifies_signed_units(
             {
                 "account_id": str(ACCOUNT_ID),
                 "asset_code": "JPY",
-                "units": str(-PRECISE_UNITS),
+                "account_type": "liability",
+                "account_subtype": "credit_card",
+                "account_status": "closed",
+                "raw_accounting_units": str(-PRECISE_UNITS),
+                "natural_units": str(PRECISE_UNITS),
+                "normal_side": "credit",
+                "balance_semantics": "natural_liability_balance",
+                "outstanding_units": str(PRECISE_UNITS),
+                "overpayment_units": "0",
             }
         ],
         "as_of_book_position": 19,
@@ -235,6 +270,7 @@ def test_reporting_contract_requires_as_of_and_stringifies_units(
                 classification_revision=3,
                 line_id=LINE_ID,
                 line_version_id=LINE_VERSION_ID,
+                catalog_id=CATALOG_ID,
                 line_position=1,
                 asset_code="CNY",
                 units=PRECISE_UNITS,
@@ -266,12 +302,14 @@ def test_reporting_contract_requires_as_of_and_stringifies_units(
                 "classification_revision": 3,
                 "line_id": str(LINE_ID),
                 "line_version_id": str(LINE_VERSION_ID),
+                "catalog_id": str(CATALOG_ID),
                 "line_position": 1,
                 "asset_code": "CNY",
                 "units": str(PRECISE_UNITS),
                 "line_kind": "category",
                 "dimension": "category",
                 "dimension_id": str(DIMENSION_ID),
+                "counterparty_id": None,
             }
         ],
         "as_of_book_position": 37,

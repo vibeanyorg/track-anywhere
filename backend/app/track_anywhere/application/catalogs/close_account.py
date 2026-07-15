@@ -4,9 +4,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, case, func, select
 
 from ...infrastructure.db.models.catalog import AccountRecord
+from ...infrastructure.db.models.projections import (
+    AccountBalanceRecord,
+    JournalPostingRecord,
+    JournalTransactionRecord,
+)
 from ..idempotency import CommandActor
 from ..ledger_committer import LedgerCommitter
 from ..unit_of_work import UnitOfWork
@@ -18,6 +23,14 @@ class AccountUnavailable(LookupError):
 
 
 class AccountAlreadyClosed(ValueError):
+    pass
+
+
+class AccountBalanceNonzero(RuntimeError):
+    pass
+
+
+class AccountBalanceProjectionMismatch(RuntimeError):
     pass
 
 
@@ -55,6 +68,67 @@ def close_account(
             raise AccountUnavailable("account not found in requested Book")
         if account.status == "closed":
             raise AccountAlreadyClosed("account is already closed")
+        if account.account_subtype == "credit_card":
+            projection = uow.session.execute(
+                select(AccountBalanceRecord).where(
+                    AccountBalanceRecord.book_id == command.book_id,
+                    AccountBalanceRecord.account_id == command.account_id,
+                    AccountBalanceRecord.asset_code == account.asset_code,
+                )
+            ).scalar_one_or_none()
+            reference_units, latest_posting_position = uow.session.execute(
+                select(
+                    func.coalesce(
+                        func.sum(
+                            case(
+                                (
+                                    JournalPostingRecord.side == "debit",
+                                    JournalPostingRecord.units,
+                                ),
+                                else_=-JournalPostingRecord.units,
+                            )
+                        ),
+                        0,
+                    ),
+                    func.max(JournalTransactionRecord.source_position),
+                )
+                .join(
+                    JournalTransactionRecord,
+                    and_(
+                        JournalTransactionRecord.book_id
+                        == JournalPostingRecord.book_id,
+                        JournalTransactionRecord.transaction_id
+                        == JournalPostingRecord.transaction_id,
+                    ),
+                )
+                .where(
+                    JournalPostingRecord.book_id == command.book_id,
+                    JournalPostingRecord.account_id == command.account_id,
+                    JournalPostingRecord.asset_code == account.asset_code,
+                )
+            ).one()
+            if latest_posting_position is not None and projection is None:
+                raise AccountBalanceProjectionMismatch(
+                    "credit-card balance projection is missing"
+                )
+            if (
+                projection is not None
+                and latest_posting_position is not None
+                and projection.as_of_position < int(latest_posting_position)
+            ):
+                raise AccountBalanceProjectionMismatch(
+                    "credit-card balance projection is stale"
+                )
+            projected = 0 if projection is None else int(projection.balance_units)
+            reference = 0 if reference_units is None else int(reference_units)
+            if projected != reference:
+                raise AccountBalanceProjectionMismatch(
+                    "credit-card balance projection does not match journal postings"
+                )
+            if reference != 0:
+                raise AccountBalanceNonzero(
+                    "credit-card account must have zero balance before close"
+                )
         account.status = "closed"
         uow.session.flush()
         return {
@@ -66,6 +140,8 @@ def close_account(
 
 __all__ = [
     "AccountAlreadyClosed",
+    "AccountBalanceNonzero",
+    "AccountBalanceProjectionMismatch",
     "AccountUnavailable",
     "CloseAccount",
     "close_account",

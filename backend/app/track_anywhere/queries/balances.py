@@ -6,6 +6,8 @@ from uuid import UUID
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
+from ..domain.journal import AccountType, PostingSide
+from ..infrastructure.db.models.catalog import AccountRecord
 from ..infrastructure.db.models.event_store import BookEventHeadRecord
 from ..infrastructure.db.models.projections import (
     AccountBalanceRecord,
@@ -18,7 +20,15 @@ from ..infrastructure.db.models.projections import (
 class BalanceItem:
     account_id: UUID
     asset_code: str
-    units: int
+    account_type: AccountType
+    account_subtype: str | None
+    account_status: str
+    raw_accounting_units: int
+    natural_units: int
+    normal_side: PostingSide
+    balance_semantics: str
+    outstanding_units: int | None
+    overpayment_units: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,10 +97,43 @@ def get_book_balances(
             )
         }
         parity = projection == reference
-        values = projection
+        values = projection if parity else reference
+    account_semantics = {
+        (account_id, asset_code): (
+            AccountType(account_type),
+            account_subtype,
+            account_status,
+        )
+        for (
+            account_id,
+            asset_code,
+            account_type,
+            account_subtype,
+            account_status,
+        ) in session.execute(
+            select(
+                AccountRecord.account_id,
+                AccountRecord.asset_code,
+                AccountRecord.account_type,
+                AccountRecord.account_subtype,
+                AccountRecord.status,
+            ).where(AccountRecord.book_id == book_id)
+        )
+    }
+    missing_accounts = set(values).difference(account_semantics)
+    if missing_accounts:
+        raise RuntimeError("balance projection references an unavailable account")
+
     items = tuple(
-        BalanceItem(account_id=account_id, asset_code=asset_code, units=units)
-        for (account_id, asset_code), units in sorted(
+        _balance_item(
+            account_id=account_id,
+            asset_code=asset_code,
+            account_type=account_semantics[(account_id, asset_code)][0],
+            account_subtype=account_semantics[(account_id, asset_code)][1],
+            account_status=account_semantics[(account_id, asset_code)][2],
+            raw_accounting_units=raw_accounting_units,
+        )
+        for (account_id, asset_code), raw_accounting_units in sorted(
             values.items(), key=lambda item: (str(item[0][0]), item[0][1])
         )
     )
@@ -98,6 +141,38 @@ def get_book_balances(
         items=items,
         as_of_book_position=as_of,
         projection_matches_reference=parity,
+    )
+
+
+def _balance_item(
+    *,
+    account_id: UUID,
+    asset_code: str,
+    account_type: AccountType,
+    account_subtype: str | None = None,
+    account_status: str,
+    raw_accounting_units: int,
+) -> BalanceItem:
+    credit_normal = account_type in {
+        AccountType.LIABILITY,
+        AccountType.EQUITY,
+        AccountType.INCOME,
+    }
+    normal_side = PostingSide.CREDIT if credit_normal else PostingSide.DEBIT
+    natural_units = -raw_accounting_units if credit_normal else raw_accounting_units
+    is_liability = account_type is AccountType.LIABILITY
+    return BalanceItem(
+        account_id=account_id,
+        asset_code=asset_code,
+        account_type=account_type,
+        account_subtype=account_subtype,
+        account_status=account_status,
+        raw_accounting_units=raw_accounting_units,
+        natural_units=natural_units,
+        normal_side=normal_side,
+        balance_semantics=f"natural_{account_type.value}_balance",
+        outstanding_units=max(natural_units, 0) if is_liability else None,
+        overpayment_units=max(-natural_units, 0) if is_liability else None,
     )
 
 

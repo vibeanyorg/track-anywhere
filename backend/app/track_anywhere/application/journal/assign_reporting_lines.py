@@ -4,6 +4,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from sqlalchemy import select
@@ -17,6 +18,7 @@ from ...domain.reporting.events import (
 from ...infrastructure.db.models.projections import (
     JournalPostingRecord,
     JournalTransactionRecord,
+    TransactionReversalRecord,
 )
 from ...infrastructure.db.repositories.catalogs import CatalogRepository
 from ...serialization.canonical_json import JSONValue, format_utc_microseconds
@@ -25,7 +27,11 @@ from ..event_batch import PendingEvent
 from ..idempotency import CommandActor, CommandOutcome, IdempotencyValidationError
 from ..ledger_committer import LedgerCommitter, LedgerWritePlan, LockedBookHead
 from ..unit_of_work import UnitOfWork
-from .post_transaction import Authorize, authorize_journal_write
+from .post_transaction import (
+    Authorize,
+    _assert_trusted_v1_backfill_invocation,
+    authorize_journal_write,
+)
 from .reverse_transaction import TransactionNotFound
 
 
@@ -44,6 +50,23 @@ class UnsupportedReportingDimension(ValueError):
     pass
 
 
+class UnsupportedReportingMetadata(ValueError):
+    pass
+
+
+class UnsupportedCreditCardReporting(ValueError):
+    pass
+
+
+class UnsupportedReportingTarget(ValueError):
+    pass
+
+
+class _ReportingMetadataMode(Enum):
+    ONLINE = "online"
+    TRUSTED_V1_BACKFILL = "trusted_v1_backfill"
+
+
 @dataclass(frozen=True, slots=True)
 class ReportingLineInput:
     line_id: UUID
@@ -54,6 +77,7 @@ class ReportingLineInput:
     line_kind: ReportingLineKind
     dimension: ReportingDimension
     dimension_id: UUID | None = None
+    counterparty_id: UUID | None = None
     description_ref: UUID | None = None
 
     def __post_init__(self) -> None:
@@ -84,6 +108,8 @@ class ReportingLineInput:
             raise IdempotencyValidationError("dimension is invalid")
         if self.dimension_id is not None and type(self.dimension_id) is not UUID:
             raise IdempotencyValidationError("dimension_id must be a UUID or null")
+        if self.counterparty_id is not None and type(self.counterparty_id) is not UUID:
+            raise IdempotencyValidationError("counterparty_id must be a UUID or null")
         if self.description_ref is not None and type(self.description_ref) is not UUID:
             raise IdempotencyValidationError("description_ref must be a UUID or null")
 
@@ -97,6 +123,9 @@ class ReportingLineInput:
             "dimension": self.dimension.value,
             "dimension_id": (
                 None if self.dimension_id is None else str(self.dimension_id)
+            ),
+            "counterparty_id": (
+                None if self.counterparty_id is None else str(self.counterparty_id)
             ),
             "line_id": str(self.line_id),
             "line_kind": self.line_kind.value,
@@ -164,10 +193,66 @@ def execute_assign_reporting_lines(
     ledger_committer: LedgerCommitter | None = None,
     max_attempts: int = 3,
 ) -> CommandOutcome:
+    return _execute_assign_reporting_lines(
+        command,
+        raw_key=raw_key,
+        actor=actor,
+        uow_factory=uow_factory,
+        authorize=authorize,
+        ledger_committer=ledger_committer,
+        max_attempts=max_attempts,
+        metadata_mode=_ReportingMetadataMode.ONLINE,
+    )
+
+
+def _execute_trusted_v1_backfill_assign_reporting_lines(
+    command: AssignReportingLinesCommand,
+    *,
+    raw_key: str,
+    actor: CommandActor,
+    uow_factory: UnitOfWorkFactory,
+    authorize: Authorize = authorize_journal_write,
+    ledger_committer: LedgerCommitter | None = None,
+    max_attempts: int = 3,
+) -> CommandOutcome:
+    """Private deterministic import path for frozen historical metadata."""
+    _assert_trusted_v1_backfill_invocation(
+        raw_key=raw_key,
+        actor=actor,
+        expected_contexts=("reporting", "classification"),
+        authorize=authorize,
+        ledger_committer=ledger_committer,
+        max_attempts=max_attempts,
+    )
+    return _execute_assign_reporting_lines(
+        command,
+        raw_key=raw_key,
+        actor=actor,
+        uow_factory=uow_factory,
+        authorize=authorize,
+        ledger_committer=ledger_committer,
+        max_attempts=max_attempts,
+        metadata_mode=_ReportingMetadataMode.TRUSTED_V1_BACKFILL,
+    )
+
+
+def _execute_assign_reporting_lines(
+    command: AssignReportingLinesCommand,
+    *,
+    raw_key: str,
+    actor: CommandActor,
+    uow_factory: UnitOfWorkFactory,
+    authorize: Authorize,
+    ledger_committer: LedgerCommitter | None,
+    max_attempts: int,
+    metadata_mode: _ReportingMetadataMode,
+) -> CommandOutcome:
     if type(command) is not AssignReportingLinesCommand:
         raise IdempotencyValidationError(
             "command must be an AssignReportingLinesCommand"
         )
+    if type(metadata_mode) is not _ReportingMetadataMode:
+        raise IdempotencyValidationError("reporting metadata mode is invalid")
     committer = ledger_committer or LedgerCommitter()
 
     def handler(
@@ -177,7 +262,13 @@ def execute_assign_reporting_lines(
     ) -> LedgerWritePlan:
         if received is not command:
             raise IdempotencyValidationError("unexpected reporting assignment command")
-        return _build_assign_plan(command, uow, locked_head, actor=actor)
+        return _build_assign_plan(
+            command,
+            uow,
+            locked_head,
+            actor=actor,
+            metadata_mode=metadata_mode,
+        )
 
     return execute_financial(
         command,
@@ -216,6 +307,7 @@ def _build_assign_plan(
     locked_head: LockedBookHead,
     *,
     actor: CommandActor,
+    metadata_mode: _ReportingMetadataMode,
 ) -> LedgerWritePlan:
     if locked_head.book_id != command.book_id:
         raise IdempotencyValidationError("locked Book does not match command")
@@ -224,7 +316,22 @@ def _build_assign_plan(
         book_id=command.book_id,
         transaction_id=command.transaction_id,
     )
-    _validate_lines(command, uow)
+    is_reversal = uow.session.scalar(
+        select(TransactionReversalRecord.reversal_transaction_id).where(
+            TransactionReversalRecord.book_id == command.book_id,
+            TransactionReversalRecord.reversal_transaction_id == command.transaction_id,
+        )
+    )
+    if is_reversal is not None:
+        raise UnsupportedReportingTarget(
+            "reversal transactions inherit the original reporting lines"
+        )
+    _validate_lines(
+        command,
+        uow,
+        metadata_mode=metadata_mode,
+        transaction_kind=transaction.transaction_kind,
+    )
     revision = command.expected_revision + 1
     payload = ReportingLinesAssigned(
         transaction_id=command.transaction_id,
@@ -240,6 +347,7 @@ def _build_assign_plan(
                 line_kind=line.line_kind,
                 dimension=line.dimension,
                 dimension_id=line.dimension_id,
+                counterparty_id=line.counterparty_id,
                 description_ref=line.description_ref,
             )
             for position, line in enumerate(command.lines)
@@ -271,9 +379,36 @@ def _build_assign_plan(
     )
 
 
-def _validate_lines(command: AssignReportingLinesCommand, uow: UnitOfWork) -> None:
+def _validate_lines(
+    command: AssignReportingLinesCommand,
+    uow: UnitOfWork,
+    *,
+    metadata_mode: _ReportingMetadataMode,
+    transaction_kind: str,
+) -> None:
+    if transaction_kind == "credit_card_payment":
+        raise UnsupportedCreditCardReporting(
+            "credit-card payments are balance-sheet transfers and cannot be categorized"
+        )
+    if transaction_kind in {
+        "credit_card_charge",
+        "credit_card_fee",
+        "credit_card_refund",
+    } and any(
+        line.line_kind is not ReportingLineKind.EXPENSE for line in command.lines
+    ):
+        raise UnsupportedCreditCardReporting(
+            "credit-card charges, fees, and refunds require expense reporting lines"
+        )
     catalogs = CatalogRepository(uow.session)
     for line in command.lines:
+        if (
+            line.counterparty_id is not None
+            and metadata_mode is not _ReportingMetadataMode.TRUSTED_V1_BACKFILL
+        ):
+            raise UnsupportedReportingMetadata(
+                "counterparty metadata requires the trusted historical import path"
+            )
         if (
             line.dimension is not ReportingDimension.CATEGORY
             or line.dimension_id is None
@@ -324,6 +459,8 @@ __all__ = [
     "AssignReportingLinesCommand",
     "ReportingAllocationExceeded",
     "ReportingLineInput",
+    "UnsupportedCreditCardReporting",
     "UnsupportedReportingDimension",
+    "UnsupportedReportingTarget",
     "execute_assign_reporting_lines",
 ]

@@ -9,6 +9,7 @@ import click
 from .click_auth import register as register_auth
 from .click_catalog import register as register_catalog
 from .click_common import ClickState, Requester, output_options, pass_state
+from .click_credit_card import register as register_credit_card
 from .click_investment import register as register_investment
 from .click_ledger import register as register_ledger
 from .click_payment import register as register_payment
@@ -395,6 +396,7 @@ def _click_error_code(exc: click.ClickException) -> str:
 
 register_auth(cli)
 register_catalog(cli)
+register_credit_card(cli)
 register_investment(cli)
 register_ledger(cli)
 register_payment(cli)

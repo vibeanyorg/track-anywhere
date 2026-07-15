@@ -50,7 +50,13 @@ class JournalScenario:
         )
 
 
-def seed_journal_scenario(engine, scenario: JournalScenario) -> None:
+def seed_journal_scenario(
+    engine,
+    scenario: JournalScenario,
+    *,
+    credit_account_type: str = "asset",
+    credit_account_subtype: str | None = None,
+) -> None:
     with engine.begin() as connection:
         connection.execute(
             text("""
@@ -75,23 +81,31 @@ def seed_journal_scenario(engine, scenario: JournalScenario) -> None:
             """),
             {"book_id": scenario.book_id, "zero_hash": bytes(32)},
         )
-        for account_id, name in (
-            (scenario.debit_account_id, "Debit"),
-            (scenario.credit_account_id, "Credit"),
+        for account_id, name, account_type, account_subtype in (
+            (scenario.debit_account_id, "Debit", "asset", None),
+            (
+                scenario.credit_account_id,
+                "Credit",
+                credit_account_type,
+                credit_account_subtype,
+            ),
         ):
             connection.execute(
                 text("""
                 insert into accounts (
                     book_id, account_id, asset_code, account_type,
-                    current_name, status
+                    account_subtype, current_name, status
                 ) values (
-                    :book_id, :account_id, 'USD', 'asset', :name, 'active'
+                    :book_id, :account_id, 'USD', :account_type,
+                    :account_subtype, :name, 'active'
                 )
                 """),
                 {
                     "book_id": scenario.book_id,
                     "account_id": account_id,
                     "name": name,
+                    "account_type": account_type,
+                    "account_subtype": account_subtype,
                 },
             )
         connection.execute(

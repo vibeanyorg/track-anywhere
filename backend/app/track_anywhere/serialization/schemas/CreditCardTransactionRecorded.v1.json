@@ -1,0 +1,175 @@
+{
+  "$defs": {
+    "CreditCardIntent": {
+      "enum": [
+        "charge",
+        "payment",
+        "refund",
+        "fee"
+      ],
+      "title": "CreditCardIntent",
+      "type": "string"
+    },
+    "ExternalReferenceKind": {
+      "enum": [
+        "provider_transaction",
+        "bank_transaction",
+        "card_transaction",
+        "broker_trade"
+      ],
+      "title": "ExternalReferenceKind",
+      "type": "string"
+    },
+    "FinancialExternalReference": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ExternalReferenceKind"
+        },
+        "provider_code": {
+          "pattern": "^[a-z][a-z0-9_-]{0,31}$",
+          "title": "Provider Code",
+          "type": "string"
+        },
+        "reference": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$",
+          "title": "Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider_code",
+        "kind",
+        "reference"
+      ],
+      "title": "FinancialExternalReference",
+      "type": "object"
+    },
+    "JournalPostingFact": {
+      "additionalProperties": false,
+      "properties": {
+        "account_id": {
+          "format": "uuid",
+          "title": "Account Id",
+          "type": "string"
+        },
+        "asset_code": {
+          "pattern": "^[A-Z][A-Z0-9._-]{0,15}$",
+          "title": "Asset Code",
+          "type": "string"
+        },
+        "position": {
+          "minimum": 0,
+          "title": "Position",
+          "type": "integer"
+        },
+        "posting_id": {
+          "format": "uuid",
+          "title": "Posting Id",
+          "type": "string"
+        },
+        "side": {
+          "$ref": "#/$defs/PostingSide"
+        },
+        "units": {
+          "pattern": "^[1-9][0-9]{0,37}$",
+          "title": "Units",
+          "type": "string"
+        }
+      },
+      "required": [
+        "posting_id",
+        "position",
+        "account_id",
+        "asset_code",
+        "side",
+        "units"
+      ],
+      "title": "JournalPostingFact",
+      "type": "object"
+    },
+    "PostingSide": {
+      "enum": [
+        "debit",
+        "credit"
+      ],
+      "title": "PostingSide",
+      "type": "string"
+    }
+  },
+  "$id": "https://schemas.track-anywhere.dev/v2/events/CreditCardTransactionRecorded.v1.json",
+  "additionalProperties": false,
+  "description": "An immutable semantic credit-card fact with canonical journal legs.",
+  "properties": {
+    "card_account_id": {
+      "format": "uuid",
+      "title": "Card Account Id",
+      "type": "string"
+    },
+    "counter_account_id": {
+      "format": "uuid",
+      "title": "Counter Account Id",
+      "type": "string"
+    },
+    "description_ref": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description Ref"
+    },
+    "external_references": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/FinancialExternalReference"
+      },
+      "title": "External References",
+      "type": "array"
+    },
+    "intent": {
+      "$ref": "#/$defs/CreditCardIntent"
+    },
+    "original_transaction_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Original Transaction Id"
+    },
+    "postings": {
+      "items": {
+        "$ref": "#/$defs/JournalPostingFact"
+      },
+      "title": "Postings",
+      "type": "array"
+    },
+    "transaction_id": {
+      "format": "uuid",
+      "title": "Transaction Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "intent",
+    "transaction_id",
+    "card_account_id",
+    "counter_account_id",
+    "postings"
+  ],
+  "title": "CreditCardTransactionRecorded",
+  "type": "object",
+  "x-event-type": "CreditCardTransactionRecorded",
+  "x-schema-version": 1
+}

@@ -10,6 +10,7 @@ from track_anywhere.domain.journal import (
     AccountCatalogSnapshot,
     AccountSnapshot,
     AccountSystemRole,
+    AccountType,
     CrossBookAccount,
     DuplicatePostingId,
     DuplicatePostingPosition,
@@ -44,6 +45,7 @@ def _account(
         account_id=account_id,
         book_id=book_id,
         asset_code=asset_code,
+        account_type=AccountType.ASSET,
         system_role=system_role,
     )
 

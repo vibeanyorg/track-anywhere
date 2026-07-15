@@ -24,6 +24,10 @@ from ...application.catalogs.create_category import (
     CreateCategory,
     create_category as execute_create_category,
 )
+from ...application.catalogs.reopen_account import (
+    ReopenAccount,
+    reopen_account as execute_reopen_account,
+)
 from ...application.ledger_committer import LedgerCommitter
 from ..dependencies import SessionDependency, UnitOfWorkFactory
 from .schemas import (
@@ -101,7 +105,8 @@ def create_catalog_router(
                     book_id=book_id,
                     account_id=payload.account_id,
                     asset_code=payload.asset_code,
-                    account_type=payload.account_type,
+                    account_type=payload.account_type.value,
+                    account_subtype=payload.account_subtype,
                     current_name=payload.current_name,
                     system_role=payload.system_role,
                 ),
@@ -142,6 +147,22 @@ def create_catalog_router(
         return call_application(
             lambda: execute_close_account(
                 CloseAccount(book_id=book_id, account_id=account_id),
+                actor=command_actor,
+                uow_factory=uow_factory,
+                ledger_committer=committer,
+            )
+        )
+
+    @router.post("/books/{book_id}/accounts/{account_id}/reopen")
+    def reopen_account(
+        book_id: UUID,
+        account_id: UUID,
+        actor: RequestActor = Depends(request_actor),
+    ) -> dict[str, object]:
+        command_actor = actor.require_book_scope(book_id, "book:write")
+        return call_application(
+            lambda: execute_reopen_account(
+                ReopenAccount(book_id=book_id, account_id=account_id),
                 actor=command_actor,
                 uow_factory=uow_factory,
                 ledger_committer=committer,

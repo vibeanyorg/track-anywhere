@@ -556,6 +556,7 @@ def test_staging_harness_rejects_missing_arguments_before_docker() -> None:
 def test_run_contract_requires_unique_report_and_external_acceptance() -> None:
     checklist = _read("docs/operations/v2-isolated-staging-checklist.md")
     final = _read("docs/operations/v2-final-verification.md")
+    normalized_final = " ".join(final.casefold().split())
 
     for required in (
         "caller-supplied UUID",
@@ -579,9 +580,10 @@ def test_run_contract_requires_unique_report_and_external_acceptance() -> None:
         assert required.casefold() in checklist.casefold()
 
     assert "NOT RUN" in final
-    assert "production untouched" in final.casefold()
-    assert "real frozen dump" in final.casefold()
-    assert "not executed" in final.casefold()
+    assert "production untouched" in normalized_final
+    assert "authorized frozen dump" in normalized_final
+    assert "two-target backfill rehearsal" in normalized_final
+    assert "not been executed" in normalized_final
 
 
 def test_docker_context_excludes_data_artifacts() -> None:
@@ -771,15 +773,16 @@ def test_existing_stack_executes_smoke_without_infrastructure_mutation_or_pull(
     assert not evidence["pull_violations"].exists()
 
 
-def test_final_verification_describes_the_read_only_dump_inspection_truthfully() -> (
-    None
-):
-    final = _read("docs/operations/v2-final-verification.md").casefold()
+def test_final_verification_describes_the_completed_dump_rehearsal_truthfully() -> None:
+    final = " ".join(
+        _read("docs/operations/v2-final-verification.md").casefold().split()
+    )
 
-    assert "metadata, schema, and aggregate shapes" in final
-    assert "read-only" in final
-    assert "no full import" in final
-    assert "no full rehearsal" in final
+    assert "authorized frozen dump was restored only into disposable local" in final
+    assert "two independent verifier pass results" in final
+    assert "zero quarantine" in final
+    assert "strict cleanup" in final
+    assert "not an exact-image staging or release attestation" in final
     assert "was not executed, opened, copied, restored, or queried" not in final
 
 

@@ -46,6 +46,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     TableSpec("accounts", ("account_id",)),
     TableSpec("categories", ("category_id",)),
     TableSpec("category_versions", ("category_version_id",)),
+    TableSpec("counterparties", ("counterparty_id",)),
     TableSpec("transactions", ("transaction_id",)),
     TableSpec("postings", ("transaction_id", "position", "id")),
     TableSpec("transaction_lines", ("transaction_id", "position", "line_id")),

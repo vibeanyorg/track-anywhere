@@ -8,6 +8,7 @@ from sqlalchemy import Engine
 from ..dependencies import SessionDependency, build_engine_dependencies
 from .auth import create_auth_router
 from .catalogs import create_catalog_router
+from .credit_cards import create_credit_card_router
 from .investments import create_investment_router
 from .journal import create_journal_router
 from .queries import create_query_router
@@ -67,6 +68,13 @@ def create_v2_router(
         )
         versioned_router.include_router(
             create_journal_router(
+                get_session=get_session,
+                uow_factory=runtime.uow_factory,
+                ledger_committer=runtime.ledger_committer,
+            )
+        )
+        versioned_router.include_router(
+            create_credit_card_router(
                 get_session=get_session,
                 uow_factory=runtime.uow_factory,
                 ledger_committer=runtime.ledger_committer,

@@ -878,3 +878,83 @@ def test_catalog_foreign_keys_never_cascade_and_trigger_functions_are_hardened(
         assert row["broadly_executable"] is False
     definitions = "\n".join(row["definition"] for row in trigger_rows).upper()
     assert "IS DISTINCT FROM" in definitions
+
+
+def test_accounts_enforce_closed_type_set_lowercase_subtype_and_semantic_identity(
+    pg_engine,
+) -> None:
+    book_id, _other_book_id = _seed_books(pg_engine)
+    valid_types = (
+        "asset",
+        "liability",
+        "equity",
+        "income",
+        "expense",
+        "fund",
+        "system",
+    )
+    account_ids: dict[str, UUID] = {}
+    for account_type in valid_types:
+        account_id = uuid4()
+        account_ids[account_type] = account_id
+        _execute(
+            pg_engine,
+            """
+            insert into accounts (
+                book_id, account_id, asset_code, account_type, account_subtype,
+                current_name, status
+            ) values (
+                :book_id, :account_id, 'USD', :account_type, :account_subtype,
+                :current_name, 'active'
+            )
+            """,
+            {
+                "book_id": book_id,
+                "account_id": account_id,
+                "account_type": account_type,
+                "current_name": account_type,
+                "account_subtype": (
+                    "credit_card" if account_type == "liability" else None
+                ),
+            },
+        )
+
+    for account_type, account_subtype in (
+        ("receivable", None),
+        ("ASSET", None),
+        ("liability", "Credit_Card"),
+        ("liability", "credit-card"),
+        ("liability", "credit__card"),
+        ("liability", ""),
+        ("asset", "credit_card"),
+    ):
+        _rejects_integrity(
+            pg_engine,
+            """
+            insert into accounts (
+                book_id, account_id, asset_code, account_type, account_subtype,
+                current_name, status
+            ) values (
+                :book_id, :account_id, 'USD', :account_type, :account_subtype,
+                'Invalid', 'active'
+            )
+            """,
+            {
+                "book_id": book_id,
+                "account_id": uuid4(),
+                "account_type": account_type,
+                "account_subtype": account_subtype,
+            },
+        )
+
+    liability_id = account_ids["liability"]
+    for assignment in (
+        "account_type = 'asset'",
+        "account_subtype = 'charge_card'",
+    ):
+        _rejects_database_operation(
+            pg_engine,
+            f"update accounts set {assignment} "
+            "where book_id = :book_id and account_id = :account_id",
+            {"book_id": book_id, "account_id": liability_id},
+        )

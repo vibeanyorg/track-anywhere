@@ -21,6 +21,11 @@ from track_anywhere.application.catalogs.create_category import (
     CreateCategory,
     create_category,
 )
+from track_anywhere.application.catalogs.reopen_account import (
+    AccountAlreadyActive,
+    ReopenAccount,
+    reopen_account,
+)
 from track_anywhere.application.idempotency import CommandActor
 from track_anywhere.infrastructure.db.models.auth import BookMemberRecord, UserRecord
 from track_anywhere.infrastructure.db.models.catalog import (
@@ -214,6 +219,22 @@ def test_close_account_is_serialized_by_book_head_and_is_terminal(pg_engine) -> 
             actor=ACTOR,
             uow_factory=_uow_factory(pg_engine),
         )
+    reopened = reopen_account(
+        ReopenAccount(book_id=book.book_id, account_id=account_id),
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+    assert reopened == {
+        "account_id": str(account_id),
+        "as_of_book_position": 0,
+        "status": "active",
+    }
+    with pytest.raises(AccountAlreadyActive):
+        reopen_account(
+            ReopenAccount(book_id=book.book_id, account_id=account_id),
+            actor=ACTOR,
+            uow_factory=_uow_factory(pg_engine),
+        )
     with Session(pg_engine) as session:
         assert session.scalar(select(func.count()).select_from(AccountRecord)) == 1
-        assert session.get(AccountRecord, (book.book_id, account_id)).status == "closed"
+        assert session.get(AccountRecord, (book.book_id, account_id)).status == "active"

@@ -84,7 +84,8 @@ class JournalTransactionRecord(V2Base):
         CheckConstraint("source_position > 0", name="source_position_positive"),
         CheckConstraint(
             "transaction_kind in ('standard', 'opening', 'adjustment', "
-            "'transfer', 'fx', 'investment_cash')",
+            "'transfer', 'fx', 'investment_cash', 'credit_card_charge', "
+            "'credit_card_payment', 'credit_card_refund', 'credit_card_fee')",
             name="kind_valid",
         ),
     )
@@ -339,6 +340,7 @@ class ReportingLineRecord(V2Base):
     line_kind: Mapped[str] = mapped_column(String(32))
     dimension: Mapped[str] = mapped_column(String(32))
     dimension_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    counterparty_id: Mapped[UUID | None] = mapped_column(nullable=True)
     description_ref: Mapped[UUID | None] = mapped_column(nullable=True)
     source_event_id: Mapped[UUID] = mapped_column()
 

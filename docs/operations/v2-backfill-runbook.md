@@ -21,7 +21,9 @@ Production cutover requires a separate authorization after the complete V2 gate.
 ## Prerequisites
 
 1. Docker with Compose v2 is available locally.
-2. The fixed dump and manifest are readable local files.
+2. The fixed dump, full manifest, and reviewed credit-card semantic decision
+   artifact are readable local files. The decision artifact must bind the full
+   manifest snapshot/content hash; a dump-only bootstrap manifest is not enough.
 3. These local-only variables identify one disposable PostgreSQL 17 cluster:
 
    ```bash
@@ -67,9 +69,21 @@ is mapped without inventing domain facts:
   deterministic per-Book schedule. It is ordered by effective time and raw
   source identity, with original-before-reversal and transaction-before-reclass
   dependencies; journal children stay adjacent to their parent aggregate.
-- V1 deferred reporting fields are accepted only at their real defaults:
-  null counterparty/project, `unknown` necessity, and `none` reimbursement.
-  Any meaningful value blocks the run rather than being silently discarded.
+- The 2 source counterparty references are preserved as deterministic,
+  Book-scoped opaque UUIDs on reporting lines. The backfill does not invent a
+  V2 counterparty catalog or display metadata. Project must remain null,
+  necessity `unknown`, and reimbursement `none`; any unsupported meaningful
+  value blocks the run rather than being silently discarded.
+- Every source transaction touching a credit-card account is covered by one
+  hash-bound review decision. The fixed snapshot keeps already-correct charges,
+  flips only reviewed legacy balance/payment/transfer directions, redirects the
+  post-merge payment from the retired alias to the shared card, and emits exact
+  deterministic reversals for three legacy-only 2x sign compensations. The
+  retired alias must finish closed at zero. There is no sign-based fallback.
+- The review contract records its manifest hash, decision hash, reviewer, and
+  review time before the first source receipt. Resume with a different artifact
+  is rejected. Both independent verifiers recompute target journal facts and
+  the five reviewed natural balances without calling the loader normalizer.
 
 ## Run the rehearsal
 
@@ -80,16 +94,20 @@ set -euo pipefail
 RUN_ROOT="output/v2-backfill-run-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 bash scripts/rehearse-v2-backfill.sh \
   --dump /absolute/path/to/frozen-v1.dump \
-  --manifest /absolute/path/to/frozen-v1.manifest.txt \
+  --manifest /absolute/path/to/full-frozen-v1-manifest.json \
+  --credit-card-review /absolute/path/to/reviewed-credit-card-semantics.json \
   --output-root "$RUN_ROOT"
 ```
 
 One shell process owns the entire lifecycle. In order it:
 
-1. binds the dump SHA-256 to the manifest and checks all three client versions;
-2. requires both runs to emit byte-identical full extraction manifests bound to
-   the fixed dump and source revision; each independent verifier consumes its
-   run's full manifest rather than the initial dump-only binding;
+1. binds the dump SHA-256 to the supplied manifest and checks all three client
+   versions;
+2. lets run A bootstrap a full canonical extraction manifest when the supplied
+   legacy manifest contains only dump/revision identity, then requires run B to
+   use run A's complete per-table counts and NDJSON hashes as its frozen input;
+   both runs must emit byte-identical full manifests and each independent
+   verifier consumes the corresponding complete manifest;
 3. creates and restores one source, then makes its connections read-only;
 4. creates two empty targets at the exact V2 Alembic head;
 5. checks the frozen source contract before loading;
@@ -116,6 +134,7 @@ import sys
 report = json.load(open(sys.argv[1], encoding="utf-8"))
 assert report["status"] == "PASS"
 assert report["quarantine_count"] == 0
+assert len(report["credit_card_review_hash"]) == 64
 assert report["source_counts"] == {
     "accounts": 121,
     "postings": 284,

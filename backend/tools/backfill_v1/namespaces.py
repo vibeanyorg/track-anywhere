@@ -13,6 +13,7 @@ ENTITY_KINDS = frozenset(
         "category",
         "category_version",
         "command",
+        "counterparty",
         "event",
         "line",
         "line_version",

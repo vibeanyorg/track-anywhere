@@ -21,7 +21,6 @@ import backend.tools.backfill_v1.pipeline as pipeline_module
 @pytest.mark.parametrize(
     ("field", "meaningful_value"),
     [
-        pytest.param("counterparty_id", "counterparty-1", id="counterparty"),
         pytest.param("project_id", "project-1", id="project"),
         pytest.param("necessity", "necessary", id="necessity"),
         pytest.param(

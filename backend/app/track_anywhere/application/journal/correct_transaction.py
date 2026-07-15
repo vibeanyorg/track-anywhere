@@ -5,11 +5,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID, NAMESPACE_URL, uuid5
 
+from sqlalchemy import select
+
 from ...domain.journal.events import (
     FinancialExternalReference,
     ReversalReasonCode,
 )
 from ...domain.journal.models import TransactionKind
+from ...infrastructure.db.models.catalog import AccountRecord
+from ...infrastructure.db.models.projections import JournalPostingRecord
 from ...serialization.canonical_json import JSONValue, format_utc_microseconds
 from ..command_bus import execute_financial
 from ..idempotency import (
@@ -32,6 +36,7 @@ from .reverse_transaction import (
     _build_reversal_pending,
     _ensure_transaction_id_available,
     _load_reversal_source,
+    _source_touches_credit_card_account,
 )
 
 
@@ -47,6 +52,10 @@ _CORRECTION_KINDS = frozenset(
         TransactionKind.TRANSFER,
     }
 )
+
+
+class CreditCardGeneralCorrectionForbidden(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,12 +250,30 @@ def _build_correction_plan(
         raise TransactionIdAlreadyExists(
             "correction transaction ids must all be distinct"
         )
+    if _transaction_touches_credit_card_account(
+        uow,
+        book_id=command.book_id,
+        transaction_id=command.reverses_transaction_id,
+    ):
+        raise CreditCardGeneralCorrectionForbidden(
+            "typed credit-card transactions cannot use general correction; "
+            "historical credit-card transactions require exact reversal"
+        )
     source = _load_reversal_source(
         uow,
         book_id=command.book_id,
         reverses_transaction_id=command.reverses_transaction_id,
         reversal_transaction_id=command.reversal_transaction_id,
     )
+    if _source_touches_credit_card_account(
+        uow,
+        book_id=command.book_id,
+        postings=source.postings,
+    ):
+        raise CreditCardGeneralCorrectionForbidden(
+            "typed credit-card transactions cannot use general correction; "
+            "historical credit-card transactions require exact reversal"
+        )
     _ensure_transaction_id_available(
         uow,
         book_id=command.book_id,
@@ -320,7 +347,34 @@ def _build_correction_plan(
     )
 
 
+def _transaction_touches_credit_card_account(
+    uow: UnitOfWork,
+    *,
+    book_id: UUID,
+    transaction_id: UUID,
+) -> bool:
+    return (
+        uow.session.scalar(
+            select(AccountRecord.account_id)
+            .join(
+                JournalPostingRecord,
+                (JournalPostingRecord.book_id == AccountRecord.book_id)
+                & (JournalPostingRecord.account_id == AccountRecord.account_id)
+                & (JournalPostingRecord.asset_code == AccountRecord.asset_code),
+            )
+            .where(
+                JournalPostingRecord.book_id == book_id,
+                JournalPostingRecord.transaction_id == transaction_id,
+                AccountRecord.account_subtype == "credit_card",
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
 __all__ = [
+    "CreditCardGeneralCorrectionForbidden",
     "CorrectTransactionCommand",
     "CorrectionReplacement",
     "execute_correct_transaction",

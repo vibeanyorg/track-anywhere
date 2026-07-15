@@ -16,6 +16,7 @@ from ..domain.investments.events import (
     InvestmentLotAcquired,
     InvestmentLotDisposed,
 )
+from ..domain.credit_cards.events import CreditCardTransactionRecorded
 from ..domain.journal.events import (
     FinancialExternalReferenceCorrected,
     JournalTransactionPosted,
@@ -337,6 +338,7 @@ class EventRegistry:
 
 PRODUCTION_EVENT_REGISTRY = EventRegistry(
     (
+        CreditCardTransactionRecorded,
         JournalTransactionPosted,
         JournalTransactionReversed,
         FinancialExternalReferenceCorrected,

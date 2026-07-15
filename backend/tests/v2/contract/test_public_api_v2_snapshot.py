@@ -29,13 +29,19 @@ def test_public_v2_openapi_matches_reviewed_snapshot(
             expected_runtime_role="track_anywhere_runtime",
             cookie_secure=False,
         )
+        openapi = application.openapi()
         paths = {
             path: sorted(method for method in operations if method in HTTP_METHODS)
-            for path, operations in sorted(application.openapi()["paths"].items())
+            for path, operations in sorted(openapi["paths"].items())
+        }
+        schemas = {
+            "ReportingLineResponse": openapi["components"]["schemas"][
+                "ReportingLineResponse"
+            ]
         }
         expected = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
 
-        assert {"paths": paths} == expected
+        assert {"paths": paths, "schemas": schemas} == expected
         assert paths
         assert all(path.startswith("/api/v2/") for path in paths)
         assert not any("/dev-" in path or "/password" in path for path in paths)

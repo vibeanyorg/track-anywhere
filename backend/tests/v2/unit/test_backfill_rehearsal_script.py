@@ -75,7 +75,7 @@ case "$*" in
       shift
     done
     mkdir -p "$(dirname "$output")"
-    printf '%s\n' '{"status":"PASS","snapshot_id":"synthetic","manifest_hash":"00","source_counts":{},"receipt_count":0,"quarantine_count":0,"counts":{},"book_terminal_hashes":{},"projection_hashes":{},"issues":[]}' > "$output"
+    printf '%s\n' '{"status":"PASS","snapshot_id":"synthetic","manifest_hash":"00","credit_card_review_hash":"11","source_counts":{},"receipt_count":0,"quarantine_count":0,"counts":{},"book_terminal_hashes":{},"projection_hashes":{},"issues":[]}' > "$output"
     ;;
   *"backend.tools.backfill_v1 run "*)
     output=""
@@ -120,9 +120,11 @@ def _run_fake_rehearsal(
     fake_bin, log = _fake_rehearsal_tools(tmp_path)
     dump = tmp_path / "synthetic.dump"
     manifest = tmp_path / "synthetic.manifest"
+    review = tmp_path / "credit-card-review.json"
     output = tmp_path / "output"
     dump.write_bytes(b"synthetic-only")
     manifest.write_text("synthetic-only\n", encoding="utf-8")
+    review.write_text("synthetic-only\n", encoding="utf-8")
     environment = os.environ.copy()
     environment["PATH"] = f"{fake_bin}{os.pathsep}{environment['PATH']}"
     environment["FAKE_REHEARSAL_LOG"] = str(log)
@@ -135,6 +137,8 @@ def _run_fake_rehearsal(
             str(dump),
             "--manifest",
             str(manifest),
+            "--credit-card-review",
+            str(review),
             "--output-root",
             str(output),
         ],
@@ -181,6 +185,21 @@ def test_rehearsal_uses_pinned_client_and_safe_factory_url_conversion() -> None:
     assert "host pg_dump" not in content
 
 
+def test_rehearsal_grants_restored_source_reads_before_using_read_only_url() -> None:
+    content = _content()
+
+    restore = content.index('"$PG17_CLIENT" pg_restore')
+    read_only_url = content.index(
+        'SOURCE_READ_ONLY_URL="$("${FACTORY[@]}" read-only-url'
+    )
+    grant_usage = content.index("grant usage on schema public")
+    grant_select = content.index("grant select on all tables in schema public")
+
+    assert restore < grant_usage < grant_select < read_only_url
+    assert 'set role \\"$SOURCE_OWNER\\"' in content
+    assert 'to \\"$MIGRATOR_ROLE\\"' in content
+
+
 def test_rehearsal_runs_both_independent_verifiers_before_strict_cleanup() -> None:
     content = _content()
     run_a = content.index("--batch-size 37")
@@ -201,11 +220,18 @@ def test_rehearsal_runs_both_independent_verifiers_before_strict_cleanup() -> No
     assert "--workers 4" in content
     assert "--shuffle-seed 0" in content
     assert "--shuffle-seed 731" in content
+    assert content.index('RUN_A_MANIFEST="$OUTPUT_ROOT/run-a/extraction/manifest.json"') < run_b
+    run_b_command = content[run_b - 360 : run_b + 200]
+    assert '--manifest "$RUN_A_MANIFEST"' in run_b_command
+    assert '--manifest "$MANIFEST_PATH"' not in run_b_command
+    assert "canonical extraction manifest has no source tables" in content
     assert 'cmp -s "$RUN_A_MANIFEST" "$RUN_B_MANIFEST"' in content
     assert '--manifest "$RUN_A_MANIFEST"' in content
     assert '--manifest "$RUN_B_MANIFEST"' in content
     assert '--manifest "$MANIFEST_PATH"' in content
     assert '--manifest "$MANIFEST_PATH"' not in content[verify_a - 160 : verify_a]
+    assert content.count('--credit-card-review "$CREDIT_CARD_REVIEW_PATH"') == 4
+    assert '"credit_card_review_hash"' in content
 
 
 def test_success_cleanup_is_strict_and_reads_absence_back() -> None:
@@ -271,9 +297,11 @@ def test_existing_output_is_rejected_without_deleting_or_overwriting_it(
 ) -> None:
     dump = tmp_path / "source.dump"
     manifest = tmp_path / "manifest.json"
+    review = tmp_path / "credit-card-review.json"
     output = tmp_path / "existing-output"
     dump.write_bytes(b"not-consumed")
     manifest.write_text("{}", encoding="utf-8")
+    review.write_text("{}", encoding="utf-8")
     output.mkdir()
     sentinel = output / "keep.txt"
     sentinel.write_text("keep", encoding="utf-8")
@@ -285,6 +313,8 @@ def test_existing_output_is_rejected_without_deleting_or_overwriting_it(
             str(dump),
             "--manifest",
             str(manifest),
+            "--credit-card-review",
+            str(review),
             "--output-root",
             str(output),
         ],
@@ -302,6 +332,7 @@ def test_existing_output_is_rejected_without_deleting_or_overwriting_it(
 def test_failed_manifest_gate_cannot_write_a_pass_summary(tmp_path: Path) -> None:
     dump = tmp_path / "source.dump"
     manifest = tmp_path / "manifest.json"
+    review = tmp_path / "credit-card-review.json"
     output = tmp_path / "new-output"
     dump.write_bytes(b"synthetic-local-dump")
     manifest.write_text(
@@ -316,6 +347,7 @@ def test_failed_manifest_gate_cannot_write_a_pass_summary(tmp_path: Path) -> Non
         ),
         encoding="utf-8",
     )
+    review.write_text("{}", encoding="utf-8")
 
     result = subprocess.run(
         [
@@ -324,6 +356,8 @@ def test_failed_manifest_gate_cannot_write_a_pass_summary(tmp_path: Path) -> Non
             str(dump),
             "--manifest",
             str(manifest),
+            "--credit-card-review",
+            str(review),
             "--output-root",
             str(output),
         ],

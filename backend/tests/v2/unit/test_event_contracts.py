@@ -49,6 +49,7 @@ LINE_ID = UUID("00000000-0000-4000-8000-00000000000f")
 LINE_VERSION_ID = UUID("00000000-0000-4000-8000-000000000010")
 CATALOG_ID = UUID("00000000-0000-4000-8000-000000000011")
 DIMENSION_ID = UUID("00000000-0000-4000-8000-000000000012")
+COUNTERPARTY_ID = UUID("00000000-0000-4000-8000-000000000013")
 
 
 def _posting(
@@ -330,6 +331,7 @@ def _reporting_line(
         line_kind=ReportingLineKind.EXPENSE,
         dimension=ReportingDimension.CATEGORY,
         dimension_id=DIMENSION_ID,
+        counterparty_id=COUNTERPARTY_ID,
         description_ref=DESCRIPTION_REF,
     )
 
@@ -347,6 +349,7 @@ def test_reporting_assignment_is_a_nonempty_replace_all_snapshot() -> None:
     assert dumped["lines"][0]["dimension"] == "category"
     assert dumped["lines"][0]["line_version_id"] == str(LINE_VERSION_ID)
     assert dumped["lines"][0]["catalog_id"] == str(CATALOG_ID)
+    assert dumped["lines"][0]["counterparty_id"] == str(COUNTERPARTY_ID)
 
 
 def test_reporting_assignment_round_trips_through_a_jsonb_mapping() -> None:

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from track_anywhere_cli.click_app import run
 
 
@@ -123,6 +127,21 @@ def test_v2_catalog_commands_use_book_scoped_contracts(capsys):
         )
         == 0
     )
+    assert (
+        run(
+            [
+                "--token",
+                "token",
+                "account",
+                "reopen",
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+                "--json",
+            ],
+            requester=request,
+        )
+        == 0
+    )
     capsys.readouterr()
 
     assert calls == [
@@ -185,6 +204,16 @@ def test_v2_catalog_commands_use_book_scoped_contracts(capsys):
             "payload": None,
             "key": None,
         },
+        {
+            "token": "token",
+            "method": "POST",
+            "path": (
+                "/api/v2/books/11111111-1111-1111-1111-111111111111/"
+                "accounts/22222222-2222-2222-2222-222222222222/reopen"
+            ),
+            "payload": None,
+            "key": None,
+        },
     ]
 
 
@@ -231,3 +260,170 @@ def test_v2_book_queries_preserve_as_of_position(capsys):
         f"/api/v2/books/{book_id}/balances?as_of_book_position=41",
         f"/api/v2/books/{book_id}/reporting-lines?as_of_book_position=41",
     ]
+
+
+def test_book_balances_json_preserves_account_lifecycle_status(capsys):
+    book_id = "11111111-1111-1111-1111-111111111111"
+    account_id = "22222222-2222-2222-2222-222222222222"
+
+    def request(_config, method, path, payload=None, key=None):
+        assert (method, path, payload, key) == (
+            "GET",
+            f"/api/v2/books/{book_id}/balances",
+            None,
+            None,
+        )
+        return 200, {
+            "items": [
+                {
+                    "account_id": account_id,
+                    "account_status": "closed",
+                }
+            ],
+            "as_of_book_position": 7,
+            "projection_matches_reference": True,
+        }
+
+    assert (
+        run(
+            [
+                "--token",
+                "token",
+                "book",
+                "balances",
+                book_id,
+                "--json",
+            ],
+            requester=request,
+        )
+        == 0
+    )
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["data"]["items"][0]["account_status"] == "closed"
+
+
+def test_book_reporting_lines_json_preserves_historical_catalog_id(capsys):
+    book_id = "11111111-1111-1111-1111-111111111111"
+    catalog_id = "99999999-9999-4999-8999-999999999999"
+
+    def request(_config, method, path, payload=None, key=None):
+        assert (method, path, payload, key) == (
+            "GET",
+            f"/api/v2/books/{book_id}/reporting-lines?as_of_book_position=2",
+            None,
+            None,
+        )
+        return 200, {
+            "items": [{"catalog_id": catalog_id}],
+            "as_of_book_position": 2,
+        }
+
+    assert (
+        run(
+            [
+                "--token",
+                "token",
+                "book",
+                "reporting-lines",
+                book_id,
+                "--as-of-book-position",
+                "2",
+                "--json",
+            ],
+            requester=request,
+        )
+        == 0
+    )
+
+    result = json.loads(capsys.readouterr().out)
+    assert result["data"]["items"][0]["catalog_id"] == catalog_id
+
+
+def test_account_create_can_send_a_credit_card_subtype(capsys):
+    calls = []
+
+    assert (
+        run(
+            [
+                "--token",
+                "token",
+                "account",
+                "create",
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+                "--asset-code",
+                "CNY",
+                "--type",
+                "liability",
+                "--account-subtype",
+                "credit_card",
+                "--name",
+                "Primary Card",
+                "--json",
+            ],
+            requester=_recorder(calls),
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert calls == [
+        {
+            "token": "token",
+            "method": "POST",
+            "path": ("/api/v2/books/11111111-1111-1111-1111-111111111111/accounts"),
+            "payload": {
+                "account_id": "22222222-2222-2222-2222-222222222222",
+                "asset_code": "CNY",
+                "account_type": "liability",
+                "account_subtype": "credit_card",
+                "current_name": "Primary Card",
+            },
+            "key": None,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("account_type", "account_subtype"),
+    [
+        ("asset", "credit_card"),
+        ("liability", "Credit_Card"),
+        ("receivable", "credit_card"),
+    ],
+)
+def test_account_create_rejects_invalid_type_and_subtype_before_network(
+    account_type,
+    account_subtype,
+    capsys,
+):
+    def no_request(*_args, **_kwargs):
+        raise AssertionError("invalid account semantics must fail before network I/O")
+
+    assert (
+        run(
+            [
+                "--token",
+                "token",
+                "account",
+                "create",
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+                "--asset-code",
+                "CNY",
+                "--type",
+                account_type,
+                "--account-subtype",
+                account_subtype,
+                "--name",
+                "Invalid Card",
+                "--json",
+            ],
+            requester=no_request,
+        )
+        != 0
+    )
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["status"] == 422
+    assert payload["diagnostics"][0]["code"] == "invalid_v2_cli_input"

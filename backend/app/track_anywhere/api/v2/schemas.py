@@ -18,7 +18,13 @@ from pydantic import (
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ...application.catalogs.close_account import AccountAlreadyClosed
+from ...application.catalogs.close_account import (
+    AccountAlreadyClosed,
+    AccountBalanceNonzero,
+    AccountBalanceProjectionMismatch,
+)
+from ...application.catalogs.reopen_account import AccountAlreadyActive
+from ...application.credit_cards.record import CreditCardRefundConflict
 from ...application.idempotency import (
     CommandActor,
     CommandOutcome,
@@ -28,7 +34,15 @@ from ...application.idempotency import (
 from ...application.journal.correct_external_reference import (
     ExternalReferenceUnchanged,
 )
+from ...application.journal.correct_transaction import (
+    CreditCardGeneralCorrectionForbidden,
+)
+from ...application.journal.post_transaction import CreditCardSemanticWriteRequired
 from ...application.journal.reverse_transaction import (
+    CreditCardChargeHasActiveRefunds,
+    CreditCardReversalChainForbidden,
+    CreditCardReversalPrecedesOriginal,
+    CreditCardReversalRequiresActiveAccount,
     InvalidTransactionSource,
     TransactionAlreadyReversed,
     TransactionIdAlreadyExists,
@@ -39,7 +53,12 @@ from ...auth.security import require_same_origin
 from ...auth.sessions import PersistentSessionService
 from ...domain.investments.allocation import AllocationMethod
 from ...domain.journal.events import ExternalReferenceKind, ReversalReasonCode
-from ...domain.journal.models import PostingSide, TransactionKind
+from ...domain.journal.models import (
+    ACCOUNT_SUBTYPE_PATTERN,
+    AccountType,
+    PostingSide,
+    TransactionKind,
+)
 from ...domain.reporting.events import ReportingDimension, ReportingLineKind
 from ...infrastructure.db.event_store import StreamVersionConflict
 from ..dependencies import SessionDependency
@@ -96,7 +115,14 @@ class CreateAssetRequest(StrictRequest):
 class CreateAccountRequest(StrictRequest):
     account_id: UUID
     asset_code: AssetCode
-    account_type: Annotated[StrictStr, Field(min_length=1, max_length=32)]
+    account_type: AccountType
+    account_subtype: (
+        Annotated[
+            StrictStr,
+            Field(pattern=ACCOUNT_SUBTYPE_PATTERN, max_length=64),
+        ]
+        | None
+    ) = None
     current_name: NonBlankText
     system_role: Annotated[StrictStr, Field(min_length=1, max_length=32)] | None = None
 
@@ -372,6 +398,16 @@ def call_application(action: Callable[[], T]) -> T:
         raise HTTPException(status_code=404, detail="resource not found") from error
     except (
         AccountAlreadyClosed,
+        AccountAlreadyActive,
+        AccountBalanceNonzero,
+        AccountBalanceProjectionMismatch,
+        CreditCardChargeHasActiveRefunds,
+        CreditCardGeneralCorrectionForbidden,
+        CreditCardRefundConflict,
+        CreditCardSemanticWriteRequired,
+        CreditCardReversalChainForbidden,
+        CreditCardReversalPrecedesOriginal,
+        CreditCardReversalRequiresActiveAccount,
         ExternalReferenceUnchanged,
         InvalidTransactionSource,
         StreamVersionConflict,

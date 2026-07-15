@@ -512,6 +512,77 @@ def test_invalid_replacement_rolls_back_the_entire_correction(pg_engine) -> None
         )
 
 
+def test_general_correction_rejects_a_credit_card_replacement_without_writes(
+    pg_engine,
+) -> None:
+    scenario = JournalScenario.create()
+    seed_journal_scenario(pg_engine, scenario)
+    _post_original(pg_engine, scenario)
+    card_account_id = uuid4()
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "insert into accounts ("
+                "book_id, account_id, asset_code, account_type, account_subtype, "
+                "current_name, status) values ("
+                ":book_id, :account_id, 'USD', 'liability', 'credit_card', "
+                "'Card', 'active')"
+            ),
+            {"book_id": scenario.book_id, "account_id": card_account_id},
+        )
+    command = CorrectTransactionCommand(
+        book_id=scenario.book_id,
+        command_id=uuid4(),
+        reverses_transaction_id=scenario.transaction_id,
+        reversal_transaction_id=uuid4(),
+        expected_reversal_stream_version=0,
+        reason_code=ReversalReasonCode.USER_CORRECTION,
+        reversal_effective_at=EFFECTIVE_AT + timedelta(minutes=1),
+        replacement=CorrectionReplacement(
+            transaction_id=uuid4(),
+            expected_stream_version=0,
+            kind=TransactionKind.STANDARD,
+            postings=(
+                PostTransactionPosting(
+                    posting_id=uuid4(),
+                    account_id=scenario.debit_account_id,
+                    asset_code="USD",
+                    side=PostingSide.DEBIT,
+                    amount="20.00",
+                ),
+                PostTransactionPosting(
+                    posting_id=uuid4(),
+                    account_id=card_account_id,
+                    asset_code="USD",
+                    side=PostingSide.CREDIT,
+                    amount="20.00",
+                ),
+            ),
+            effective_at=EFFECTIVE_AT + timedelta(minutes=2),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="credit-card semantic command"):
+        execute_correct_transaction(
+            command,
+            raw_key=f"correct:{command.command_id}",
+            actor=CommandActor(subject_id=scenario.actor_subject_id),
+            uow_factory=_uow_factory(pg_engine),
+        )
+
+    with Session(pg_engine) as session:
+        head = session.get(BookEventHeadRecord, scenario.book_id)
+        assert head is not None and head.last_position == 1
+        assert session.scalar(select(func.count()).select_from(LedgerEventRecord)) == 1
+        assert (
+            session.scalar(select(func.count()).select_from(CommandReceiptRecord)) == 1
+        )
+        assert (
+            session.scalar(select(func.count()).select_from(TransactionReversalRecord))
+            == 0
+        )
+
+
 def test_second_projection_failure_rolls_back_both_correction_events(pg_engine) -> None:
     scenario = JournalScenario.create()
     seed_journal_scenario(pg_engine, scenario)
