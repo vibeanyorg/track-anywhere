@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from hashlib import blake2b
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ...observability.metrics import LedgerMetrics
@@ -59,6 +60,12 @@ class AsyncProjectionWorker:
         with self._session_factory() as session, session.begin():
             from ..db.models.async_projection import ProjectionCheckpointRecord
 
+            # The supervisor's session lock elects one leader, while this
+            # transaction lock fences an old leader whose coordinator
+            # connection disappears during a batch.
+            session.scalar(
+                select(func.pg_advisory_xact_lock(_book_lock_key(book_id)))
+            )
             paused_failure = session.scalar(
                 select(ProjectionFailureRecord.failure_id)
                 .where(
@@ -175,6 +182,15 @@ class AsyncProjectionWorker:
         if failed:
             self._metrics.increment("projection.failures")
         self._metrics.gauge("projection.lag", projection_lag)
+
+
+def _book_lock_key(book_id: UUID) -> int:
+    digest = blake2b(
+        book_id.bytes,
+        digest_size=8,
+        person=b"ta-proj",
+    ).digest()
+    return int.from_bytes(digest, byteorder="big", signed=True)
 
 
 def _is_registered_event(event: object) -> bool:

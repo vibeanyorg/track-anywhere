@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: "standalone",
-  skipTrailingSlashRedirect: true,
+  output: "export",
+  trailingSlash: true,
   poweredByHeader: false,
   reactStrictMode: true
 };

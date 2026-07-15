@@ -5,10 +5,13 @@ accounting. Financial writes append immutable, typed events; synchronous
 projections make committed balances and journal reads visible immediately from
 another process.
 
-The repository contains a V2-only FastAPI backend, a `ta` CLI, and a Next.js
-frontend. There is no legacy runtime, local database fallback, or compatibility
-API. Current HEAD contains no V1 data-import path; any future import must define
-and verify an explicit V2 contract before it is added.
+The repository contains a V2-only FastAPI application, a `ta` CLI, and a
+statically exported Next.js frontend served by FastAPI. The same application
+lifespan supervises the rebuildable monthly projection with PostgreSQL leader
+and per-Book fencing. There is no separate Node.js or worker production service,
+legacy runtime, local database fallback, or compatibility API. Current HEAD
+contains no V1 data-import path; any future import must define and verify an
+explicit V2 contract before it is added.
 
 ## Requirements
 
@@ -25,12 +28,21 @@ uv sync --locked --extra postgres
 npm --prefix frontend ci
 ```
 
-## Local API
+## Local application
 
-Set `TRACK_ANYWHERE_DATABASE_URL` to a migrated PostgreSQL 17 database owned by
-the non-owner runtime role, then start the API:
+The supported local stack creates PostgreSQL 17, bootstraps the three database
+roles, runs migrations, and starts the browser UI/API/MCP on one port:
 
 ```bash
+scripts/deploy-local.sh
+```
+
+For a source-run process, build the frontend, set
+`TRACK_ANYWHERE_DATABASE_URL` to a migrated PostgreSQL 17 database using the
+non-owner runtime role, and point FastAPI at the static export:
+
+```bash
+TRACK_ANYWHERE_STATIC_DIRECTORY=frontend/out \
 uv run uvicorn track_anywhere.server:app \
   --app-dir backend/app \
   --host 127.0.0.1 \

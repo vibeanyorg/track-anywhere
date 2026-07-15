@@ -1,40 +1,36 @@
 # Track Anywhere Frontend
 
-Next.js 16 App Router frontend for the Track Anywhere web experience.
+The browser UI is a Next.js 16 static export. Node.js 22 is a build dependency,
+not a production service: the final Docker image copies `frontend/out` into the
+FastAPI runtime, which serves the UI, REST API, OAuth discovery, and MCP from
+one origin.
 
-Node.js 22 is the supported frontend runtime.
-
-Run the FastAPI backend first:
-
-```bash
-uv run uvicorn track_anywhere.server:app --app-dir ../backend/app --host 127.0.0.1 --port 8000
-```
-
-Then run the frontend:
+Build and validate the export:
 
 ```bash
-cd frontend
-cp .env.example .env.local
-npm install
-npm run dev
+npm ci
+npm test
+npm run lint
+npm run build
 ```
 
-`TRACK_ANYWHERE_BACKEND_URL` is used by the App Router `/api/v2/*` route handler
-to proxy browser calls to the backend. The supported browser auth flow calls:
+For an integrated local run, start PostgreSQL and the application with
+`scripts/deploy-local.sh`. To exercise a source-built export without Docker,
+build it and point FastAPI at the result:
 
-- `POST /api/v2/auth/session/api-key`
-- `GET /api/v2/auth/session`
-- `POST /api/v2/auth/logout`
-- `POST /api/v2/oauth/register`
-- `POST /api/v2/oauth/authorize`
-- `POST /api/v2/oauth/token`
-- `POST /api/v2/oauth/revoke`
+```bash
+npm run build
+cd ..
+TRACK_ANYWHERE_STATIC_DIRECTORY=frontend/out \
+TRACK_ANYWHERE_DATABASE_URL='postgresql+psycopg://...' \
+TRACK_ANYWHERE_PUBLIC_BASE_URL=http://127.0.0.1:8000 \
+uv run uvicorn track_anywhere.server:app \
+  --app-dir backend/app --host 127.0.0.1 --port 8000
+```
 
-The CLI browser login lands on `/auth/callback`, authorizes the default platform
-client, and displays a callback URL that the CLI exchanges with
-`/api/v2/oauth/token`. OAuth device authorization is also available through the
-V2 backend for CLI clients.
+The browser uses same-origin endpoints including sessions, OAuth, discovery,
+REST under `/api/v2`, and MCP at `/mcp`. The CLI authorization callback is
+`/auth/callback`; device authorization uses `/auth/device`.
 
-Password login/signup, local development tokens, and credential creation,
-listing, or revocation are not exposed by the V2 frontend. API keys must be
-provisioned through an approved administrative workflow before sign-in.
+`npm run dev` remains useful for presentation-only UI iteration. Run a static
+build through FastAPI before testing authentication or protocol behavior.

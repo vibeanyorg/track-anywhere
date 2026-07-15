@@ -24,52 +24,68 @@ services:
       timeout: 3s
       retries: 12
 
-  api:
-    build:
-      context: .
-      target: api-runtime
-    image: ${TRACK_ANYWHERE_DEV_API_IMAGE:-track-anywhere-api:dev}
-    container_name: track-anywhere-dev-api
+  bootstrap:
+    image: postgres:17-alpine
     depends_on:
       postgres:
         condition: service_healthy
     environment:
+      PGHOST: postgres
+      PGPASSWORD: track_anywhere
+      POSTGRES_DB: track_anywhere
+      POSTGRES_USER: track_anywhere
+      TRACK_ANYWHERE_OWNER_ROLE: ${TRACK_ANYWHERE_OWNER_ROLE:-track_anywhere_owner}
+      TRACK_ANYWHERE_MIGRATOR_ROLE: ${TRACK_ANYWHERE_MIGRATOR_ROLE:-track_anywhere_migrator}
+      TRACK_ANYWHERE_MIGRATOR_PASSWORD: ${TRACK_ANYWHERE_MIGRATOR_PASSWORD:-track_anywhere_migrator_test}
+      TRACK_ANYWHERE_RUNTIME_ROLE: ${TRACK_ANYWHERE_RUNTIME_ROLE:-track_anywhere_runtime}
+      TRACK_ANYWHERE_RUNTIME_PASSWORD: ${TRACK_ANYWHERE_RUNTIME_PASSWORD:-track_anywhere_runtime_test}
+    volumes:
+      - ./docker/postgres/init/001-v2-roles.sh:/bootstrap/001-v2-roles.sh:ro
+    entrypoint: ["bash", "/bootstrap/001-v2-roles.sh"]
+    restart: "no"
+
+  migrate:
+    build:
+      context: .
+      target: api-runtime
+    image: ${TRACK_ANYWHERE_DEV_IMAGE:-track-anywhere:dev}
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      TRACK_ANYWHERE_MODE: local
+      TRACK_ANYWHERE_DATABASE_URL: postgresql+psycopg://${TRACK_ANYWHERE_MIGRATOR_ROLE:-track_anywhere_migrator}:${TRACK_ANYWHERE_MIGRATOR_PASSWORD:-track_anywhere_migrator_test}@postgres:5432/track_anywhere
+      TRACK_ANYWHERE_DB_RUNTIME_ROLE: ${TRACK_ANYWHERE_RUNTIME_ROLE:-track_anywhere_runtime}
+      PYTHONUNBUFFERED: "1"
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      target: api-runtime
+    image: ${TRACK_ANYWHERE_DEV_IMAGE:-track-anywhere:dev}
+    container_name: track-anywhere-dev-api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
       TRACK_ANYWHERE_MODE: local
       TRACK_ANYWHERE_DATABASE_URL: postgresql+psycopg://${TRACK_ANYWHERE_RUNTIME_ROLE:-track_anywhere_runtime}:${TRACK_ANYWHERE_RUNTIME_PASSWORD:-track_anywhere_runtime_test}@postgres:5432/track_anywhere
-      TRACK_ANYWHERE_ALLOWED_ORIGINS: ${TRACK_ANYWHERE_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
-      TRACK_ANYWHERE_PUBLIC_BASE_URL: ${TRACK_ANYWHERE_PUBLIC_BASE_URL:-http://127.0.0.1:3000}
-      TRACK_ANYWHERE_MCP_TRUSTED_PROXY_HOSTS: api:8000
+      TRACK_ANYWHERE_ALLOWED_ORIGINS: ${TRACK_ANYWHERE_ALLOWED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
+      TRACK_ANYWHERE_PUBLIC_BASE_URL: ${TRACK_ANYWHERE_PUBLIC_BASE_URL:-http://127.0.0.1:8000}
+      TRACK_ANYWHERE_PROJECTION_POLL_SECONDS: ${TRACK_ANYWHERE_PROJECTION_POLL_SECONDS:-2}
       PYTHONUNBUFFERED: "1"
     ports:
       - "${TRACK_ANYWHERE_DEV_API_BIND:-127.0.0.1}:${TRACK_ANYWHERE_DEV_API_PORT:-8000}:8000"
-    restart: unless-stopped
-
-  web:
-    build:
-      context: .
-      target: web-runtime
-    image: ${TRACK_ANYWHERE_DEV_WEB_IMAGE:-track-anywhere-web:dev}
-    container_name: track-anywhere-dev-web
-    depends_on:
-      api:
-        condition: service_healthy
-    environment:
-      TRACK_ANYWHERE_BACKEND_URL: http://api:8000
-      TRACK_ANYWHERE_PUBLIC_BASE_URL: ${TRACK_ANYWHERE_PUBLIC_BASE_URL:-http://127.0.0.1:3000}
-      HOSTNAME: 0.0.0.0
-      PORT: "3000"
-      NEXT_TELEMETRY_DISABLED: "1"
-    healthcheck:
-      disable: true
-    ports:
-      - "${TRACK_ANYWHERE_DEV_WEB_BIND:-127.0.0.1}:${TRACK_ANYWHERE_DEV_WEB_PORT:-3000}:3000"
+    stop_grace_period: 65s
     restart: unless-stopped
 
   cli:
     build:
       context: .
       target: api-runtime
-    image: ${TRACK_ANYWHERE_DEV_API_IMAGE:-track-anywhere-api:dev}
+    image: ${TRACK_ANYWHERE_DEV_IMAGE:-track-anywhere:dev}
     profiles: ["cli"]
     depends_on:
       api:

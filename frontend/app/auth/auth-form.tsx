@@ -112,7 +112,7 @@ function safeNext(value: string | null) {
   if (!value) return "/";
   if (value.startsWith("/") && !value.startsWith("//")) return value;
   try {
-    const currentOrigin = typeof window === "undefined" ? "http://localhost:3000" : window.location.origin;
+    const currentOrigin = typeof window === "undefined" ? "http://localhost" : window.location.origin;
     const url = new URL(value, currentOrigin);
     if (url.origin !== currentOrigin) return "/";
     return `${url.pathname}${url.search}${url.hash}` || "/";

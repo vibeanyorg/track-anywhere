@@ -8,10 +8,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
     "lint": "tsc --noEmit",
-    "test": "npm run test:proxy && npm run test:oauth",
-    "test:proxy": "node --test tests/proxy-origin.test.mjs tests/proxy-headers.test.mjs",
+    "test": "npm run test:static && npm run test:oauth",
+    "test:static": "node --test tests/static-export.test.mjs tests/public-origin.test.mjs",
     "test:oauth": "node --test tests/oauth-consent.test.mjs"
   },
   "dependencies": {

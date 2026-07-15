@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import fnmatch
+import os
+import shutil
+import sys
+from pathlib import Path
+
+
+ROOT = Path(os.environ["TRACK_ANYWHERE_FAKE_RCLONE_ROOT"]).resolve()
+
+
+def local_path(remote_path: str) -> Path:
+    remote, separator, key = remote_path.partition(":")
+    if separator != ":" or remote != "local-test":
+        raise SystemExit("fake rclone accepts only local-test: paths")
+    path = (ROOT / key.lstrip("/")).resolve()
+    if path != ROOT and ROOT not in path.parents:
+        raise SystemExit("fake rclone path escapes its root")
+    return path
+
+
+def main() -> None:
+    if len(sys.argv) < 3:
+        raise SystemExit("fake rclone command and remote path are required")
+    command = sys.argv[1]
+    source = local_path(sys.argv[2])
+
+    if command == "rcat":
+        source.parent.mkdir(parents=True, exist_ok=True)
+        with source.open("wb") as output:
+            shutil.copyfileobj(sys.stdin.buffer, output)
+        return
+    if command == "cat":
+        with source.open("rb") as input_file:
+            shutil.copyfileobj(input_file, sys.stdout.buffer)
+        return
+    if command == "moveto":
+        destination = local_path(sys.argv[3])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source.replace(destination)
+        return
+    if command == "deletefile":
+        source.unlink(missing_ok=True)
+        return
+    if command == "lsf":
+        include = "*"
+        if "--include" in sys.argv:
+            include = sys.argv[sys.argv.index("--include") + 1]
+        if source.is_dir():
+            for child in sorted(source.iterdir()):
+                if child.is_file() and fnmatch.fnmatch(child.name, include):
+                    print(child.name)
+        return
+    raise SystemExit(f"unsupported fake rclone command: {command}")
+
+
+if __name__ == "__main__":
+    main()

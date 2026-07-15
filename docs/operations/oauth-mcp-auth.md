@@ -92,13 +92,12 @@ the Track Anywhere origin; it is never returned to or presented by ChatGPT.
 
 ## Local and production composition
 
-For local OAuth, start both the Web and API services. The public base must be
-the Web origin because it hosts consent and device pages while proxying the API,
-discovery metadata, and MCP transport:
+For local OAuth, start the single application service. FastAPI hosts the static
+consent/device pages, API, discovery metadata, and MCP on the same origin:
 
 ```bash
 scripts/deploy-local.sh
-ta --base-url http://127.0.0.1:3000 auth login
+ta --base-url http://127.0.0.1:8000 auth login
 ```
 
 Production requires an HTTPS public base:
@@ -109,7 +108,8 @@ TRACK_ANYWHERE_PUBLIC_BASE_URL=https://ledger.example.com
 TRACK_ANYWHERE_ALLOWED_ORIGINS=https://ledger.example.com
 ```
 
-The standard Compose topology also sets
-`TRACK_ANYWHERE_MCP_TRUSTED_PROXY_HOSTS=api:8000`. This is an exact internal Host
-allowlist for SDK DNS-rebinding protection, not a public CORS allowlist. Change
-it only when the internal reverse-proxy target changes.
+The MCP transport derives its allowed Host from
+`TRACK_ANYWHERE_PUBLIC_BASE_URL`, so a direct Traefik-to-FastAPI route needs no
+internal Host exception. `TRACK_ANYWHERE_MCP_TRUSTED_PROXY_HOSTS` is reserved
+for a topology that actually rewrites the Host header; each value is an exact
+internal Host allowlist entry, not a public CORS origin.

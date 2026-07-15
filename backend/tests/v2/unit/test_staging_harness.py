@@ -24,7 +24,6 @@ HARNESS_SOURCE_PATHS = (
 )
 
 API_IMAGE_ID = "sha256:" + "a" * 64
-WEB_IMAGE_ID = "sha256:" + "b" * 64
 POSTGRES_IMAGE_ID = "sha256:" + "c" * 64
 
 
@@ -41,10 +40,8 @@ with trace.open("a", encoding="utf-8") as output:
     output.write(json.dumps(args) + "\n")
 
 api_ref = os.environ.get("TRACK_ANYWHERE_E2E_API_IMAGE", "local-api:test")
-web_ref = os.environ.get("TRACK_ANYWHERE_E2E_WEB_IMAGE", "local-web:test")
 source_commit = os.environ.get("FAKE_SOURCE_COMMIT", "0" * 40)
 api_id = "sha256:" + "a" * 64
-web_id = "sha256:" + "b" * 64
 postgres_id = "sha256:" + "c" * 64
 
 
@@ -86,8 +83,6 @@ if args[:2] == ["image", "inspect"]:
     rendered = " ".join(args)
     if reference == api_ref:
         value = api_id
-    elif reference == web_ref:
-        value = web_id
     elif reference == "postgres:17-alpine":
         value = postgres_id
     else:
@@ -103,8 +98,6 @@ if args and args[0] == "inspect":
     rendered = " ".join(args)
     if "org.opencontainers.image.revision" in rendered:
         finish(output=source_commit)
-    if "web" in container:
-        finish(output=web_id)
     if "postgres" in container:
         finish(output=postgres_id)
     finish(output=api_id)
@@ -135,7 +128,7 @@ if command in {"build", "pull", "create", "start", "restart"}:
     finish(87)
 
 if command == "config":
-    finish(output="\n".join((api_ref, api_ref, web_ref, "postgres:17-alpine")))
+    finish(output="\n".join((api_ref, api_ref, "postgres:17-alpine")))
 
 if command == "ps":
     if "-q" not in rest:
@@ -354,7 +347,6 @@ def _fake_environment(
         "TRACK_ANYWHERE_DOCKER_CLI_TIMEOUT_SECONDS": "5",
         "TRACK_ANYWHERE_DOCKER_COMPOSE_TIMEOUT_SECONDS": "5",
         "TRACK_ANYWHERE_E2E_API_IMAGE": "local-api:test",
-        "TRACK_ANYWHERE_E2E_WEB_IMAGE": "local-web:test",
     }
     environment.pop("DOCKER_CONTEXT", None)
     environment.pop("DOCKER_HOST", None)
@@ -441,18 +433,19 @@ def _compose_command(arguments: list[str]) -> str | None:
     return None
 
 
-def test_compose_separates_migration_and_runtime_images_and_roles() -> None:
+def test_compose_uses_one_application_image_with_separate_migration_and_runtime_roles() -> None:
     compose = _read("compose.e2e.yaml")
 
     assert "TRACK_ANYWHERE_E2E_API_IMAGE" in compose
-    assert "TRACK_ANYWHERE_E2E_WEB_IMAGE" in compose
     assert "migrate:" in compose
     assert "TRACK_ANYWHERE_MIGRATOR_ROLE" in compose
     assert "TRACK_ANYWHERE_DB_RUNTIME_ROLE" in compose
     assert "TRACK_ANYWHERE_RUNTIME_ROLE" in compose
     assert "service_healthy" in compose
-    assert "web:" in compose
-    assert compose.count("127.0.0.1") >= 3
+    assert "web:" not in compose
+    assert "TRACK_ANYWHERE_E2E_WEB_IMAGE" not in compose
+    assert "web-runtime" not in compose
+    assert compose.count("127.0.0.1") >= 2
     assert "0.0.0.0:" not in compose
 
 
@@ -476,10 +469,17 @@ def test_existing_stack_e2e_is_non_mutating_to_infrastructure() -> None:
     assert "--no-build" in harness
     assert "existing stack mode: refusing infrastructure mutation" in harness
     assert "existing stack API image mismatch" in harness
-    assert "existing stack web image mismatch" in harness
     assert "existing stack PostgreSQL image mismatch" in harness
+    assert "TRACK_ANYWHERE_E2E_WEB_IMAGE" not in harness
+    assert "EXISTING_WEB_CONTAINER" not in harness
     assert "TRACK_ANYWHERE_E2E_RESULT_FILE" in harness
     assert "fresh_connection_balance_visibility" in harness
+    assert "static_web_smoke=PASS" in harness
+    assert "embedded_projection_convergence=PASS" in harness
+    assert "backup_restore_roundtrip=PASS" in harness
+    assert "AsyncProjectionWorker" not in harness
+    assert "embedded async projection runtime did not converge" in harness
+    assert "public, max-age=31536000, immutable" in harness
     assert "account:read" not in harness
     assert "account:write" not in harness
 
@@ -510,7 +510,6 @@ def test_staging_harness_is_fail_closed_and_never_accepts_itself() -> None:
         "--run-id",
         "--report-dir",
         "TRACK_ANYWHERE_E2E_API_IMAGE",
-        "TRACK_ANYWHERE_E2E_WEB_IMAGE",
         "org.opencontainers.image.revision",
         "docker image inspect",
         "docker inspect",
@@ -796,50 +795,55 @@ def test_staging_preflights_postgres_and_disables_all_image_pulls(
     report = json.loads((report_dir / "verification.json").read_text(encoding="utf-8"))
     assert report["status"] == "PASS"
     assert report["images"]["api"]["content_digest"] == API_IMAGE_ID
-    assert report["images"]["web"]["content_digest"] == WEB_IMAGE_ID
+    assert "web" not in report["images"]
+    assert report["checks"]["public_app_health"] == {
+        "api_version": "v2",
+        "status": "ok",
+    }
+    assert "web_proxy_health" not in report["checks"]
 
 
-def test_web_health_redirect_is_not_followed_and_fails_closed(tmp_path: Path) -> None:
+def test_public_app_health_redirect_is_not_followed_and_fails_closed(tmp_path: Path) -> None:
     result, report_dir, evidence = _run_staging(tmp_path, curl_mode="redirect")
 
     assert result.returncode != 0
     assert not evidence["external_contact"].exists()
-    web_commands = [
+    app_commands = [
         command
         for command in _json_lines(evidence["curl_trace"])
         if any(item.endswith("/api/v2/health") for item in command)
     ]
-    assert web_commands
+    assert app_commands
     assert all(
         not any(item.startswith("-") and "L" in item[1:] for item in command)
-        for command in web_commands
+        for command in app_commands
     )
     report = json.loads((report_dir / "verification.json").read_text(encoding="utf-8"))
     assert report["status"] == "FAIL"
-    assert report["stage"] == "web_smoke"
+    assert report["stage"] == "app_smoke"
 
 
-def test_web_health_html_cannot_be_reported_as_pass(tmp_path: Path) -> None:
+def test_public_app_health_html_cannot_be_reported_as_pass(tmp_path: Path) -> None:
     result, report_dir, _ = _run_staging(tmp_path, curl_mode="html")
 
     assert result.returncode != 0
-    assert "web proxy health payload must be exact V2 JSON" in result.stderr
+    assert "public app health payload must be exact V2 JSON" in result.stderr
     report = json.loads((report_dir / "verification.json").read_text(encoding="utf-8"))
     assert report["status"] == "FAIL"
-    assert report["stage"] == "web_smoke"
+    assert report["stage"] == "app_smoke"
 
 
-def test_web_health_json_with_wrong_mime_type_cannot_pass(tmp_path: Path) -> None:
+def test_public_app_health_json_with_wrong_mime_type_cannot_pass(tmp_path: Path) -> None:
     result, report_dir, _ = _run_staging(
         tmp_path,
         curl_content_type="text/plain; charset=utf-8",
     )
 
     assert result.returncode != 0
-    assert "web proxy health content type must be application/json" in result.stderr
+    assert "public app health content type must be application/json" in result.stderr
     report = json.loads((report_dir / "verification.json").read_text(encoding="utf-8"))
     assert report["status"] == "FAIL"
-    assert report["stage"] == "web_smoke"
+    assert report["stage"] == "app_smoke"
 
 
 def test_teardown_failure_overwrites_pass_and_returns_nonzero(tmp_path: Path) -> None:
@@ -873,7 +877,6 @@ def test_existing_stack_executes_smoke_without_infrastructure_mutation_or_pull(
             "TRACK_ANYWHERE_E2E_NO_BUILD": "1",
             "TRACK_ANYWHERE_E2E_POSTGRES_PORT": "15543",
             "TRACK_ANYWHERE_E2E_PROJECT": "existing-stack-audit",
-            "TRACK_ANYWHERE_E2E_WEB_PORT": "13000",
         }
     )
 

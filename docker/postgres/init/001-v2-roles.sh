@@ -144,4 +144,9 @@ SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'database_name', :'migrator
 SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'database_name', :'runtime_role')
 \gexec
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+SELECT format(
+  'ALTER DATABASE %I OWNER TO %I',
+  :'database_name', :'owner_role'
+)
+\gexec
 SQL

@@ -24,6 +24,7 @@ permissions:
 env:
   PYTHON_VERSION: "3.13"
   PLATFORMS: linux/amd64,linux/arm64
+  IMAGE: ghcr.io/vibeanyorg/track-anywhere-api
 
 jobs:
   v2-gates:
@@ -112,6 +113,8 @@ jobs:
           trap - EXIT
       - name: Frontend install
         run: npm --prefix frontend ci
+      - name: Frontend tests
+        run: npm --prefix frontend test
       - name: Frontend lint
         run: npm --prefix frontend run lint
       - name: Frontend build
@@ -164,13 +167,6 @@ jobs:
       - hash-vectors
       - docker-postgres-e2e
     if: github.ref == 'refs/heads/main' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.channel == 'nightly')
-    strategy:
-      matrix:
-        include:
-          - target: api-runtime
-            image: ghcr.io/vibeanyorg/track-anywhere-api
-          - target: web-runtime
-            image: ghcr.io/vibeanyorg/track-anywhere-web
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -182,14 +178,14 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ matrix.image }}
+          images: ${{ env.IMAGE }}
           tags: |
             type=raw,value=nightly
             type=sha,prefix=nightly-sha-
       - uses: docker/build-push-action@v6
         with:
           context: .
-          target: ${{ matrix.target }}
+          target: api-runtime
           platforms: ${{ env.PLATFORMS }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -203,13 +199,6 @@ jobs:
       - hash-vectors
       - docker-postgres-e2e
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.channel == 'stable')
-    strategy:
-      matrix:
-        include:
-          - target: api-runtime
-            image: ghcr.io/vibeanyorg/track-anywhere-api
-          - target: web-runtime
-            image: ghcr.io/vibeanyorg/track-anywhere-web
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -221,7 +210,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ matrix.image }}
+          images: ${{ env.IMAGE }}
           tags: |
             type=ref,event=tag,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=stable
@@ -229,7 +218,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          target: ${{ matrix.target }}
+          target: api-runtime
           platforms: ${{ env.PLATFORMS }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

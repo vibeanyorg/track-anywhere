@@ -2,17 +2,13 @@ name: track-anywhere-prod
 
 services:
   api:
-    image: ${TRACK_ANYWHERE_API_IMAGE:-ghcr.io/vibeanyorg/track-anywhere-api:latest}
+    image: ${TRACK_ANYWHERE_IMAGE:?TRACK_ANYWHERE_IMAGE must be an immutable image reference}
     container_name: track-anywhere-prod-api
     env_file:
       - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
     environment:
       TRACK_ANYWHERE_MODE: production
-      TRACK_ANYWHERE_MCP_TRUSTED_PROXY_HOSTS: api:8000
       PYTHONUNBUFFERED: "1"
-    depends_on:
-      clamav:
-        condition: service_started
     ports:
       - "${TRACK_ANYWHERE_PROD_API_BIND:-127.0.0.1}:${TRACK_ANYWHERE_PROD_API_PORT:-8000}:8000"
     read_only: true
@@ -22,32 +18,18 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    stop_grace_period: 65s
     restart: unless-stopped
 
-  clamav:
-    image: clamav/clamav:stable
-    container_name: track-anywhere-prod-clamav
-    volumes:
-      - clamav-data:/var/lib/clamav
-    restart: unless-stopped
-
-  web:
-    image: ${TRACK_ANYWHERE_WEB_IMAGE:-ghcr.io/vibeanyorg/track-anywhere-web:latest}
-    container_name: track-anywhere-prod-web
+  migrate:
+    image: ${TRACK_ANYWHERE_IMAGE:?TRACK_ANYWHERE_IMAGE must be an immutable image reference}
+    profiles: ["migrate"]
     env_file:
-      - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
+      - ${TRACK_ANYWHERE_PROD_MIGRATION_ENV_FILE:-deploy/env/prod.migrate.env}
     environment:
-      TRACK_ANYWHERE_BACKEND_URL: http://api:8000
-      HOSTNAME: 0.0.0.0
-      PORT: "3000"
-      NEXT_TELEMETRY_DISABLED: "1"
-    healthcheck:
-      disable: true
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "${TRACK_ANYWHERE_PROD_WEB_BIND:-127.0.0.1}:${TRACK_ANYWHERE_PROD_WEB_PORT:-3000}:3000"
+      TRACK_ANYWHERE_MODE: production
+      PYTHONUNBUFFERED: "1"
+    command: ["python", "-m", "alembic", "upgrade", "head"]
     read_only: true
     tmpfs:
       - /tmp
@@ -55,10 +37,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    restart: unless-stopped
+    restart: "no"
 
   cli:
-    image: ${TRACK_ANYWHERE_API_IMAGE:-ghcr.io/vibeanyorg/track-anywhere-api:latest}
+    image: ${TRACK_ANYWHERE_IMAGE:?TRACK_ANYWHERE_IMAGE must be an immutable image reference}
     profiles: ["cli"]
     env_file:
       - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
@@ -66,6 +48,3 @@ services:
       TRACK_ANYWHERE_API: http://api:8000
       TRACK_ANYWHERE_SERVICE_URL: http://api:8000
     entrypoint: ["ta"]
-
-volumes:
-  clamav-data:

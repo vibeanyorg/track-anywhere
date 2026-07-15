@@ -15,19 +15,19 @@ cutover needs separate user authorization after this gate.
   script, checklist, harness test, and `.dockerignore` must all be tracked by
   that source commit and byte-identical to the checked-out files. The harness
   rejects an untracked replacement.
-- Build API and web images from `git archive <source-commit>`, label each image
-  `org.opencontainers.image.revision=<source-commit>`, and do not push them.
-- Supply both `TRACK_ANYWHERE_E2E_API_IMAGE` and
-  `TRACK_ANYWHERE_E2E_WEB_IMAGE`; the harness refuses image substitution.
+- Build the single application image from `git archive <source-commit>`, label it
+  `org.opencontainers.image.revision=<source-commit>`, and do not push it.
+- Supply `TRACK_ANYWHERE_E2E_API_IMAGE`; the harness refuses image
+  substitution.
 - Generate a caller-supplied UUID for every attempt. Pass a matching,
   nonexistent report directory named
   `output/v2-staging-<source-commit>-<run-id>`. A failed run directory remains
   diagnostic evidence and never blocks a retry with a fresh UUID.
-- All published PostgreSQL, API, and web ports must bind to loopback.
+- Both published PostgreSQL and application ports must bind to loopback.
 - Use only a local Docker daemon reached through a Unix or Windows named-pipe
   endpoint. The harness rejects TCP, SSH, HTTP, and other remote Docker contexts
   before contacting the daemon or creating a resource.
-- API, web, and `postgres:17-alpine` images must already exist locally. Every
+- The application and `postgres:17-alpine` images must already exist locally. Every
   staging `compose up`/`compose run` uses `--pull never`; a registry is never a
   fallback.
 
@@ -45,12 +45,8 @@ test ! -e "$REPORT_DIR"
 git archive --format=tar "$SOURCE_COMMIT" |
   docker build --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
     --target api-runtime -t track-anywhere-api:v2-staging -
-git archive --format=tar "$SOURCE_COMMIT" |
-  docker build --label "org.opencontainers.image.revision=$SOURCE_COMMIT" \
-    --target web-runtime -t track-anywhere-web:v2-staging -
 
 TRACK_ANYWHERE_E2E_API_IMAGE=track-anywhere-api:v2-staging \
-TRACK_ANYWHERE_E2E_WEB_IMAGE=track-anywhere-web:v2-staging \
 bash scripts/staging-v2-smoke.sh \
   --source-commit "$SOURCE_COMMIT" \
   --run-id "$RUN_ID" \
@@ -68,8 +64,8 @@ teardown failure is itself a hard failure and can never leave a PASS report.
 - A clean migration reaches the single Alembic head through the migrator DSN.
 - PostgreSQL reports major version PostgreSQL 17.
 - Database owner, migrator, and runtime are three distinct identities. This
-  proves the distinct migrator and runtime boundary; API and
-  web smoke use the non-owner runtime DSN only.
+  proves the distinct migrator and runtime boundary; application smoke uses the
+  non-owner runtime DSN only.
 - Runtime cannot update immutable ledger events or disable database triggers.
 - Readiness fails closed and reports both database and schema checks healthy.
 - V2 API and CLI smoke create, query, classify, and reverse a transaction.
@@ -81,14 +77,16 @@ teardown failure is itself a hard failure and can never leave a PASS report.
 - Async projection lag converges to zero; independent replay agrees with online
   synchronous projections.
 - Database Alembic head equals the head read from the exact API image.
-- API, migration, and web containers use the expected content-addressed image
-  IDs. The exact running-container image IDs and revision labels must match the
-  two prevalidated images and source SHA.
+- The API and one-shot migration containers use the same expected
+  content-addressed application image ID. The exact running-container image ID
+  and revision label must match the prevalidated image and source SHA. These
+  exact running-container image IDs and revision labels prove both processes
+  came from that image.
 - Local image IDs are validated as `sha256:` content digests. Registry
   `RepoDigests` are recorded when present but are not manufactured by pushing.
-- Web-to-API proxy health succeeds on a loopback-only published port, returns
-  HTTP 200 without a redirect, normalizes to the `application/json` media type,
-  and has the exact V2 health JSON body
+- Public application health succeeds directly on the FastAPI container's
+  loopback-only published port, returns HTTP 200 without a redirect, normalizes
+  to the `application/json` media type, and has the exact V2 health JSON body
   `{"api_version":"v2","status":"ok"}`. A wrong MIME type, HTML, or arbitrary
   JSON fails closed.
 
@@ -133,4 +131,4 @@ three report assertions. Never infer acceptance merely from directory presence.
 Record the source commit and run UUID in the evidence document, then stop. Do
 not tag, push images, change production DSNs, replace the stable runtime, or
 deploy. This checklist validates only a clean V2 database and exact committed
-images; current HEAD contains no historical import gate.
+application image; current HEAD contains no historical import gate.

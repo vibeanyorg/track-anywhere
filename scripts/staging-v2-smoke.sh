@@ -89,9 +89,7 @@ if [[ -L "$ROOT_DIR/output" ]]; then
 fi
 
 : "${TRACK_ANYWHERE_E2E_API_IMAGE:?TRACK_ANYWHERE_E2E_API_IMAGE is required}"
-: "${TRACK_ANYWHERE_E2E_WEB_IMAGE:?TRACK_ANYWHERE_E2E_WEB_IMAGE is required}"
 API_IMAGE="$TRACK_ANYWHERE_E2E_API_IMAGE"
-WEB_IMAGE="$TRACK_ANYWHERE_E2E_WEB_IMAGE"
 
 RESOLVED_COMMIT="$(git -C "$ROOT_DIR" rev-parse --verify "$SOURCE_COMMIT^{commit}")"
 if [[ "$RESOLVED_COMMIT" != "$SOURCE_COMMIT" ]]; then
@@ -137,10 +135,8 @@ MIGRATION_CONTAINER="$PROJECT_NAME-migrate-proof"
 export TRACK_ANYWHERE_E2E_PROJECT="$PROJECT_NAME"
 export TRACK_ANYWHERE_E2E_API_BIND=127.0.0.1
 export TRACK_ANYWHERE_E2E_POSTGRES_BIND=127.0.0.1
-export TRACK_ANYWHERE_E2E_WEB_BIND=127.0.0.1
 export TRACK_ANYWHERE_E2E_API_PORT="$(ta_pick_loopback_port)"
 export TRACK_ANYWHERE_E2E_POSTGRES_PORT="$(ta_pick_loopback_port)"
-export TRACK_ANYWHERE_E2E_WEB_PORT="$(ta_pick_loopback_port)"
 export TRACK_ANYWHERE_E2E_NO_BUILD=1
 export TRACK_ANYWHERE_E2E_EXISTING_STACK=1
 
@@ -154,7 +150,7 @@ ta_require_postgres_identifier "$OWNER_ROLE" "owner role"
 ta_require_postgres_identifier "$MIGRATOR_ROLE" "migrator role"
 ta_require_postgres_identifier "$RUNTIME_ROLE" "runtime role"
 API_URL="http://127.0.0.1:$TRACK_ANYWHERE_E2E_API_PORT"
-WEB_URL="http://127.0.0.1:$TRACK_ANYWHERE_E2E_WEB_PORT"
+export TRACK_ANYWHERE_E2E_PUBLIC_BASE_URL="$API_URL"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE")
 DOCKER_TIMEOUT="${TRACK_ANYWHERE_DOCKER_CLI_TIMEOUT_SECONDS:-60}"
 COMPOSE_TIMEOUT="${TRACK_ANYWHERE_DOCKER_COMPOSE_TIMEOUT_SECONDS:-900}"
@@ -165,12 +161,9 @@ COMPOSE_STARTED=0
 PASS_WRITTEN=0
 MIGRATION_CONTAINER_CREATED=0
 API_IMAGE_ID=""
-WEB_IMAGE_ID=""
 POSTGRES_IMAGE_ID=""
 API_REVISION=""
-WEB_REVISION=""
 API_REPO_DIGESTS=""
-WEB_REPO_DIGESTS=""
 POSTGRES_VERSION=""
 RUNTIME_IDENTITY=""
 MIGRATOR_IDENTITY=""
@@ -182,7 +175,7 @@ LEGACY_ROUTE_STATUS=""
 E2E_RESULT="$REPORT_DIR/e2e-result.json"
 PROJECTION_RESULT="$REPORT_DIR/projection.json"
 VERIFIER_RESULT="$REPORT_DIR/independent-verifier.json"
-WEB_HEALTH_RESULT="$REPORT_DIR/web-health.json"
+APP_HEALTH_RESULT="$REPORT_DIR/app-health.json"
 
 write_verification() {
   local status="$1"
@@ -191,10 +184,9 @@ write_verification() {
   python3 - \
     "$temporary" "$status" "$SOURCE_COMMIT" "$RUN_ID" "$STAGE" \
     "$API_IMAGE" "$API_IMAGE_ID" "$API_REVISION" "$API_REPO_DIGESTS" \
-    "$WEB_IMAGE" "$WEB_IMAGE_ID" "$WEB_REVISION" "$WEB_REPO_DIGESTS" \
     "$POSTGRES_VERSION" "$RUNTIME_IDENTITY" "$MIGRATOR_IDENTITY" \
     "$DATABASE_OWNER" "$ALEMBIC_HEAD" "$E2E_RESULT" \
-    "$PROJECTION_RESULT" "$VERIFIER_RESULT" "$WEB_HEALTH_RESULT" \
+    "$PROJECTION_RESULT" "$VERIFIER_RESULT" "$APP_HEALTH_RESULT" \
     "$runtime_cannot_update_events" "$runtime_cannot_disable_triggers" \
     "$LEGACY_ROUTE_STATUS" <<'PY'
 import json
@@ -211,10 +203,6 @@ from pathlib import Path
     api_image_id,
     api_revision,
     api_repo_digests,
-    web_image,
-    web_image_id,
-    web_revision,
-    web_repo_digests,
     postgres_version,
     runtime_identity,
     migrator_identity,
@@ -223,7 +211,7 @@ from pathlib import Path
     e2e_path,
     projection_path,
     verifier_path,
-    web_health_path,
+    app_health_path,
     runtime_update_probe,
     runtime_trigger_probe,
     legacy_route_status,
@@ -257,18 +245,12 @@ report = {
             "repo_digests": docker_json(api_repo_digests),
             "revision": api_revision or None,
         },
-        "web": {
-            "content_digest": web_image_id or None,
-            "reference": web_image,
-            "repo_digests": docker_json(web_repo_digests),
-            "revision": web_revision or None,
-        },
     },
     "checks": {
         "legacy_route_http_status": legacy_route_status or None,
         "runtime_cannot_disable_triggers": runtime_trigger_probe,
         "runtime_cannot_update_events": runtime_update_probe,
-        "web_proxy_health": optional_json(web_health_path),
+        "public_app_health": optional_json(app_health_path),
     },
     "independent_verifier": optional_json(verifier_path),
     "postgres_server_version_num": postgres_version or None,
@@ -329,7 +311,7 @@ cleanup() {
   if [[ "$REPORT_CREATED" == "1" && "$exit_code" -ne 0 ]]; then
     if [[ "$COMPOSE_STARTED" == "1" ]]; then
       ta_run_with_timeout "$DOCKER_TIMEOUT" \
-        "${COMPOSE[@]}" logs --no-color postgres migrate api web 2>&1 \
+        "${COMPOSE[@]}" logs --no-color postgres migrate api 2>&1 \
         | redact_diagnostics >"$REPORT_DIR/diagnostics.log" || true
     fi
     write_verification "FAIL" || true
@@ -366,25 +348,21 @@ case "$DOCKER_ENDPOINT" in
 esac
 ta_run_with_timeout "$DOCKER_TIMEOUT" docker version --format '{{.Server.Version}}' >/dev/null
 API_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{.Id}}')"
-WEB_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$WEB_IMAGE" --format '{{.Id}}')"
 POSTGRES_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect postgres:17-alpine --format '{{.Id}}')"
 API_REVISION="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
-WEB_REVISION="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$WEB_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
 API_REPO_DIGESTS="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{json .RepoDigests}}')"
-WEB_REPO_DIGESTS="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$WEB_IMAGE" --format '{{json .RepoDigests}}')"
-for image_id in "$API_IMAGE_ID" "$WEB_IMAGE_ID" "$POSTGRES_IMAGE_ID"; do
+for image_id in "$API_IMAGE_ID" "$POSTGRES_IMAGE_ID"; do
   if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     printf 'image content digest is not a sha256 image ID\n' >&2
     exit 1
   fi
 done
-if [[ "$API_REVISION" != "$SOURCE_COMMIT" || "$WEB_REVISION" != "$SOURCE_COMMIT" ]]; then
+if [[ "$API_REVISION" != "$SOURCE_COMMIT" ]]; then
   printf 'image revision label does not match source commit\n' >&2
   exit 1
 fi
 CONFIG_IMAGES="$(ta_run_with_timeout "$DOCKER_TIMEOUT" "${COMPOSE[@]}" config --images)"
 grep -Fxq "$API_IMAGE" <<<"$CONFIG_IMAGES"
-grep -Fxq "$WEB_IMAGE" <<<"$CONFIG_IMAGES"
 
 STAGE=postgres_start
 COMPOSE_STARTED=1
@@ -455,60 +433,49 @@ PY
 
 STAGE=runtime_start
 ta_run_with_timeout "$COMPOSE_TIMEOUT" \
-  "${COMPOSE[@]}" up -d --no-build --pull never --wait api web
+  "${COMPOSE[@]}" up -d --no-build --pull never --wait api
 API_CONTAINER="$("${COMPOSE[@]}" ps -q api)"
-WEB_CONTAINER="$("${COMPOSE[@]}" ps -q web)"
-if [[ -z "$API_CONTAINER" || -z "$WEB_CONTAINER" ]]; then
-  printf 'API and web containers must both be running\n' >&2
+if [[ -z "$API_CONTAINER" ]]; then
+  printf 'application container must be running\n' >&2
   exit 1
 fi
 if [[ "$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$API_CONTAINER" --format '{{.Image}}')" != "$API_IMAGE_ID" ]]; then
   printf 'running API image ID differs from the validated image\n' >&2
   exit 1
 fi
-if [[ "$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$WEB_CONTAINER" --format '{{.Image}}')" != "$WEB_IMAGE_ID" ]]; then
-  printf 'running web image ID differs from the validated image\n' >&2
-  exit 1
-fi
 if [[ "$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$API_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" != "$SOURCE_COMMIT" ]]; then
   printf 'running API revision label differs from source commit\n' >&2
   exit 1
 fi
-if [[ "$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$WEB_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" != "$SOURCE_COMMIT" ]]; then
-  printf 'running web revision label differs from source commit\n' >&2
+STAGE=app_smoke
+APP_HEALTH_METADATA="$(curl --connect-timeout 3 --max-time 30 -sS \
+  -o "$APP_HEALTH_RESULT" -w '%{http_code}|%{content_type}' \
+  "$API_URL/api/v2/health")"
+APP_HEALTH_STATUS="${APP_HEALTH_METADATA%%|*}"
+APP_HEALTH_CONTENT_TYPE="${APP_HEALTH_METADATA#*|}"
+if [[ "$APP_HEALTH_STATUS" != "200" ]]; then
+  printf 'public app health must return HTTP 200 without redirect, got %s\n' \
+    "$APP_HEALTH_STATUS" >&2
   exit 1
 fi
-
-STAGE=web_smoke
-WEB_HEALTH_METADATA="$(curl --connect-timeout 3 --max-time 30 -sS \
-  -o "$WEB_HEALTH_RESULT" -w '%{http_code}|%{content_type}' \
-  "$WEB_URL/api/v2/health")"
-WEB_HEALTH_STATUS="${WEB_HEALTH_METADATA%%|*}"
-WEB_HEALTH_CONTENT_TYPE="${WEB_HEALTH_METADATA#*|}"
-if [[ "$WEB_HEALTH_STATUS" != "200" ]]; then
-  printf 'web proxy health must return HTTP 200 without redirect, got %s\n' \
-    "$WEB_HEALTH_STATUS" >&2
-  exit 1
-fi
-python3 - "$WEB_HEALTH_RESULT" "$WEB_HEALTH_CONTENT_TYPE" <<'PY'
+python3 - "$APP_HEALTH_RESULT" "$APP_HEALTH_CONTENT_TYPE" <<'PY'
 import json
 import sys
 
 media_type = sys.argv[2].partition(";")[0].strip().casefold()
 if media_type != "application/json":
-    raise SystemExit("web proxy health content type must be application/json")
+    raise SystemExit("public app health content type must be application/json")
 try:
     payload = json.load(open(sys.argv[1], encoding="utf-8"))
 except (OSError, UnicodeError, json.JSONDecodeError):
-    raise SystemExit("web proxy health payload must be exact V2 JSON") from None
+    raise SystemExit("public app health payload must be exact V2 JSON") from None
 if payload != {"api_version": "v2", "status": "ok"}:
-    raise SystemExit("web proxy health payload must be exact V2 JSON")
+    raise SystemExit("public app health payload must be exact V2 JSON")
 PY
 
 STAGE=api_cli_and_fresh_connection_smoke
 TRACK_ANYWHERE_E2E_RESULT_FILE="$E2E_RESULT" \
 TRACK_ANYWHERE_E2E_API_IMAGE="$API_IMAGE" \
-TRACK_ANYWHERE_E2E_WEB_IMAGE="$WEB_IMAGE" \
 TRACK_ANYWHERE_E2E_NO_BUILD=1 \
 TRACK_ANYWHERE_E2E_EXISTING_STACK=1 \
   bash "$ROOT_DIR/scripts/e2e-docker-postgres.sh"
@@ -586,40 +553,49 @@ ta_run_with_timeout "$COMPOSE_TIMEOUT" \
 import json
 import os
 import sys
+import time
 from uuid import UUID
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from track_anywhere.infrastructure.db.models.async_projection import ProjectionCheckpointRecord
+from track_anywhere.infrastructure.db.models.async_projection import (
+    ProjectionCheckpointRecord,
+    ProjectionFailureRecord,
+)
 from track_anywhere.infrastructure.db.models.event_store import BookEventHeadRecord
 from track_anywhere.infrastructure.projections.checkpoints import PROJECTION_NAME, PROJECTOR_VERSION
-from track_anywhere.infrastructure.projections.worker import AsyncProjectionWorker
 
 book_id = UUID(sys.argv[1])
 engine = create_engine(os.environ["TRACK_ANYWHERE_DATABASE_URL"], pool_pre_ping=True)
 factory = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
-worker = AsyncProjectionWorker(factory)
-processed = 0
 try:
-    for _ in range(20):
-        result = worker.run_once(book_id)
-        processed += result.processed_events
+    for attempt in range(1, 121):
         with factory() as session:
             head = session.get(BookEventHeadRecord, book_id)
             checkpoint = session.get(
                 ProjectionCheckpointRecord,
                 (PROJECTION_NAME, PROJECTOR_VERSION, book_id),
             )
-            if head is None or checkpoint is None:
-                raise SystemExit("projection head/checkpoint missing")
-            projection_lag = head.last_position - checkpoint.last_book_position
+            paused = session.query(ProjectionFailureRecord).filter_by(
+                projection_name=PROJECTION_NAME,
+                projector_version=PROJECTOR_VERSION,
+                book_id=book_id,
+                retry_state="paused",
+            ).first()
+            if paused is not None:
+                raise SystemExit("async projection paused on a recorded failure")
+            if head is not None and checkpoint is not None:
+                projection_lag = head.last_position - checkpoint.last_book_position
+            else:
+                projection_lag = None
         if projection_lag == 0:
             break
+        time.sleep(0.25)
     else:
-        raise SystemExit("async projection did not converge")
+        raise SystemExit("embedded async projection runtime did not converge")
     print(json.dumps({
-        "processed_events": processed,
+        "poll_attempts": attempt,
         "projection_lag": projection_lag,
         "status": "PASS",
     }, sort_keys=True))

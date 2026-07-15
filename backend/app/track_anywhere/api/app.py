@@ -126,10 +126,10 @@ def _database_unavailable_session() -> Iterator[Session]:
 def _allowed_origins_from_env() -> list[str]:
     raw = os.environ.get(
         "TRACK_ANYWHERE_ALLOWED_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000",
+        "http://localhost:8000,http://127.0.0.1:8000",
     )
     origins = [item.strip().rstrip("/") for item in raw.split(",") if item.strip()]
-    return origins or ["http://localhost:3000"]
+    return origins or ["http://localhost:8000"]
 
 
 def _cookie_secure_from_env() -> bool:

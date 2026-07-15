@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Track Anywhere PostgreSQL backup every six hours
+
+[Timer]
+OnCalendar=*-*-* 00/6:17:00 UTC
+Persistent=true
+RandomizedDelaySec=5m
+Unit=track-anywhere-backup.service
+
+[Install]
+WantedBy=timers.target

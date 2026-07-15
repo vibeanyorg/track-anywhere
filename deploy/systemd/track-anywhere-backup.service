@@ -1,0 +1,19 @@
+[Unit]
+Description=Track Anywhere PostgreSQL S3/R2 backup
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=RCLONE_CONFIG=/etc/track-anywhere/rclone.conf
+Environment=RCLONE_CONTIMEOUT=30s
+Environment=RCLONE_TIMEOUT=10m
+Environment=RCLONE_RETRIES=5
+Environment=RCLONE_LOW_LEVEL_RETRIES=10
+EnvironmentFile=/etc/track-anywhere/backup.env
+ExecStart=/usr/local/libexec/track-anywhere-backup
+TimeoutStartSec=2h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true

@@ -1,11 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "./auth-provider";
 import { readJson, responseError } from "../lib/http";
+import { oauthRedirectUri } from "../lib/public-origin.mjs";
 
 const defaultScope = "book:read ledger:read";
-const defaultRedirectUri = "http://127.0.0.1:3000/auth/callback";
 
 type OAuthClient = {
   client_id: string;
@@ -17,7 +17,7 @@ type OAuthClient = {
 export function AuthConsole() {
   const { session } = useAuth();
   const [clientName, setClientName] = useState("Local MCP Client");
-  const [redirectUri, setRedirectUri] = useState(defaultRedirectUri);
+  const [redirectUri, setRedirectUri] = useState("");
   const [clientScope, setClientScope] = useState(defaultScope);
   const [client, setClient] = useState<OAuthClient | null>(null);
   const [connectedToken, setConnectedToken] = useState("");
@@ -27,6 +27,10 @@ export function AuthConsole() {
   const displayName = useMemo(() => {
     return session.identity?.display_name || "You";
   }, [session]);
+
+  useEffect(() => {
+    setRedirectUri(oauthRedirectUri(window.location.origin));
+  }, []);
 
   if (!session.authenticated) {
     return null;
@@ -107,7 +111,12 @@ export function AuthConsole() {
           <div className="console-panel-head">
             <h3>PKCE connection</h3>
             <div>
-              <button className="text-button" type="button" onClick={registerApp} disabled={busy}>
+              <button
+                className="text-button"
+                type="button"
+                onClick={registerApp}
+                disabled={busy || !redirectUri}
+              >
                 Register app
               </button>
               <button
