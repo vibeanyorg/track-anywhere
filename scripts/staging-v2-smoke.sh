@@ -111,6 +111,7 @@ HARNESS_SOURCE_PATHS=(
   .dockerignore
   compose.e2e.yaml
   docker/postgres/init/001-v2-roles.sh
+  scripts/lib/e2e-harness-common.sh
   scripts/staging-v2-smoke.sh
   scripts/e2e-docker-postgres.sh
   docs/operations/v2-isolated-staging-checklist.md
@@ -128,14 +129,8 @@ for harness_path in "${HARNESS_SOURCE_PATHS[@]}"; do
   fi
 done
 
-pick_port() {
-  python3 - <<'PY'
-import socket
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
+# shellcheck source=scripts/lib/e2e-harness-common.sh
+source "$ROOT_DIR/scripts/lib/e2e-harness-common.sh"
 
 PROJECT_NAME="track-anywhere-v2-staging-${RUN_ID//-/}"
 MIGRATION_CONTAINER="$PROJECT_NAME-migrate-proof"
@@ -143,9 +138,9 @@ export TRACK_ANYWHERE_E2E_PROJECT="$PROJECT_NAME"
 export TRACK_ANYWHERE_E2E_API_BIND=127.0.0.1
 export TRACK_ANYWHERE_E2E_POSTGRES_BIND=127.0.0.1
 export TRACK_ANYWHERE_E2E_WEB_BIND=127.0.0.1
-export TRACK_ANYWHERE_E2E_API_PORT="$(pick_port)"
-export TRACK_ANYWHERE_E2E_POSTGRES_PORT="$(pick_port)"
-export TRACK_ANYWHERE_E2E_WEB_PORT="$(pick_port)"
+export TRACK_ANYWHERE_E2E_API_PORT="$(ta_pick_loopback_port)"
+export TRACK_ANYWHERE_E2E_POSTGRES_PORT="$(ta_pick_loopback_port)"
+export TRACK_ANYWHERE_E2E_WEB_PORT="$(ta_pick_loopback_port)"
 export TRACK_ANYWHERE_E2E_NO_BUILD=1
 export TRACK_ANYWHERE_E2E_EXISTING_STACK=1
 
@@ -155,18 +150,9 @@ MIGRATOR_PASSWORD="${TRACK_ANYWHERE_MIGRATOR_PASSWORD:-track_anywhere_migrator_t
 RUNTIME_ROLE="${TRACK_ANYWHERE_RUNTIME_ROLE:-track_anywhere_runtime}"
 RUNTIME_PASSWORD="${TRACK_ANYWHERE_RUNTIME_PASSWORD:-track_anywhere_runtime_test}"
 
-require_identifier() {
-  local value="$1"
-  local label="$2"
-  if [[ ! "$value" =~ ^[a-z_][a-z0-9_]*$ ]] || (( ${#value} > 63 )); then
-    printf '%s must be a safe PostgreSQL identifier\n' "$label" >&2
-    exit 2
-  fi
-}
-
-require_identifier "$OWNER_ROLE" "owner role"
-require_identifier "$MIGRATOR_ROLE" "migrator role"
-require_identifier "$RUNTIME_ROLE" "runtime role"
+ta_require_postgres_identifier "$OWNER_ROLE" "owner role"
+ta_require_postgres_identifier "$MIGRATOR_ROLE" "migrator role"
+ta_require_postgres_identifier "$RUNTIME_ROLE" "runtime role"
 API_URL="http://127.0.0.1:$TRACK_ANYWHERE_E2E_API_PORT"
 WEB_URL="http://127.0.0.1:$TRACK_ANYWHERE_E2E_WEB_PORT"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE")
@@ -197,21 +183,6 @@ E2E_RESULT="$REPORT_DIR/e2e-result.json"
 PROJECTION_RESULT="$REPORT_DIR/projection.json"
 VERIFIER_RESULT="$REPORT_DIR/independent-verifier.json"
 WEB_HEALTH_RESULT="$REPORT_DIR/web-health.json"
-
-run_with_timeout() {
-  local timeout_seconds="$1"
-  shift
-  python3 -c '
-import subprocess
-import sys
-try:
-    result = subprocess.run(sys.argv[2:], timeout=float(sys.argv[1]))
-except subprocess.TimeoutExpired:
-    print(f"command timed out after {sys.argv[1]}s", file=sys.stderr)
-    raise SystemExit(124) from None
-raise SystemExit(result.returncode)
-' "$timeout_seconds" "$@"
-}
 
 write_verification() {
   local status="$1"
@@ -333,12 +304,12 @@ teardown_resources_strict() {
     return 0
   fi
   if [[ "$MIGRATION_CONTAINER_CREATED" == "1" ]]; then
-    if ! run_with_timeout "$DOCKER_TIMEOUT" \
+    if ! ta_run_with_timeout "$DOCKER_TIMEOUT" \
       docker rm -f "$MIGRATION_CONTAINER" >/dev/null 2>&1; then
       failed=1
     fi
   fi
-  if ! run_with_timeout "$DOCKER_TIMEOUT" \
+  if ! ta_run_with_timeout "$DOCKER_TIMEOUT" \
     "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1; then
     failed=1
   fi
@@ -357,16 +328,16 @@ cleanup() {
   fi
   if [[ "$REPORT_CREATED" == "1" && "$exit_code" -ne 0 ]]; then
     if [[ "$COMPOSE_STARTED" == "1" ]]; then
-      run_with_timeout "$DOCKER_TIMEOUT" \
+      ta_run_with_timeout "$DOCKER_TIMEOUT" \
         "${COMPOSE[@]}" logs --no-color postgres migrate api web 2>&1 \
         | redact_diagnostics >"$REPORT_DIR/diagnostics.log" || true
     fi
     write_verification "FAIL" || true
   fi
   if [[ "$COMPOSE_STARTED" == "1" ]]; then
-    run_with_timeout "$DOCKER_TIMEOUT" \
+    ta_run_with_timeout "$DOCKER_TIMEOUT" \
       docker rm -f "$MIGRATION_CONTAINER" >/dev/null 2>&1 || true
-    run_with_timeout "$DOCKER_TIMEOUT" \
+    ta_run_with_timeout "$DOCKER_TIMEOUT" \
       "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   fi
   exit "$exit_code"
@@ -382,8 +353,8 @@ STAGE=image_preflight
 if [[ -n "${DOCKER_HOST:-}" ]]; then
   DOCKER_ENDPOINT="$DOCKER_HOST"
 else
-  DOCKER_CONTEXT_NAME="$(run_with_timeout "$DOCKER_TIMEOUT" docker context show)"
-  DOCKER_ENDPOINT="$(run_with_timeout "$DOCKER_TIMEOUT" \
+  DOCKER_CONTEXT_NAME="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker context show)"
+  DOCKER_ENDPOINT="$(ta_run_with_timeout "$DOCKER_TIMEOUT" \
     docker context inspect "$DOCKER_CONTEXT_NAME" --format '{{.Endpoints.docker.Host}}')"
 fi
 case "$DOCKER_ENDPOINT" in
@@ -393,14 +364,14 @@ case "$DOCKER_ENDPOINT" in
     exit 1
     ;;
 esac
-run_with_timeout "$DOCKER_TIMEOUT" docker version --format '{{.Server.Version}}' >/dev/null
-API_IMAGE_ID="$(run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{.Id}}')"
-WEB_IMAGE_ID="$(run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$WEB_IMAGE" --format '{{.Id}}')"
-POSTGRES_IMAGE_ID="$(run_with_timeout "$DOCKER_TIMEOUT" docker image inspect postgres:17-alpine --format '{{.Id}}')"
-API_REVISION="$(run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
-WEB_REVISION="$(run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$WEB_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
-API_REPO_DIGESTS="$(run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{json .RepoDigests}}')"
-WEB_REPO_DIGESTS="$(run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$WEB_IMAGE" --format '{{json .RepoDigests}}')"
+ta_run_with_timeout "$DOCKER_TIMEOUT" docker version --format '{{.Server.Version}}' >/dev/null
+API_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{.Id}}')"
+WEB_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$WEB_IMAGE" --format '{{.Id}}')"
+POSTGRES_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect postgres:17-alpine --format '{{.Id}}')"
+API_REVISION="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+WEB_REVISION="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$WEB_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+API_REPO_DIGESTS="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{json .RepoDigests}}')"
+WEB_REPO_DIGESTS="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$WEB_IMAGE" --format '{{json .RepoDigests}}')"
 for image_id in "$API_IMAGE_ID" "$WEB_IMAGE_ID" "$POSTGRES_IMAGE_ID"; do
   if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
     printf 'image content digest is not a sha256 image ID\n' >&2
@@ -411,24 +382,21 @@ if [[ "$API_REVISION" != "$SOURCE_COMMIT" || "$WEB_REVISION" != "$SOURCE_COMMIT"
   printf 'image revision label does not match source commit\n' >&2
   exit 1
 fi
-CONFIG_IMAGES="$(run_with_timeout "$DOCKER_TIMEOUT" "${COMPOSE[@]}" config --images)"
+CONFIG_IMAGES="$(ta_run_with_timeout "$DOCKER_TIMEOUT" "${COMPOSE[@]}" config --images)"
 grep -Fxq "$API_IMAGE" <<<"$CONFIG_IMAGES"
 grep -Fxq "$WEB_IMAGE" <<<"$CONFIG_IMAGES"
 
 STAGE=postgres_start
 COMPOSE_STARTED=1
-run_with_timeout "$COMPOSE_TIMEOUT" \
+ta_run_with_timeout "$COMPOSE_TIMEOUT" \
   "${COMPOSE[@]}" up -d --no-build --pull never --wait postgres
-run_with_timeout "$DOCKER_TIMEOUT" \
-  "${COMPOSE[@]}" exec -T postgres \
-  psql --username track_anywhere --dbname postgres --set ON_ERROR_STOP=1 \
-  --command "ALTER DATABASE track_anywhere OWNER TO \"$OWNER_ROLE\""
+ta_initialize_database_owner "$DOCKER_TIMEOUT" "$OWNER_ROLE" "${COMPOSE[@]}"
 
 STAGE=clean_migration
-run_with_timeout "$COMPOSE_TIMEOUT" \
+ta_run_with_timeout "$COMPOSE_TIMEOUT" \
   "${COMPOSE[@]}" run --pull never --name "$MIGRATION_CONTAINER" --no-deps -T migrate
 MIGRATION_CONTAINER_CREATED=1
-MIGRATION_IMAGE_ID="$(run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$MIGRATION_CONTAINER" --format '{{.Image}}')"
+MIGRATION_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$MIGRATION_CONTAINER" --format '{{.Image}}')"
 if [[ "$MIGRATION_IMAGE_ID" != "$API_IMAGE_ID" ]]; then
   printf 'migration container did not use the exact API image\n' >&2
   exit 1
@@ -436,7 +404,7 @@ fi
 
 STAGE=runtime_seed
 TRACK_ANYWHERE_E2E_RAW_API_KEY=ta_v2_local_e2e \
-  run_with_timeout "$COMPOSE_TIMEOUT" \
+  ta_run_with_timeout "$COMPOSE_TIMEOUT" \
   "${COMPOSE[@]}" run --pull never --rm --no-deps -T \
   -e TRACK_ANYWHERE_E2E_RAW_API_KEY api python - <<'PY'
 from datetime import UTC, datetime, timedelta
@@ -486,7 +454,7 @@ finally:
 PY
 
 STAGE=runtime_start
-run_with_timeout "$COMPOSE_TIMEOUT" \
+ta_run_with_timeout "$COMPOSE_TIMEOUT" \
   "${COMPOSE[@]}" up -d --no-build --pull never --wait api web
 API_CONTAINER="$("${COMPOSE[@]}" ps -q api)"
 WEB_CONTAINER="$("${COMPOSE[@]}" ps -q web)"
@@ -494,19 +462,19 @@ if [[ -z "$API_CONTAINER" || -z "$WEB_CONTAINER" ]]; then
   printf 'API and web containers must both be running\n' >&2
   exit 1
 fi
-if [[ "$(run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$API_CONTAINER" --format '{{.Image}}')" != "$API_IMAGE_ID" ]]; then
+if [[ "$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$API_CONTAINER" --format '{{.Image}}')" != "$API_IMAGE_ID" ]]; then
   printf 'running API image ID differs from the validated image\n' >&2
   exit 1
 fi
-if [[ "$(run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$WEB_CONTAINER" --format '{{.Image}}')" != "$WEB_IMAGE_ID" ]]; then
+if [[ "$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$WEB_CONTAINER" --format '{{.Image}}')" != "$WEB_IMAGE_ID" ]]; then
   printf 'running web image ID differs from the validated image\n' >&2
   exit 1
 fi
-if [[ "$(run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$API_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" != "$SOURCE_COMMIT" ]]; then
+if [[ "$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$API_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" != "$SOURCE_COMMIT" ]]; then
   printf 'running API revision label differs from source commit\n' >&2
   exit 1
 fi
-if [[ "$(run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$WEB_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" != "$SOURCE_COMMIT" ]]; then
+if [[ "$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker inspect "$WEB_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" != "$SOURCE_COMMIT" ]]; then
   printf 'running web revision label differs from source commit\n' >&2
   exit 1
 fi
@@ -555,7 +523,7 @@ psql_as() {
   local role="$1"
   local password="$2"
   local statement="$3"
-  run_with_timeout "$DOCKER_TIMEOUT" \
+  ta_run_with_timeout "$DOCKER_TIMEOUT" \
     "${COMPOSE[@]}" exec -T -e "PGPASSWORD=$password" postgres \
     psql -h 127.0.0.1 -U "$role" -d track_anywhere \
     --set ON_ERROR_STOP=1 --tuples-only --no-align --field-separator='|' \
@@ -585,7 +553,7 @@ if [[ "$DATABASE_OWNER" != "$OWNER_ROLE" || "$RUNTIME_ROLE" == "$MIGRATOR_ROLE" 
 fi
 ALEMBIC_HEAD="$(psql_as "$RUNTIME_ROLE" "$RUNTIME_PASSWORD" 'select version_num from alembic_version')"
 IMAGE_HEAD="$(
-  run_with_timeout "$DOCKER_TIMEOUT" \
+  ta_run_with_timeout "$DOCKER_TIMEOUT" \
     "${COMPOSE[@]}" exec -T api python -m alembic heads \
     | awk 'NR == 1 {print $1}'
 )"
@@ -613,7 +581,7 @@ if psql_as "$RUNTIME_ROLE" "$RUNTIME_PASSWORD" \
 fi
 
 STAGE=async_projection_lag
-run_with_timeout "$COMPOSE_TIMEOUT" \
+ta_run_with_timeout "$COMPOSE_TIMEOUT" \
   "${COMPOSE[@]}" exec -T api python - "$BOOK_ID" >"$PROJECTION_RESULT" <<'PY'
 import json
 import os
@@ -660,7 +628,7 @@ finally:
 PY
 
 STAGE=independent_replay_and_hash_head
-run_with_timeout "$COMPOSE_TIMEOUT" \
+ta_run_with_timeout "$COMPOSE_TIMEOUT" \
   "${COMPOSE[@]}" exec -T api python - >"$VERIFIER_RESULT" <<'PY'
 import json
 import os

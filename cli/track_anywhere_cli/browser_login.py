@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .click_common import Requester
 from .interaction import Interaction, inform
-from .oauth_login import BrowserLoginRequest, create_browser_login_request
-from .pkce_callback import BrowserCallbackListener, CallbackTimeout
+from .oauth_login import (
+    BrowserLoginRequest,
+    OAuthMetadata,
+    create_browser_login_request,
+    register_public_client,
+)
+from .pkce_callback import BrowserCallbackListener
 
 
 @dataclass(frozen=True)
@@ -15,29 +21,32 @@ class BrowserCallbackCapture:
 
 def capture_browser_callback(
     *,
-    web_url: str,
-    client_id: str,
+    metadata: OAuthMetadata,
+    client_id: str | None,
     scope: str,
-    callback_value: str | None,
     interaction: Interaction,
+    requester: Requester,
 ) -> BrowserCallbackCapture:
-    if callback_value:
-        request = create_browser_login_request(web_url=web_url, client_id=client_id, scope=scope)
-        return BrowserCallbackCapture(request=request, callback_value=callback_value)
-
-    try:
-        with BrowserCallbackListener() as listener:
-            request = create_browser_login_request(web_url=web_url, client_id=client_id, scope=scope, redirect_uri=listener.redirect_uri)
-            interaction.open_url(request.auth_url)
-            inform(interaction, "Open this URL to authorize Track Anywhere CLI:")
-            inform(interaction, request.auth_url)
-            inform(interaction, f"Waiting for browser callback on {listener.redirect_uri} ...")
-            return BrowserCallbackCapture(request=request, callback_value=listener.wait_for_callback())
-    except (OSError, CallbackTimeout) as exc:
-        inform(interaction, f"Local callback listener unavailable: {exc}")
-
-    request = create_browser_login_request(web_url=web_url, client_id=client_id, scope=scope)
-    interaction.open_url(request.auth_url)
-    inform(interaction, "Open this URL to authorize Track Anywhere CLI:")
-    inform(interaction, request.auth_url)
-    return BrowserCallbackCapture(request=request, callback_value=interaction.prompt("Paste the callback URL"))
+    with BrowserCallbackListener() as listener:
+        effective_client_id = client_id or register_public_client(
+            metadata=metadata,
+            redirect_uri=listener.redirect_uri,
+            scope=scope,
+            requester=requester,
+        )
+        request = create_browser_login_request(
+            metadata=metadata,
+            client_id=effective_client_id,
+            scope=scope,
+            redirect_uri=listener.redirect_uri,
+        )
+        listener.expect_state(request.state)
+        interaction.open_url(request.auth_url)
+        inform(interaction, "Open this URL to authorize Track Anywhere CLI:")
+        inform(interaction, request.auth_url)
+        inform(
+            interaction,
+            f"Waiting for browser callback on {listener.redirect_uri} ...",
+        )
+        callback_value = listener.wait_for_callback()
+    return BrowserCallbackCapture(request=request, callback_value=callback_value)

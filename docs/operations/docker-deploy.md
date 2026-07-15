@@ -75,14 +75,14 @@ scripts/build-stable-local-image.sh
 scripts/start-stable-local.sh
 ```
 
-The stable context uses `TRACK_ANYWHERE_TOKEN_FILE` rather than the shared
-macOS keyring so stale dev/browser credentials cannot shadow the local machine
-token:
+The stable context uses a mode-`0600` API key file rather than the shared macOS
+keyring so stale interactive OAuth profiles cannot shadow the local machine
+credential:
 
 ```bash
 export TRACK_ANYWHERE_API=http://127.0.0.1:12306
 export TRACK_ANYWHERE_SERVICE_URL=http://127.0.0.1:12306
-export TRACK_ANYWHERE_TOKEN_FILE=/Users/xuyanyue/Documents/track-anywhere-stable-backend/secrets/ta-token
+export TRACK_ANYWHERE_API_KEY_FILE=/Users/xuyanyue/Documents/track-anywhere-stable-backend/secrets/ta-token
 ```
 
 Verify the running service and common CLI surfaces:
@@ -115,10 +115,23 @@ production security preconditions enabled: `TRACK_ANYWHERE_TLS`,
 `TRACK_ANYWHERE_CLAMAV_PORT`. The production Compose stack starts ClamAV and the
 API streams every attachment through it before storing the original bytes.
 
-For a private SSH-tunnel login at `http://127.0.0.1:3000`, include
-`http://127.0.0.1:3000` in `TRACK_ANYWHERE_ALLOWED_ORIGINS` and set
-`TRACK_ANYWHERE_AUTH_COOKIE_SECURE=0`. Keep the default secure-cookie behavior
-for real HTTPS deployments.
+`TRACK_ANYWHERE_PUBLIC_BASE_URL` is the browser-facing Web origin, not the
+internal `api:8000` address. The Compose stack explicitly trusts only its
+`api:8000` reverse-proxy Host for MCP DNS-rebinding validation. If the internal
+service name changes, update `TRACK_ANYWHERE_MCP_TRUSTED_PROXY_HOSTS` to the
+exact replacement Host value.
+
+Do not mix a canonical HTTPS public base with browser writes sent to an SSH
+tunnel origin. Cookie-backed mutations are intentionally bound to the single
+`TRACK_ANYWHERE_PUBLIC_BASE_URL`; adding the tunnel to CORS alone does not make
+it a trusted CSRF origin. Prefer reaching the tunnel through the canonical
+hostname with TLS. For a temporary, tunnel-only local login, set
+`TRACK_ANYWHERE_PUBLIC_BASE_URL=http://127.0.0.1:3000`, include that origin in
+`TRACK_ANYWHERE_ALLOWED_ORIGINS`, and set
+`TRACK_ANYWHERE_AUTH_COOKIE_SECURE=0`. This temporarily changes the OAuth issuer
+and resource identifiers, so it cannot run alongside the canonical HTTPS OAuth
+configuration. Keep the default secure-cookie behavior for real HTTPS
+deployments.
 
 Deploy to the default VPS alias:
 

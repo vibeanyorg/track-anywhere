@@ -197,15 +197,18 @@ async function postJson<T>(url: string, payload: object, csrf = false): Promise<
 async function runPkceExchange(clientId: string, redirectUri: string, scope: string) {
   const state = randomBase64Url(18);
   const verifier = randomBase64Url(48);
+  const resource = `${window.location.origin}/api/v2`;
   const authorize = await postJson<{ redirect_uri?: string }>(
     "/api/v2/oauth/authorize",
     {
+      response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
       scope,
       state,
       code_challenge: await pkceChallenge(verifier),
       code_challenge_method: "S256",
+      resource,
       action: "approve"
     },
     true
@@ -220,7 +223,8 @@ async function runPkceExchange(clientId: string, redirectUri: string, scope: str
     code,
     client_id: clientId,
     redirect_uri: redirectUri,
-    code_verifier: verifier
+    code_verifier: verifier,
+    resource
   });
   if (!token.access_token) throw new Error("No access token received.");
   return token.access_token;

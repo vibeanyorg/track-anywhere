@@ -3,6 +3,7 @@ from __future__ import annotations
 import click
 
 from .click_common import common_args, output_options, pass_state, run_api
+from .command_system import request_health, request_readiness
 
 
 def register(root: click.Group) -> None:
@@ -21,7 +22,7 @@ def register(root: click.Group) -> None:
             command="system",
             system_command="health",
         )
-        return run_api(args, state=state, command_path="system.health")
+        return run_api(args, state=state, command_path=request_health.command_path)
 
     @system.command("ready")
     @output_options
@@ -34,4 +35,4 @@ def register(root: click.Group) -> None:
             command="system",
             system_command="ready",
         )
-        return run_api(args, state=state, command_path="system.ready")
+        return run_api(args, state=state, command_path=request_readiness.command_path)

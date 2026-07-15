@@ -1,30 +1,16 @@
 from __future__ import annotations
 
 from argparse import Namespace
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import quote
 
 from .command_catalog import compact_payload
+from .command_definition import CommandDefinition, Requester, api_command
 from .config import CliConfig, command_idempotency_key
 from .structured_inputs import parse_external_reference
 
 
-Requester = Callable[
-    [CliConfig, str, str, dict[str, Any] | None, str | None],
-    tuple[int, Any],
-]
-CommandHandler = Callable[[Namespace, CliConfig, Requester], tuple[int, Any]]
-
-
-def infer_credit_card_command_path(args: Namespace) -> str | None:
-    if getattr(args, "command", None) != "card":
-        return None
-    subcommand = getattr(args, "card_command", None)
-    if subcommand in {"charge", "payment", "refund", "fee"}:
-        return f"card.{subcommand}"
-    return None
-
-
+@api_command("card.charge", mutating=True, idempotent=True)
 def request_charge(
     args: Namespace,
     config: CliConfig,
@@ -40,6 +26,7 @@ def request_charge(
     )
 
 
+@api_command("card.payment", mutating=True, idempotent=True)
 def request_payment(
     args: Namespace,
     config: CliConfig,
@@ -55,6 +42,7 @@ def request_payment(
     )
 
 
+@api_command("card.refund", mutating=True, idempotent=True)
 def request_refund(
     args: Namespace,
     config: CliConfig,
@@ -70,6 +58,7 @@ def request_refund(
     )
 
 
+@api_command("card.fee", mutating=True, idempotent=True)
 def request_fee(
     args: Namespace,
     config: CliConfig,
@@ -140,9 +129,9 @@ def _path(value: object) -> str:
     return quote(str(value), safe="")
 
 
-CREDIT_CARD_COMMAND_HANDLERS: dict[str, CommandHandler] = {
-    "card.charge": request_charge,
-    "card.payment": request_payment,
-    "card.refund": request_refund,
-    "card.fee": request_fee,
-}
+CREDIT_CARD_COMMAND_DEFINITIONS: tuple[CommandDefinition, ...] = (
+    request_charge,
+    request_payment,
+    request_refund,
+    request_fee,
+)

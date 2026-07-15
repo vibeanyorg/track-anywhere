@@ -100,9 +100,10 @@
     "/api/v2/oauth/authorization-server": [
       "get"
     ],
-    "/api/v2/oauth/authorize": [
-      "post"
-    ],
+  "/api/v2/oauth/authorize": [
+    "get",
+    "post"
+  ],
     "/api/v2/oauth/device/authorize": [
       "post"
     ],

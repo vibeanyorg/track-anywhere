@@ -318,3 +318,37 @@ def test_unknown_refund_source_remains_an_api_input_error(pg_engine) -> None:
     assert response.json() == {
         "detail": "refund source must be an existing typed credit-card charge"
     }
+
+
+def test_zero_credit_card_amount_is_an_api_input_error(pg_engine) -> None:
+    client, scenario, _ = _client(pg_engine)
+    charge = _base(scenario) | {
+        "expense_account_id": str(scenario.debit_account_id),
+        "amount": "0",
+    }
+
+    response = client.post(
+        f"/api/v2/books/{scenario.book_id}/credit-cards/charges",
+        headers=_headers("zero-charge"),
+        json=charge,
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": "amount must be a positive unsigned plain-decimal string"
+    }
+
+
+def test_self_referential_refund_is_an_api_input_error(pg_engine) -> None:
+    client, scenario, _ = _client(pg_engine)
+    refund = _base(scenario)
+    refund["original_transaction_id"] = refund["transaction_id"]
+
+    response = client.post(
+        f"/api/v2/books/{scenario.book_id}/credit-cards/refunds",
+        headers=_headers("self-refund"),
+        json=refund,
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "a refund cannot reference itself"}

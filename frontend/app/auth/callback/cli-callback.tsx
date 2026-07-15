@@ -5,6 +5,10 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../components/auth-provider";
 import { readJson } from "../../lib/http";
+import {
+  parseAuthorizationRequest,
+  validateAuthorizationRedirect
+} from "../../lib/oauth-consent.mjs";
 
 export function CliCallback() {
   const searchParams = useSearchParams();
@@ -13,7 +17,21 @@ export function CliCallback() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  const hasCode = Boolean(searchParams.get("code"));
+  const hasAuthorizationResult = Boolean(
+    searchParams.get("code") || searchParams.get("error")
+  );
+
+  const authorization = useMemo(() => {
+    if (hasAuthorizationResult) return { request: null, error: "" };
+    try {
+      return { request: parseAuthorizationRequest(searchParams), error: "" };
+    } catch (err) {
+      return {
+        request: null,
+        error: err instanceof Error ? err.message : "This authorization link is invalid."
+      };
+    }
+  }, [hasAuthorizationResult, searchParams]);
 
   const loginNext = useMemo(() => {
     const path = `/auth/callback?${searchParams.toString()}`;
@@ -23,16 +41,16 @@ export function CliCallback() {
   const displayName = session.identity?.display_name || "You";
 
   useEffect(() => {
-    if (hasCode && typeof window !== "undefined") {
+    if (hasAuthorizationResult && typeof window !== "undefined") {
       setCallbackUrl(window.location.href);
     }
-  }, [hasCode]);
+  }, [hasAuthorizationResult]);
 
-  async function connect() {
+  async function authorize(action: "approve" | "deny") {
+    if (!authorization.request) return;
     setBusy(true);
     setError("");
     try {
-      const payload = buildAuthorizationPayload(searchParams);
       const response = await fetch("/api/v2/oauth/authorize", {
         method: "POST",
         credentials: "include",
@@ -40,13 +58,22 @@ export function CliCallback() {
           "Content-Type": "application/json",
           "X-CSRF-Token": readCookie("ta_csrf")
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ ...authorization.request.payload, action })
       });
-      const data = await readJson<{ redirect_uri?: string; detail?: string }>(response);
+      const data = await readJson<{
+        redirect_uri?: string;
+        detail?: string;
+        error_description?: string;
+      }>(response);
       if (!response.ok || !data.redirect_uri) {
-        throw new Error(friendlyError(data.detail));
+        throw new Error(friendlyError(data.detail || data.error_description));
       }
-      setCallbackUrl(data.redirect_uri);
+      const redirect = validateAuthorizationRedirect(
+        data.redirect_uri,
+        authorization.request.payload.redirect_uri
+      );
+      setCallbackUrl(redirect);
+      window.setTimeout(() => window.location.assign(redirect), 50);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {
@@ -70,16 +97,25 @@ export function CliCallback() {
 
       <section className="cli-auth-panel" aria-labelledby="cli-callback-title">
         <div className="cli-auth-heading">
-          <h1 id="cli-callback-title">Connect your command line</h1>
+          <div>
+            <p className="eyebrow">OAuth authorization</p>
+            <h1 id="cli-callback-title">
+              {callbackUrl ? "Return to your app" : "Allow this app?"}
+            </h1>
+          </div>
           <p className="auth-form-subhead">
             {callbackUrl
-              ? "Copy this and paste it back where you started."
+              ? "Redirecting now. If that does not work, copy the URL below."
               : session.authenticated
-              ? "We'll give you a code to paste back."
-              : "Sign in first, then we'll hand off."}
+              ? "Review exactly what the app is asking to access."
+              : "Sign in before approving or denying this request."}
           </p>
           {offline ? <span className="auth-state">Can't reach the server.</span> : null}
-          {error ? <span className="auth-state">{error}</span> : null}
+          {authorization.error || error ? (
+            <p className="callback-error" role="alert">
+              {authorization.error || error}
+            </p>
+          ) : null}
         </div>
 
         {callbackUrl ? (
@@ -98,12 +134,52 @@ export function CliCallback() {
           </div>
         ) : loading ? (
           <p className="console-empty">Loading…</p>
-        ) : session.authenticated ? (
-          <div className="callback-output">
-            <span className="identity-chip">{displayName}</span>
-            <button className="primary-action cli-auth-submit" type="button" onClick={connect} disabled={busy}>
-              {busy ? "Connecting…" : "Connect"}
-            </button>
+        ) : session.authenticated && authorization.request ? (
+          <div className="oauth-consent">
+            <dl className="oauth-consent-details">
+              <div>
+                <dt>Client ID</dt>
+                <dd>{authorization.request.clientId}</dd>
+              </div>
+              <div>
+                <dt>Resource</dt>
+                <dd>{authorization.request.resource}</dd>
+              </div>
+              <div>
+                <dt>Redirect host</dt>
+                <dd>{authorization.request.redirectHost}</dd>
+              </div>
+              <div>
+                <dt>Permissions</dt>
+                <dd className="oauth-scope-list">
+                  {authorization.request.scopes.map((scope) => (
+                    <code key={scope}>{scope}</code>
+                  ))}
+                </dd>
+              </div>
+            </dl>
+            <div className="oauth-consent-identity">
+              <span>Authorizing as</span>
+              <strong>{displayName}</strong>
+            </div>
+            <div className="oauth-consent-actions">
+              <button
+                className="secondary-action cli-auth-submit"
+                type="button"
+                onClick={() => authorize("deny")}
+                disabled={busy}
+              >
+                Deny
+              </button>
+              <button
+                className="primary-action cli-auth-submit"
+                type="button"
+                onClick={() => authorize("approve")}
+                disabled={busy}
+              >
+                {busy ? "Responding…" : "Allow access"}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="auth-form-switch">
@@ -115,22 +191,6 @@ export function CliCallback() {
       </section>
     </main>
   );
-}
-
-function buildAuthorizationPayload(searchParams: { get(name: string): string | null }) {
-  const required = ["client_id", "redirect_uri", "state", "code_challenge"];
-  for (const key of required) {
-    if (!searchParams.get(key)) throw new Error("This link looks incomplete. Start over from the command line.");
-  }
-  return {
-    client_id: searchParams.get("client_id"),
-    redirect_uri: searchParams.get("redirect_uri"),
-    scope: searchParams.get("scope") || "book:read ledger:read",
-    state: searchParams.get("state"),
-    code_challenge: searchParams.get("code_challenge"),
-    code_challenge_method: "S256",
-    action: "approve"
-  };
 }
 
 function readCookie(name: string) {

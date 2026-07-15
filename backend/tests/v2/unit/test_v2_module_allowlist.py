@@ -13,10 +13,12 @@ APPROVED_ROOT_ENTRIES = {
     "auth/",
     "domain/",
     "infrastructure/",
+    "mcp/",
     "observability/",
     "outbox/",
     "queries/",
     "serialization/",
+    "server.py",
     "verification.py",
 }
 

@@ -1,1 +1,1 @@
-from track_anywhere.api import app as app
+from track_anywhere.server import app as app

@@ -16,6 +16,7 @@ HARNESS_SOURCE_PATHS = (
     ".dockerignore",
     "compose.e2e.yaml",
     "docker/postgres/init/001-v2-roles.sh",
+    "scripts/lib/e2e-harness-common.sh",
     "scripts/staging-v2-smoke.sh",
     "scripts/e2e-docker-postgres.sh",
     "docs/operations/v2-isolated-staging-checklist.md",
@@ -592,6 +593,131 @@ def test_docker_context_excludes_data_artifacts() -> None:
     assert "*.dump" in dockerignore
     assert "*.backup" in dockerignore
     assert "backups" in dockerignore
+
+
+def test_e2e_and_staging_share_bootstrap_mechanics() -> None:
+    common_path = ROOT / "scripts/lib/e2e-harness-common.sh"
+
+    assert common_path.is_file(), "the shared E2E harness library must exist"
+    common = common_path.read_text(encoding="utf-8")
+    harnesses = (
+        _read("scripts/e2e-docker-postgres.sh"),
+        _read("scripts/staging-v2-smoke.sh"),
+    )
+
+    for harness in harnesses:
+        assert 'source "$ROOT_DIR/scripts/lib/e2e-harness-common.sh"' in harness
+        for helper in (
+            "ta_pick_loopback_port",
+            "ta_require_postgres_identifier",
+            "ta_run_with_timeout",
+            "ta_initialize_database_owner",
+        ):
+            assert helper in harness
+            assert f"{helper}()" not in harness
+            assert f"{helper} ()" not in harness
+
+    for helper in (
+        "ta_pick_loopback_port",
+        "ta_require_postgres_identifier",
+        "ta_run_with_timeout",
+        "ta_initialize_database_owner",
+    ):
+        assert f"{helper}()" in common
+
+
+def test_common_harness_rejects_unsafe_postgres_identifiers() -> None:
+    common_path = ROOT / "scripts/lib/e2e-harness-common.sh"
+    command = 'source "$1"; ta_require_postgres_identifier "$2" "owner role"'
+
+    accepted = subprocess.run(
+        ["bash", "-c", command, "bash", str(common_path), "safe_role_42"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    rejected = subprocess.run(
+        ["bash", "-c", command, "bash", str(common_path), 'owner";drop'],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert accepted.returncode == 0, accepted.stderr
+    assert rejected.returncode == 2
+    assert "owner role must be a safe PostgreSQL identifier" in rejected.stderr
+
+
+def test_common_harness_timeout_and_database_owner_initialization(
+    tmp_path: Path,
+) -> None:
+    common_path = ROOT / "scripts/lib/e2e-harness-common.sh"
+    trace = tmp_path / "owner-command.txt"
+    fake_compose = tmp_path / "fake-compose"
+    _write_executable(
+        fake_compose,
+        '#!/usr/bin/env bash\nprintf \'%s\\n\' "$*" >"$HARNESS_TRACE"\n',
+    )
+    environment = {**os.environ, "HARNESS_TRACE": str(trace)}
+
+    timeout_result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; ta_run_with_timeout 0.01 python3 -c '
+            "'import time; time.sleep(0.2)'",
+            "bash",
+            str(common_path),
+        ],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    owner_result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; ta_initialize_database_owner 5 safe_owner "$2"',
+            "bash",
+            str(common_path),
+            str(fake_compose),
+        ],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert timeout_result.returncode == 124
+    assert "command timed out after" in timeout_result.stderr
+    assert owner_result.returncode == 0, owner_result.stderr
+    assert trace.read_text(encoding="utf-8").strip() == (
+        "exec -T postgres psql --username track_anywhere --dbname postgres "
+        "--set ON_ERROR_STOP=1 --command "
+        'ALTER DATABASE track_anywhere OWNER TO "safe_owner"'
+    )
+
+
+def test_common_harness_timeout_preserves_command_standard_input() -> None:
+    common_path = ROOT / "scripts/lib/e2e-harness-common.sh"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; ta_run_with_timeout 2 python3 -',
+            "bash",
+            str(common_path),
+        ],
+        input='print("stdin-preserved")\n',
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "stdin-preserved"
 
 
 def test_staging_rejects_an_untracked_harness_before_docker(tmp_path: Path) -> None:

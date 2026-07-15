@@ -19,6 +19,9 @@ RUNTIME_PASSWORD="${TRACK_ANYWHERE_RUNTIME_PASSWORD:-track_anywhere_runtime_test
 RAW_API_KEY="ta_v2_local_e2e"
 LEGACY_API_PATH='/api/'"v1"
 
+# shellcheck source=scripts/lib/e2e-harness-common.sh
+source "$ROOT_DIR/scripts/lib/e2e-harness-common.sh"
+
 if [[ "$NO_BUILD" == "1" && "$EXISTING_STACK" != "1" ]]; then
   printf 'NO_BUILD requires TRACK_ANYWHERE_E2E_EXISTING_STACK=1\n' >&2
   exit 2
@@ -35,34 +38,24 @@ if [[ -n "$RESULT_FILE" && -e "$RESULT_FILE" ]]; then
   exit 2
 fi
 
-pick_port() {
-  python3 - <<'PY'
-import socket
-with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.bind(("127.0.0.1", 0))
-    print(sock.getsockname()[1])
-PY
-}
-
-require_identifier() {
-  local value="$1"
-  local label="$2"
-  if [[ ! "$value" =~ ^[a-z_][a-z0-9_]*$ ]] || (( ${#value} > 63 )); then
-    printf '%s must be a safe PostgreSQL identifier\n' "$label" >&2
-    exit 2
-  fi
-}
-
-require_identifier "$OWNER_ROLE" "owner role"
-require_identifier "$MIGRATOR_ROLE" "migrator role"
-require_identifier "$RUNTIME_ROLE" "runtime role"
+ta_require_postgres_identifier "$OWNER_ROLE" "owner role"
+ta_require_postgres_identifier "$MIGRATOR_ROLE" "migrator role"
+ta_require_postgres_identifier "$RUNTIME_ROLE" "runtime role"
 
 export TRACK_ANYWHERE_E2E_API_BIND="${TRACK_ANYWHERE_E2E_API_BIND:-127.0.0.1}"
 export TRACK_ANYWHERE_E2E_POSTGRES_BIND="${TRACK_ANYWHERE_E2E_POSTGRES_BIND:-127.0.0.1}"
 export TRACK_ANYWHERE_E2E_WEB_BIND="${TRACK_ANYWHERE_E2E_WEB_BIND:-127.0.0.1}"
-export TRACK_ANYWHERE_E2E_API_PORT="${TRACK_ANYWHERE_E2E_API_PORT:-$(pick_port)}"
-export TRACK_ANYWHERE_E2E_POSTGRES_PORT="${TRACK_ANYWHERE_E2E_POSTGRES_PORT:-$(pick_port)}"
-export TRACK_ANYWHERE_E2E_WEB_PORT="${TRACK_ANYWHERE_E2E_WEB_PORT:-$(pick_port)}"
+export TRACK_ANYWHERE_E2E_API_PORT="${TRACK_ANYWHERE_E2E_API_PORT:-$(ta_pick_loopback_port)}"
+export TRACK_ANYWHERE_E2E_POSTGRES_PORT="${TRACK_ANYWHERE_E2E_POSTGRES_PORT:-$(ta_pick_loopback_port)}"
+export TRACK_ANYWHERE_E2E_WEB_PORT="${TRACK_ANYWHERE_E2E_WEB_PORT:-$(ta_pick_loopback_port)}"
+
+E2E_PUBLIC_HOST="$TRACK_ANYWHERE_E2E_WEB_BIND"
+if [[ "$E2E_PUBLIC_HOST" == "0.0.0.0" ]]; then
+  E2E_PUBLIC_HOST="127.0.0.1"
+elif [[ "$E2E_PUBLIC_HOST" == "::1" ]]; then
+  E2E_PUBLIC_HOST="[::1]"
+fi
+export TRACK_ANYWHERE_E2E_PUBLIC_BASE_URL="http://${E2E_PUBLIC_HOST}:${TRACK_ANYWHERE_E2E_WEB_PORT}"
 
 for bind in \
   "$TRACK_ANYWHERE_E2E_API_BIND" \
@@ -75,6 +68,7 @@ for bind in \
 done
 
 API_URL="http://${TRACK_ANYWHERE_E2E_API_BIND}:${TRACK_ANYWHERE_E2E_API_PORT}"
+WEB_URL="$TRACK_ANYWHERE_E2E_PUBLIC_BASE_URL"
 MIGRATOR_URL="postgresql+psycopg://${MIGRATOR_ROLE}:${MIGRATOR_PASSWORD}@${TRACK_ANYWHERE_E2E_POSTGRES_BIND}:${TRACK_ANYWHERE_E2E_POSTGRES_PORT}/track_anywhere?connect_timeout=5"
 RUNTIME_URL="postgresql+psycopg://${RUNTIME_ROLE}:${RUNTIME_PASSWORD}@${TRACK_ANYWHERE_E2E_POSTGRES_BIND}:${TRACK_ANYWHERE_E2E_POSTGRES_PORT}/track_anywhere?connect_timeout=5"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE")
@@ -87,35 +81,15 @@ export PYTHONPATH="$ROOT_DIR/backend/app:$ROOT_DIR/cli${PYTHONPATH:+:$PYTHONPATH
 cd "$ROOT_DIR"
 WORK_DIR="$(mktemp -d)"
 
-run_with_timeout() {
-  local timeout_seconds="$1"
-  shift
-  python3 - "$timeout_seconds" "$@" <<'PY'
-import subprocess
-import sys
-
-timeout_seconds = float(sys.argv[1])
-command = sys.argv[2:]
-try:
-    raise SystemExit(subprocess.run(command, timeout=timeout_seconds).returncode)
-except subprocess.TimeoutExpired:
-    print(
-        f"command timed out after {timeout_seconds:g}s: {' '.join(command)}",
-        file=sys.stderr,
-    )
-    raise SystemExit(124)
-PY
-}
-
 cleanup() {
   local exit_code=$?
   if [[ "$exit_code" -ne 0 ]]; then
-    run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" logs --no-color api postgres || true
+    ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" logs --no-color api postgres || true
   fi
   if [[ "$EXISTING_STACK" == "1" ]]; then
     rm -rf "$WORK_DIR"
   elif [[ "${TRACK_ANYWHERE_E2E_KEEP:-0}" != "1" ]]; then
-    run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+    ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$WORK_DIR"
   else
     printf 'Keeping E2E project %s and work dir %s\n' "$PROJECT_NAME" "$WORK_DIR" >&2
@@ -168,14 +142,14 @@ get_json() {
   local output="$2"
   curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
     "$API_URL$path" \
-    -H "Authorization: Bearer $RAW_API_KEY" \
+    -H "X-API-Key: $RAW_API_KEY" \
     >"$output"
 }
 
-run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker version --format '{{.Server.Version}}' >/dev/null
+ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker version --format '{{.Server.Version}}' >/dev/null
 if [[ "$EXISTING_STACK" == "1" ]]; then
   printf 'existing stack mode: refusing infrastructure mutation; running smoke checks only\n'
-  run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
+  ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
     "${COMPOSE[@]}" ps --status running api web postgres >/dev/null
   EXISTING_API_CONTAINER="$("${COMPOSE[@]}" ps -q api)"
   EXISTING_WEB_CONTAINER="$("${COMPOSE[@]}" ps -q web)"
@@ -184,37 +158,36 @@ if [[ "$EXISTING_STACK" == "1" ]]; then
     printf 'existing stack is missing a required running service\n' >&2
     exit 1
   fi
-  EXPECTED_API_IMAGE_ID="$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
+  EXPECTED_API_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
     docker image inspect "$TRACK_ANYWHERE_E2E_API_IMAGE" --format '{{.Id}}')"
-  EXPECTED_WEB_IMAGE_ID="$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
+  EXPECTED_WEB_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
     docker image inspect "$TRACK_ANYWHERE_E2E_WEB_IMAGE" --format '{{.Id}}')"
-  EXPECTED_POSTGRES_IMAGE_ID="$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
+  EXPECTED_POSTGRES_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
     docker image inspect postgres:17-alpine --format '{{.Id}}')"
-  if [[ "$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker inspect "$EXISTING_API_CONTAINER" --format '{{.Image}}')" != "$EXPECTED_API_IMAGE_ID" ]]; then
+  if [[ "$(ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker inspect "$EXISTING_API_CONTAINER" --format '{{.Image}}')" != "$EXPECTED_API_IMAGE_ID" ]]; then
     printf 'existing stack API image mismatch\n' >&2
     exit 1
   fi
-  if [[ "$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker inspect "$EXISTING_WEB_CONTAINER" --format '{{.Image}}')" != "$EXPECTED_WEB_IMAGE_ID" ]]; then
+  if [[ "$(ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker inspect "$EXISTING_WEB_CONTAINER" --format '{{.Image}}')" != "$EXPECTED_WEB_IMAGE_ID" ]]; then
     printf 'existing stack web image mismatch\n' >&2
     exit 1
   fi
-  if [[ "$(run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker inspect "$EXISTING_POSTGRES_CONTAINER" --format '{{.Image}}')" != "$EXPECTED_POSTGRES_IMAGE_ID" ]]; then
+  if [[ "$(ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker inspect "$EXISTING_POSTGRES_CONTAINER" --format '{{.Image}}')" != "$EXPECTED_POSTGRES_IMAGE_ID" ]]; then
     printf 'existing stack PostgreSQL image mismatch\n' >&2
     exit 1
   fi
 else
   printf 'Starting isolated PostgreSQL 17 on port %s\n' "$TRACK_ANYWHERE_E2E_POSTGRES_PORT"
-  run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" \
+  ta_run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" \
     "${COMPOSE[@]}" up -d --wait postgres
-  run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
-    "${COMPOSE[@]}" exec -T postgres \
-    psql --username track_anywhere --dbname postgres --set ON_ERROR_STOP=1 \
-    --command "ALTER DATABASE track_anywhere OWNER TO \"$OWNER_ROLE\""
+  ta_initialize_database_owner \
+    "$DOCKER_CLI_TIMEOUT_SECONDS" "$OWNER_ROLE" "${COMPOSE[@]}"
 
-  printf 'Building the local API image before the one-shot migration service\n'
-  run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" build api
+  printf 'Building the local API and web images before the one-shot migration service\n'
+  ta_run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" \
+    "${COMPOSE[@]}" build api web
   printf 'Migrating the disposable database with the dedicated migrator role\n'
-  run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" \
+  ta_run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" \
     "${COMPOSE[@]}" run --rm --no-deps migrate
 
   printf 'Seeding one disposable V2 API key through the runtime role\n'
@@ -269,8 +242,9 @@ finally:
     engine.dispose()
 PY
 
-  printf 'Starting the local V2 API at %s\n' "$API_URL"
-  run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" "${COMPOSE[@]}" up -d --no-build api
+  printf 'Starting the local V2 API at %s and web origin at %s\n' "$API_URL" "$WEB_URL"
+  ta_run_with_timeout "$DOCKER_COMPOSE_TIMEOUT_SECONDS" \
+    "${COMPOSE[@]}" up -d --no-build api web
 fi
 
 for _ in {1..90}; do
@@ -286,6 +260,31 @@ curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
 assert_json_expr "$WORK_DIR/health.json" "data == {'status': 'ok', 'api_version': 'v2'}"
 assert_json_expr "$WORK_DIR/ready.json" "data['status'] == 'ok' and data['api_version'] == 'v2' and data['checks'] == {'database': 'ok', 'schema': 'ok'}"
 
+curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
+  "$WEB_URL/.well-known/oauth-authorization-server" \
+  >"$WORK_DIR/oauth-authorization-server.json"
+curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
+  "$WEB_URL/.well-known/oauth-protected-resource/mcp" \
+  >"$WORK_DIR/oauth-protected-resource-mcp.json"
+assert_json_expr "$WORK_DIR/oauth-authorization-server.json" \
+  "data['issuer'] == '$WEB_URL/' and data['authorization_endpoint'] == '$WEB_URL/api/v2/oauth/authorize' and data['code_challenge_methods_supported'] == ['S256']"
+assert_json_expr "$WORK_DIR/oauth-protected-resource-mcp.json" \
+  "data['resource'] == '$WEB_URL/mcp' and data['authorization_servers'] == ['$WEB_URL/'] and data['scopes_supported'] == ['ledger:read']"
+
+MCP_STATUS="$(curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -sS \
+  -D "$WORK_DIR/mcp-headers.txt" -o "$WORK_DIR/mcp-response.json" \
+  -w '%{http_code}' -X POST "$WEB_URL/mcp" \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"e2e","version":"1"}}}')"
+if [[ "$MCP_STATUS" != "401" ]] || ! grep -Fq \
+  "resource_metadata=\"$WEB_URL/.well-known/oauth-protected-resource/mcp\"" \
+  "$WORK_DIR/mcp-headers.txt"; then
+  printf 'expected public MCP endpoint to return an OAuth challenge, got HTTP %s\n' \
+    "$MCP_STATUS" >&2
+  exit 1
+fi
+
 V1_STATUS="$(curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -sS \
   -o "$WORK_DIR/v1-response.txt" -w '%{http_code}' "$API_URL$LEGACY_API_PATH/health")"
 if [[ "$V1_STATUS" != "404" ]]; then
@@ -293,7 +292,7 @@ if [[ "$V1_STATUS" != "404" ]]; then
   exit 1
 fi
 
-run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+ta_run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
   python -m track_anywhere_cli.main \
   --base-url http://127.0.0.1:8000 --agent system health \
   >"$WORK_DIR/cli-health.json"
@@ -406,18 +405,20 @@ assert_json_expr "$WORK_DIR/reversed.json" "data['reversal_transaction_id'] == '
 get_json "/api/v2/books/$BOOK_ID/journal?limit=10&as_of_book_position=3" "$WORK_DIR/journal-after.json"
 assert_json_expr "$WORK_DIR/journal-after.json" "data['as_of_book_position'] == 3 and len(data['items']) == 2 and any(item['transaction_id'] == '$TRANSACTION_ID' and item['is_reversed'] and item['reversed_by_transaction_id'] == '$REVERSAL_TRANSACTION_ID' for item in data['items']) and any(item['transaction_id'] == '$REVERSAL_TRANSACTION_ID' and item['reverses_transaction_id'] == '$TRANSACTION_ID' for item in data['items'])"
 
-run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+ta_run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T \
+  -e TRACK_ANYWHERE_API_KEY="$RAW_API_KEY" api \
   python -m track_anywhere_cli.main \
-  --base-url http://127.0.0.1:8000 --token "$RAW_API_KEY" --agent \
+  --base-url http://127.0.0.1:8000 --insecure-automation --agent \
   account create "$BOOK_ID" "$CARD_ACCOUNT_ID" \
   --asset-code USD --type liability --account-subtype credit_card \
   --name "Local E2E Card" \
   >"$WORK_DIR/cli-card-account.json"
 assert_json_expr "$WORK_DIR/cli-card-account.json" "data['ok'] and data['status'] == 201 and data['data']['account_id'] == '$CARD_ACCOUNT_ID'"
 
-run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+ta_run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T \
+  -e TRACK_ANYWHERE_API_KEY="$RAW_API_KEY" api \
   python -m track_anywhere_cli.main \
-  --base-url http://127.0.0.1:8000 --token "$RAW_API_KEY" --agent \
+  --base-url http://127.0.0.1:8000 --insecure-automation --agent \
   card charge "$BOOK_ID" "$CARD_CHARGE_TRANSACTION_ID" \
   --command-id "$CARD_CHARGE_COMMAND_ID" \
   --card-account-id "$CARD_ACCOUNT_ID" \
@@ -428,9 +429,10 @@ run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
   >"$WORK_DIR/cli-card-charge.json"
 assert_json_expr "$WORK_DIR/cli-card-charge.json" "data['ok'] and data['status'] == 201 and data['data']['transaction_id'] == '$CARD_CHARGE_TRANSACTION_ID' and data['data']['intent'] == 'charge'"
 
-run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+ta_run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T \
+  -e TRACK_ANYWHERE_API_KEY="$RAW_API_KEY" api \
   python -m track_anywhere_cli.main \
-  --base-url http://127.0.0.1:8000 --token "$RAW_API_KEY" --agent \
+  --base-url http://127.0.0.1:8000 --insecure-automation --agent \
   card payment "$BOOK_ID" "$CARD_PAYMENT_TRANSACTION_ID" \
   --command-id "$CARD_PAYMENT_COMMAND_ID" \
   --card-account-id "$CARD_ACCOUNT_ID" \
@@ -441,9 +443,10 @@ run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
   >"$WORK_DIR/cli-card-payment.json"
 assert_json_expr "$WORK_DIR/cli-card-payment.json" "data['ok'] and data['status'] == 201 and data['data']['intent'] == 'payment'"
 
-run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+ta_run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T \
+  -e TRACK_ANYWHERE_API_KEY="$RAW_API_KEY" api \
   python -m track_anywhere_cli.main \
-  --base-url http://127.0.0.1:8000 --token "$RAW_API_KEY" --agent \
+  --base-url http://127.0.0.1:8000 --insecure-automation --agent \
   card refund "$BOOK_ID" "$CARD_REFUND_TRANSACTION_ID" \
   --command-id "$CARD_REFUND_COMMAND_ID" \
   --card-account-id "$CARD_ACCOUNT_ID" \
@@ -454,9 +457,10 @@ run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
   >"$WORK_DIR/cli-card-refund.json"
 assert_json_expr "$WORK_DIR/cli-card-refund.json" "data['ok'] and data['status'] == 201 and data['data']['intent'] == 'refund'"
 
-run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T api \
+ta_run_with_timeout "$HTTP_TIMEOUT_SECONDS" "${COMPOSE[@]}" exec -T \
+  -e TRACK_ANYWHERE_API_KEY="$RAW_API_KEY" api \
   python -m track_anywhere_cli.main \
-  --base-url http://127.0.0.1:8000 --token "$RAW_API_KEY" --agent \
+  --base-url http://127.0.0.1:8000 --insecure-automation --agent \
   card fee "$BOOK_ID" "$CARD_FEE_TRANSACTION_ID" \
   --command-id "$CARD_FEE_COMMAND_ID" \
   --card-account-id "$CARD_ACCOUNT_ID" \
@@ -472,6 +476,116 @@ assert_json_expr "$WORK_DIR/card-balances.json" "data['as_of_book_position'] == 
 
 get_json "/api/v2/books/$BOOK_ID/journal?limit=10&as_of_book_position=7" "$WORK_DIR/card-journal.json"
 assert_json_expr "$WORK_DIR/card-journal.json" "data['as_of_book_position'] == 7 and {'credit_card_charge', 'credit_card_payment', 'credit_card_refund', 'credit_card_fee'} <= {item['transaction_kind'] for item in data['items']} and {item['credit_card_relation']['intent'] for item in data['items'] if item['credit_card_relation'] is not None} == {'charge', 'payment', 'refund', 'fee'} and any(item['transaction_id'] == '$CARD_REFUND_TRANSACTION_ID' and item['credit_card_relation']['original_transaction_id'] == '$CARD_CHARGE_TRANSACTION_ID' for item in data['items'])"
+
+printf 'Exercising public OAuth PKCE and authenticated MCP through the web origin\n'
+curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
+  -X POST "$WEB_URL/api/v2/oauth/register" \
+  -H 'Content-Type: application/json' \
+  --data '{"client_name":"E2E MCP client","redirect_uris":["http://127.0.0.1/callback"],"scope":"ledger:read","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none"}' \
+  >"$WORK_DIR/mcp-register.json"
+MCP_CLIENT_ID="$("${PY[@]}" - "$WORK_DIR/mcp-register.json" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["client_id"])
+PY
+)"
+
+curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
+  -c "$WORK_DIR/browser-cookies.txt" \
+  -X POST "$WEB_URL/api/v2/auth/session/api-key" \
+  -H 'Content-Type: application/json' \
+  --data "{\"api_key\":\"$RAW_API_KEY\"}" \
+  >"$WORK_DIR/browser-login.json"
+CSRF_TOKEN="$("${PY[@]}" - "$WORK_DIR/browser-login.json" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["csrf_token"])
+PY
+)"
+CODE_VERIFIER="$("${PY[@]}" - <<'PY'
+print("v" * 64)
+PY
+)"
+CODE_CHALLENGE="$("${PY[@]}" - "$CODE_VERIFIER" <<'PY'
+import base64
+from hashlib import sha256
+import sys
+print(base64.urlsafe_b64encode(sha256(sys.argv[1].encode()).digest()).rstrip(b"=").decode())
+PY
+)"
+
+curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
+  -b "$WORK_DIR/browser-cookies.txt" \
+  -X POST "$WEB_URL/api/v2/oauth/authorize" \
+  -H 'Content-Type: application/json' \
+  -H "Origin: $WEB_URL" \
+  -H "X-CSRF-Token: $CSRF_TOKEN" \
+  --data "{\"response_type\":\"code\",\"client_id\":\"$MCP_CLIENT_ID\",\"redirect_uri\":\"http://127.0.0.1/callback\",\"scope\":\"ledger:read\",\"state\":\"e2e-state\",\"code_challenge\":\"$CODE_CHALLENGE\",\"code_challenge_method\":\"S256\",\"resource\":\"$WEB_URL/mcp\",\"action\":\"approve\"}" \
+  >"$WORK_DIR/mcp-authorization.json"
+AUTHORIZATION_CODE="$("${PY[@]}" - "$WORK_DIR/mcp-authorization.json" <<'PY'
+import json
+import sys
+from urllib.parse import parse_qs, urlparse
+redirect = json.load(open(sys.argv[1], encoding="utf-8"))["redirect_uri"]
+print(parse_qs(urlparse(redirect).query)["code"][0])
+PY
+)"
+
+curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
+  -X POST "$WEB_URL/api/v2/oauth/token" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'grant_type=authorization_code' \
+  --data-urlencode "code=$AUTHORIZATION_CODE" \
+  --data-urlencode "client_id=$MCP_CLIENT_ID" \
+  --data-urlencode 'redirect_uri=http://127.0.0.1/callback' \
+  --data-urlencode "code_verifier=$CODE_VERIFIER" \
+  --data-urlencode "resource=$WEB_URL/mcp" \
+  >"$WORK_DIR/mcp-token.json"
+MCP_ACCESS_TOKEN="$("${PY[@]}" - "$WORK_DIR/mcp-token.json" <<'PY'
+import json
+import sys
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+assert payload["token_type"] == "Bearer"
+assert payload["scope"] == "ledger:read"
+assert payload["refresh_token"].startswith("rt_")
+print(payload["access_token"])
+PY
+)"
+
+REST_REPLAY_STATUS="$(curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -sS \
+  -o "$WORK_DIR/mcp-token-rest-replay.json" -w '%{http_code}' \
+  "$WEB_URL/api/v2/auth/token-status" \
+  -H "Authorization: Bearer $MCP_ACCESS_TOKEN")"
+if [[ "$REST_REPLAY_STATUS" != "401" ]]; then
+  printf 'expected MCP audience token to be rejected by REST, got HTTP %s\n' \
+    "$REST_REPLAY_STATUS" >&2
+  exit 1
+fi
+
+MCP_HEADERS=(
+  -H "Authorization: Bearer $MCP_ACCESS_TOKEN"
+  -H 'Accept: application/json, text/event-stream'
+  -H 'Content-Type: application/json'
+  -H 'MCP-Protocol-Version: 2025-11-25'
+)
+curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
+  -X POST "$WEB_URL/mcp" "${MCP_HEADERS[@]}" \
+  --data '{"jsonrpc":"2.0","id":10,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"e2e","version":"1"}}}' \
+  >"$WORK_DIR/mcp-initialize.json"
+curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
+  -X POST "$WEB_URL/mcp" "${MCP_HEADERS[@]}" \
+  --data '{"jsonrpc":"2.0","id":11,"method":"tools/list"}' \
+  >"$WORK_DIR/mcp-tools.json"
+curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
+  -X POST "$WEB_URL/mcp" "${MCP_HEADERS[@]}" \
+  --data '{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"ledger_list_books","arguments":{}}}' \
+  >"$WORK_DIR/mcp-books.json"
+assert_json_expr "$WORK_DIR/mcp-initialize.json" \
+  "data['result']['protocolVersion'] == '2025-11-25'"
+assert_json_expr "$WORK_DIR/mcp-tools.json" \
+  "len(data['result']['tools']) == 8 and all(tool['annotations']['readOnlyHint'] and tool['securitySchemes'] == tool['_meta']['securitySchemes'] == [{'type': 'oauth2', 'scopes': ['ledger:read']}] for tool in data['result']['tools'])"
+assert_json_expr "$WORK_DIR/mcp-books.json" \
+  "data['result']['structuredContent']['items'] == [{'book_id': '$BOOK_ID', 'current_name': 'Local E2E Book', 'base_asset_code': None, 'write_state': 'active'}]"
 
 if [[ -n "$RESULT_FILE" ]]; then
   "${PY[@]}" - "$RESULT_FILE" "$BOOK_ID" "$TRANSACTION_ID" <<'PY'

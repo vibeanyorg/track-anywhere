@@ -8,6 +8,7 @@ services:
       - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
     environment:
       TRACK_ANYWHERE_MODE: production
+      TRACK_ANYWHERE_MCP_TRUSTED_PROXY_HOSTS: api:8000
       PYTHONUNBUFFERED: "1"
     depends_on:
       clamav:

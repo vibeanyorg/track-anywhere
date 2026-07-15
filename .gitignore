@@ -34,10 +34,12 @@ frontend/tsconfig.tsbuildinfo
 
 # Agent/runtime data
 .omx/
+.gstack/
 
 # Logs and scratch files
 *.log
 backups/
+output/
 tmp/
 temp/
 playground/

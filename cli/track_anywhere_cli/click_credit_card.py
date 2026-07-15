@@ -3,6 +3,13 @@ from __future__ import annotations
 import click
 
 from .click_common import common_args, output_options, pass_state, run_api
+from .command_credit_card import (
+    request_charge,
+    request_fee,
+    request_payment,
+    request_refund,
+)
+from .command_definition import CommandDefinition
 
 
 def register(root: click.Group) -> None:
@@ -45,16 +52,22 @@ def _common_card_options(function):
     return function
 
 
-def _run_card(state, json_mode, no_color, command_path: str, values: dict):
+def _run_card(
+    state,
+    json_mode,
+    no_color,
+    definition: CommandDefinition,
+    values: dict,
+):
     args = common_args(
         state,
         json_mode,
         no_color,
         command="card",
-        card_command=command_path.removeprefix("card."),
+        card_command=definition.command_path.removeprefix("card."),
         **values,
     )
-    return run_api(args, state=state, command_path=command_path)
+    return run_api(args, state=state, command_path=definition.command_path)
 
 
 def _register_charge(card: click.Group) -> None:
@@ -65,7 +78,7 @@ def _register_charge(card: click.Group) -> None:
     @pass_state
     def charge(state, json_mode, no_color, **values):
         """Record a card purchase without exposing debit or credit sides."""
-        return _run_card(state, json_mode, no_color, "card.charge", values)
+        return _run_card(state, json_mode, no_color, request_charge, values)
 
 
 def _register_payment(card: click.Group) -> None:
@@ -76,7 +89,7 @@ def _register_payment(card: click.Group) -> None:
     @pass_state
     def payment(state, json_mode, no_color, **values):
         """Pay down a card from an asset account."""
-        return _run_card(state, json_mode, no_color, "card.payment", values)
+        return _run_card(state, json_mode, no_color, request_payment, values)
 
 
 def _register_refund(card: click.Group) -> None:
@@ -87,7 +100,7 @@ def _register_refund(card: click.Group) -> None:
     @pass_state
     def refund(state, json_mode, no_color, **values):
         """Refund part or all of an existing card charge."""
-        return _run_card(state, json_mode, no_color, "card.refund", values)
+        return _run_card(state, json_mode, no_color, request_refund, values)
 
 
 def _register_fee(card: click.Group) -> None:
@@ -98,4 +111,4 @@ def _register_fee(card: click.Group) -> None:
     @pass_state
     def fee(state, json_mode, no_color, **values):
         """Record a card fee as a separate expense."""
-        return _run_card(state, json_mode, no_color, "card.fee", values)
+        return _run_card(state, json_mode, no_color, request_fee, values)

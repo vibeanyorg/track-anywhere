@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import click
 
+from . import command_catalog as catalog_commands
 from .click_common import common_args, output_options, pass_state, run_api
 
 
@@ -34,7 +35,11 @@ def _register_books(root: click.Group) -> None:
             name=name,
             base_asset_code=base_asset_code,
         )
-        return run_api(args, state=state, command_path="book.create")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_create_book.command_path,
+        )
 
     @book.command("list")
     @output_options
@@ -47,7 +52,11 @@ def _register_books(root: click.Group) -> None:
             command="book",
             book_command="list",
         )
-        return run_api(args, state=state, command_path="book.list")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_list_books.command_path,
+        )
 
     @book.command("balances")
     @click.argument("book_id")
@@ -64,7 +73,11 @@ def _register_books(root: click.Group) -> None:
             book_id=book_id,
             as_of_book_position=as_of_book_position,
         )
-        return run_api(args, state=state, command_path="book.balances")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_book_balances.command_path,
+        )
 
     @book.command("reporting-lines")
     @click.argument("book_id")
@@ -87,7 +100,11 @@ def _register_books(root: click.Group) -> None:
             book_id=book_id,
             as_of_book_position=as_of_book_position,
         )
-        return run_api(args, state=state, command_path="book.reporting_lines")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_book_reporting_lines.command_path,
+        )
 
 
 def _register_assets(root: click.Group) -> None:
@@ -114,7 +131,11 @@ def _register_assets(root: click.Group) -> None:
             asset_command="create",
             **values,
         )
-        return run_api(args, state=state, command_path="asset.create")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_create_asset.command_path,
+        )
 
     @asset.command("list")
     @click.argument("book_id")
@@ -129,7 +150,11 @@ def _register_assets(root: click.Group) -> None:
             asset_command="list",
             book_id=book_id,
         )
-        return run_api(args, state=state, command_path="asset.list")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_list_assets.command_path,
+        )
 
 
 def _register_accounts(root: click.Group) -> None:
@@ -159,7 +184,11 @@ def _register_accounts(root: click.Group) -> None:
             account_command="create",
             **values,
         )
-        return run_api(args, state=state, command_path="account.create")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_create_account.command_path,
+        )
 
     @account.command("list")
     @click.argument("book_id")
@@ -193,7 +222,11 @@ def _register_accounts(root: click.Group) -> None:
             account_command="list",
             **values,
         )
-        return run_api(args, state=state, command_path="account.list")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_list_accounts.command_path,
+        )
 
     @account.command("show")
     @click.argument("book_id")
@@ -210,7 +243,11 @@ def _register_accounts(root: click.Group) -> None:
             book_id=book_id,
             account_id=account_id,
         )
-        return run_api(args, state=state, command_path="account.show")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_show_account.command_path,
+        )
 
     @account.command("balance")
     @click.argument("book_id")
@@ -227,7 +264,11 @@ def _register_accounts(root: click.Group) -> None:
             book_id=book_id,
             account_id=account_id,
         )
-        return run_api(args, state=state, command_path="account.balance")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_account_balance.command_path,
+        )
 
     @account.command("close")
     @click.argument("book_id")
@@ -244,7 +285,11 @@ def _register_accounts(root: click.Group) -> None:
             book_id=book_id,
             account_id=account_id,
         )
-        return run_api(args, state=state, command_path="account.close")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_close_account.command_path,
+        )
 
     @account.command("reopen")
     @click.argument("book_id")
@@ -261,7 +306,11 @@ def _register_accounts(root: click.Group) -> None:
             book_id=book_id,
             account_id=account_id,
         )
-        return run_api(args, state=state, command_path="account.reopen")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_reopen_account.command_path,
+        )
 
 
 def _register_categories(root: click.Group) -> None:
@@ -287,7 +336,11 @@ def _register_categories(root: click.Group) -> None:
             category_command="create",
             **values,
         )
-        return run_api(args, state=state, command_path="category.create")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_create_category.command_path,
+        )
 
     @category.command("list")
     @click.argument("book_id")
@@ -302,4 +355,8 @@ def _register_categories(root: click.Group) -> None:
             category_command="list",
             book_id=book_id,
         )
-        return run_api(args, state=state, command_path="category.list")
+        return run_api(
+            args,
+            state=state,
+            command_path=catalog_commands.request_list_categories.command_path,
+        )

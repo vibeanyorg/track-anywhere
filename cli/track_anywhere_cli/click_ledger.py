@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import click
 
+from . import command_ledger as ledger_commands
 from .click_common import common_args, output_options, pass_state, run_api
 
 
@@ -69,7 +70,11 @@ def _register_record(tx: click.Group) -> None:
             tx_command="record",
             **values,
         )
-        return run_api(args, state=state, command_path="tx.record")
+        return run_api(
+            args,
+            state=state,
+            command_path=ledger_commands.request_record_transaction.command_path,
+        )
 
 
 def _register_list(tx: click.Group) -> None:
@@ -89,7 +94,11 @@ def _register_list(tx: click.Group) -> None:
             tx_command="list",
             **values,
         )
-        return run_api(args, state=state, command_path="tx.list")
+        return run_api(
+            args,
+            state=state,
+            command_path=ledger_commands.request_list_transactions.command_path,
+        )
 
 
 def _register_show(tx: click.Group) -> None:
@@ -108,7 +117,11 @@ def _register_show(tx: click.Group) -> None:
             tx_command="show",
             **values,
         )
-        return run_api(args, state=state, command_path="tx.show")
+        return run_api(
+            args,
+            state=state,
+            command_path=ledger_commands.request_show_transaction.command_path,
+        )
 
 
 def _register_reverse(tx: click.Group) -> None:
@@ -137,7 +150,11 @@ def _register_reverse(tx: click.Group) -> None:
             tx_command="reverse",
             **values,
         )
-        return run_api(args, state=state, command_path="tx.reverse")
+        return run_api(
+            args,
+            state=state,
+            command_path=ledger_commands.request_reverse_transaction.command_path,
+        )
 
 
 def _register_correct(tx: click.Group) -> None:
@@ -186,7 +203,11 @@ def _register_correct(tx: click.Group) -> None:
             tx_command="correct",
             **values,
         )
-        return run_api(args, state=state, command_path="tx.correct")
+        return run_api(
+            args,
+            state=state,
+            command_path=ledger_commands.request_correct_transaction.command_path,
+        )
 
 
 def _register_correct_reference(tx: click.Group) -> None:
@@ -222,7 +243,13 @@ def _register_correct_reference(tx: click.Group) -> None:
             tx_command="correct-reference",
             **values,
         )
-        return run_api(args, state=state, command_path="tx.correct_reference")
+        return run_api(
+            args,
+            state=state,
+            command_path=(
+                ledger_commands.request_correct_external_reference.command_path
+            ),
+        )
 
 
 def _register_fx(tx: click.Group) -> None:
@@ -258,7 +285,11 @@ def _register_fx(tx: click.Group) -> None:
             tx_command="fx",
             **values,
         )
-        return run_api(args, state=state, command_path="tx.fx")
+        return run_api(
+            args,
+            state=state,
+            command_path=ledger_commands.request_record_fx.command_path,
+        )
 
 
 def _register_classification(tx: click.Group) -> None:
@@ -289,7 +320,11 @@ def _register_classification(tx: click.Group) -> None:
             tx_command="classify",
             **values,
         )
-        return run_api(args, state=state, command_path="tx.classify")
+        return run_api(
+            args,
+            state=state,
+            command_path=ledger_commands.request_assign_reporting_lines.command_path,
+        )
 
     @tx.command("clear-classification")
     @click.argument("book_id")
@@ -312,5 +347,5 @@ def _register_classification(tx: click.Group) -> None:
         return run_api(
             args,
             state=state,
-            command_path="tx.clear_classification",
+            command_path=ledger_commands.request_clear_reporting_lines.command_path,
         )

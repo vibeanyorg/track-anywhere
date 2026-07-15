@@ -49,7 +49,9 @@ from ...application.journal.reverse_transaction import (
 )
 from ...auth.errors import AuthPolicyDenied, AuthSecurityError
 from ...auth.http import SESSION_COOKIE
-from ...auth.security import require_same_origin
+from ...auth.oauth import OAUTH_ACCESS_KINDS
+from ...auth.resources import api_resource, canonical_public_base_url
+from ...auth.security import protected_resource_metadata_url, require_same_origin
 from ...auth.sessions import PersistentSessionService
 from ...domain.investments.allocation import AllocationMethod
 from ...domain.journal.events import ExternalReferenceKind, ReversalReasonCode
@@ -291,22 +293,24 @@ class RequestActor:
         return self.command_actor
 
 
-def create_actor_dependency(
-    get_session: SessionDependency,
-) -> Callable[..., RequestActor]:
-    def authenticate_request_actor(
-        request: Request,
-        session: Session = Depends(get_session),
-    ) -> RequestActor:
-        authorization = request.headers.get("Authorization")
-        api_key = request.headers.get("X-API-Key")
-        session_token = request.cookies.get(SESSION_COOKIE)
+_COOKIE_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
-        service = PersistentSessionService(session)
-        if authorization is None and api_key is None and session_token is not None:
-            active = service.current(session_token, lock=True)
-            if active is None:
-                raise _authentication_required()
+
+def authenticate_request_actor(
+    session: Session,
+    request: Request,
+) -> RequestActor:
+    authorization = request.headers.get("Authorization")
+    api_key = request.headers.get("X-API-Key")
+    session_token = request.cookies.get(SESSION_COOKIE)
+
+    service = PersistentSessionService(session)
+    if authorization is None and api_key is None and session_token is not None:
+        protects_mutation = request.method.upper() not in _COOKIE_SAFE_METHODS
+        active = service.current(session_token, lock=protects_mutation)
+        if active is None:
+            raise _authentication_required(request)
+        if protects_mutation:
             if not service.verify_csrf(
                 active,
                 request.headers.get("X-CSRF-Token"),
@@ -319,49 +323,63 @@ def create_actor_dependency(
                 require_same_origin(
                     origin=request.headers.get("Origin"),
                     referer=request.headers.get("Referer"),
-                    allowed_origin=str(request.base_url).rstrip("/"),
+                    allowed_origin=_public_origin_for(request),
                 )
             except AuthSecurityError as error:
                 raise HTTPException(
                     status_code=403,
                     detail="request is not authorized",
                 ) from error
-            return RequestActor(
-                command_actor=CommandActor(active.user.user_id),
-                credential_book_id=active.credential.book_id,
-                scopes=frozenset(active.credential.scopes),
-            )
-
-        raw_credential = api_key
-        if authorization is not None:
-            scheme, separator, token = authorization.partition(" ")
-            if (
-                scheme.lower() != "bearer"
-                or separator != " "
-                or not token
-                or token != token.strip()
-            ):
-                raise _authentication_required()
-            raw_credential = token
-        if not raw_credential:
-            raise _authentication_required()
-        try:
-            credential, user = service.authenticate_credential(raw_credential)
-        except AuthPolicyDenied as error:
-            raise _authentication_required() from error
-        if (
-            authorization is None
-            and api_key is not None
-            and credential.auth_kind != "api_key"
-        ):
-            raise _authentication_required()
         return RequestActor(
-            command_actor=CommandActor(user.user_id),
-            credential_book_id=credential.book_id,
-            scopes=frozenset(credential.scopes),
+            command_actor=CommandActor(active.user.user_id),
+            credential_book_id=active.credential.book_id,
+            scopes=frozenset(active.credential.scopes),
         )
 
-    return authenticate_request_actor
+    if authorization is not None and api_key is not None:
+        raise _authentication_required(request)
+    raw_credential = api_key
+    allowed_kinds = frozenset({"api_key"})
+    required_resource = None
+    if authorization is not None:
+        scheme, separator, token = authorization.partition(" ")
+        if (
+            scheme.lower() != "bearer"
+            or separator != " "
+            or not token
+            or token != token.strip()
+        ):
+            raise _authentication_required(request)
+        raw_credential = token
+        allowed_kinds = OAUTH_ACCESS_KINDS
+        required_resource = _api_resource_for(request)
+    if not raw_credential:
+        raise _authentication_required(request)
+    try:
+        credential, user = service.authenticate_credential(
+            raw_credential,
+            allowed_auth_kinds=allowed_kinds,
+            required_resource=required_resource,
+        )
+    except AuthPolicyDenied as error:
+        raise _authentication_required(request) from error
+    return RequestActor(
+        command_actor=CommandActor(user.user_id),
+        credential_book_id=credential.book_id,
+        scopes=frozenset(credential.scopes),
+    )
+
+
+def create_actor_dependency(
+    get_session: SessionDependency,
+) -> Callable[..., RequestActor]:
+    def request_actor(
+        request: Request,
+        session: Session = Depends(get_session),
+    ) -> RequestActor:
+        return authenticate_request_actor(session, request)
+
+    return request_actor
 
 
 def require_idempotency_key(
@@ -431,8 +449,22 @@ def command_response(outcome: CommandOutcome) -> JSONResponse:
     return response
 
 
-def _authentication_required() -> HTTPException:
-    return HTTPException(status_code=401, detail="authentication is required")
+def _public_origin_for(request: Request) -> str:
+    configured = getattr(request.app.state, "public_base_url", None)
+    return canonical_public_base_url(configured or str(request.base_url))
+
+
+def _api_resource_for(request: Request) -> str:
+    return api_resource(_public_origin_for(request))
+
+
+def _authentication_required(request: Request) -> HTTPException:
+    metadata = protected_resource_metadata_url(_api_resource_for(request))
+    return HTTPException(
+        status_code=401,
+        detail="authentication is required",
+        headers={"WWW-Authenticate": f'Bearer resource_metadata="{metadata}"'},
+    )
 
 
 __all__ = [
@@ -450,6 +482,7 @@ __all__ = [
     "RecordFxRequest",
     "RequestActor",
     "ReverseTransactionRequest",
+    "authenticate_request_actor",
     "call_application",
     "command_response",
     "create_actor_dependency",

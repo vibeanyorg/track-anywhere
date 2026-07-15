@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
+from ..auth.resources import configured_public_base_url
 from .dependencies import (
     DATABASE_URL_ENV,
     RuntimeDependencies,
@@ -32,6 +33,7 @@ def create_app(
     system_router_factory: SystemRouterFactory | None = None,
     auth_router_factory: AuthRouterFactory | None = None,
     cookie_secure: bool | None = None,
+    public_base_url: str | None = None,
 ) -> FastAPI:
     if dependencies is not None and (engine is not None or get_session is not None):
         raise ValueError(
@@ -63,6 +65,22 @@ def create_app(
         else runtime.get_session
     )
     secure_cookie = _cookie_secure_from_env() if cookie_secure is None else cookie_secure
+    public_base = public_base_url or configured_public_base_url()
+    composed_auth_factory = auth_router_factory
+    if composed_auth_factory is None:
+        from .v2.auth import create_auth_router
+
+        def composed_auth_factory(
+            dependency: SessionDependency,
+            *,
+            cookie_secure: bool = False,
+        ):
+            return create_auth_router(
+                dependency,
+                cookie_secure=cookie_secure,
+                public_base_url=public_base,
+            )
+
     application = FastAPI(
         title="Track Anywhere API",
         version="2.0.0",
@@ -91,11 +109,12 @@ def create_app(
             get_session=session_dependency,
             cookie_secure=secure_cookie,
             system_router_factory=system_router_factory,
-            auth_router_factory=auth_router_factory,
+            auth_router_factory=composed_auth_factory,
         )
     )
     install_error_handlers(application)
     application.state.runtime_dependencies = runtime
+    application.state.public_base_url = public_base
     return application
 
 

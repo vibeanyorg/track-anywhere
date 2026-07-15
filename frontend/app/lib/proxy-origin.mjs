@@ -1,4 +1,24 @@
-export function resolvePublicOrigin(sourceHeaders, fallbackOrigin) {
+export function resolvePublicOrigin(
+  sourceHeaders,
+  fallbackOrigin,
+  configuredOrigin
+) {
+  if (configuredOrigin !== undefined) {
+    const rawConfiguredOrigin = configuredOrigin.trim();
+    const configured = safeUrl(rawConfiguredOrigin);
+    if (
+      !configured ||
+      !["http:", "https:"].includes(configured.protocol) ||
+      configured.username ||
+      configured.password ||
+      configured.pathname !== "/" ||
+      configured.search ||
+      configured.hash
+    ) {
+      throw new Error("TRACK_ANYWHERE_PUBLIC_BASE_URL must be an HTTP(S) origin");
+    }
+    return configured.origin;
+  }
   const headers = new Headers(sourceHeaders);
   const fallback = new URL(fallbackOrigin);
   const forwardedHost = firstHeaderValue(headers.get("x-forwarded-host"));
@@ -26,32 +46,6 @@ export function resolvePublicOrigin(sourceHeaders, fallbackOrigin) {
   }
 }
 
-export function normalizeSameSiteRequestHeaders(
-  sourceHeaders,
-  publicOrigin,
-  upstreamOrigin
-) {
-  const headers = new Headers(sourceHeaders);
-  const normalizedPublicOrigin = new URL(publicOrigin).origin;
-  const normalizedUpstreamOrigin = new URL(upstreamOrigin).origin;
-  const origin = headers.get("origin");
-  if (origin && safeOrigin(origin) === normalizedPublicOrigin) {
-    headers.set("origin", normalizedUpstreamOrigin);
-  }
-
-  const referer = headers.get("referer");
-  if (referer) {
-    const parsed = safeUrl(referer);
-    if (parsed?.origin === normalizedPublicOrigin) {
-      headers.set(
-        "referer",
-        `${normalizedUpstreamOrigin}${parsed.pathname}${parsed.search}${parsed.hash}`
-      );
-    }
-  }
-  return headers;
-}
-
 export function rewriteUpstreamLocation(
   sourceHeaders,
   publicOrigin,
@@ -70,25 +64,41 @@ export function rewriteUpstreamJsonUrls(
   publicOrigin,
   upstreamOrigin
 ) {
+  return rewriteJsonUrls(body, (value) =>
+    rewriteApiUrl(value, publicOrigin, upstreamOrigin)
+  );
+}
+
+export function rewriteAllUpstreamJsonUrls(
+  body,
+  publicOrigin,
+  upstreamOrigin
+) {
+  return rewriteJsonUrls(body, (value) =>
+    rewriteUpstreamUrl(value, publicOrigin, upstreamOrigin)
+  );
+}
+
+function rewriteJsonUrls(body, rewriteUrl) {
   let parsed;
   try {
     parsed = JSON.parse(body);
   } catch {
     return body;
   }
-  const rewritten = rewriteValue(parsed, publicOrigin, upstreamOrigin);
+  const rewritten = rewriteValue(parsed, rewriteUrl);
   return rewritten.changed ? JSON.stringify(rewritten.value) : body;
 }
 
-function rewriteValue(value, publicOrigin, upstreamOrigin) {
+function rewriteValue(value, rewriteUrl) {
   if (typeof value === "string") {
-    const rewritten = rewriteApiUrl(value, publicOrigin, upstreamOrigin);
+    const rewritten = rewriteUrl(value);
     return { value: rewritten, changed: rewritten !== value };
   }
   if (Array.isArray(value)) {
     let changed = false;
     const items = value.map((item) => {
-      const rewritten = rewriteValue(item, publicOrigin, upstreamOrigin);
+      const rewritten = rewriteValue(item, rewriteUrl);
       changed ||= rewritten.changed;
       return rewritten.value;
     });
@@ -97,7 +107,7 @@ function rewriteValue(value, publicOrigin, upstreamOrigin) {
   if (value !== null && typeof value === "object") {
     let changed = false;
     const entries = Object.entries(value).map(([key, item]) => {
-      const rewritten = rewriteValue(item, publicOrigin, upstreamOrigin);
+      const rewritten = rewriteValue(item, rewriteUrl);
       changed ||= rewritten.changed;
       return [key, rewritten.value];
     });
@@ -120,8 +130,11 @@ function rewriteApiUrl(value, publicOrigin, upstreamOrigin) {
   return `${normalizedPublicOrigin}${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
-function safeOrigin(value) {
-  return safeUrl(value)?.origin ?? null;
+function rewriteUpstreamUrl(value, publicOrigin, upstreamOrigin) {
+  const parsed = safeUrl(value);
+  if (!parsed || parsed.origin !== new URL(upstreamOrigin).origin) return value;
+  const normalizedPublicOrigin = new URL(publicOrigin).origin;
+  return `${normalizedPublicOrigin}${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 function safeUrl(value) {

@@ -7,7 +7,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from .config import CliConfig
+from .config import CliConfig, validate_transport_url
 from .exit_codes import (
     EXIT_AUTH,
     EXIT_EXTERNAL_DEPENDENCY,
@@ -21,6 +21,35 @@ from .exit_codes import (
 )
 
 V2_API_PREFIX = "/api/v2/"
+OAUTH_METADATA_PATHS = frozenset(
+    {
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/api/v2",
+        "/.well-known/oauth-authorization-server",
+    }
+)
+
+
+class FormPayload(dict[str, Any]):
+    """Marker mapping encoded as application/x-www-form-urlencoded."""
+
+
+class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            req.full_url,
+            code,
+            "HTTP redirects are disabled for CLI API requests",
+            headers,
+            fp,
+        )
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_RejectRedirectHandler())
+
+
+def _open_request(request: urllib.request.Request, *, timeout: int):
+    return _NO_REDIRECT_OPENER.open(request, timeout=timeout)
 
 
 def request_json(
@@ -30,21 +59,57 @@ def request_json(
     payload: dict[str, Any] | None = None,
     key: str | None = None,
 ) -> tuple[int, Any]:
-    if not path.startswith(V2_API_PREFIX):
+    route_path = path.split("?", 1)[0]
+    try:
+        requested_endpoint = validate_transport_url(f"{config.base_url}{path}")
+    except ValueError:
+        requested_endpoint = None
+    is_discovered_oauth_endpoint = (
+        config.oauth_endpoint is not None
+        and requested_endpoint == config.oauth_endpoint
+    )
+    if (
+        not path.startswith(V2_API_PREFIX)
+        and route_path not in OAUTH_METADATA_PATHS
+        and not is_discovered_oauth_endpoint
+    ):
         return 400, {
-            "detail": "The CLI only permits API V2 routes.",
+            "detail": "The CLI only permits API V2 and OAuth metadata routes.",
             "error": {
                 "code": "unsupported_api_route",
                 "category": "security",
-                "message": "The CLI only permits API V2 routes.",
+                "message": "The CLI only permits API V2 and OAuth metadata routes.",
                 "retryable": False,
             },
         }
-    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    try:
+        validate_transport_url(config.base_url)
+    except ValueError as exc:
+        return 400, {
+            "detail": str(exc),
+            "error": {
+                "code": "insecure_transport",
+                "category": "security",
+                "message": str(exc),
+                "retryable": False,
+            },
+        }
+    if payload is None:
+        body = None
+    elif isinstance(payload, FormPayload):
+        body = urllib.parse.urlencode(payload, doseq=True).encode("utf-8")
+    else:
+        body = json.dumps(payload).encode("utf-8")
     headers = {"Accept": "application/json"}
     if body is not None:
-        headers["Content-Type"] = "application/json"
-    if config.token:
+        headers["Content-Type"] = (
+            "application/x-www-form-urlencoded"
+            if isinstance(payload, FormPayload)
+            else "application/json"
+        )
+    if config.api_key:
+        headers["X-API-Key"] = config.api_key
+    elif config.token:
         headers["Authorization"] = f"Bearer {config.token}"
     if key:
         headers["X-Idempotency-Key"] = key
@@ -52,7 +117,7 @@ def request_json(
         f"{config.base_url}{path}", data=body, headers=headers, method=method
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with _open_request(req, timeout=10) as response:
             try:
                 return response.status, json.loads(response.read().decode("utf-8"))
             except json.JSONDecodeError as exc:

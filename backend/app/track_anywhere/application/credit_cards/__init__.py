@@ -1,6 +1,7 @@
 from .record import (
     ChargeCreditCardCommand,
     CreditCardAccountInvalid,
+    CreditCardCommand,
     CreditCardRefundConflict,
     CreditCardRefundExceeded,
     CreditCardRefundSourceInvalid,
@@ -17,6 +18,7 @@ from .record import (
 __all__ = [
     "ChargeCreditCardCommand",
     "CreditCardAccountInvalid",
+    "CreditCardCommand",
     "CreditCardRefundConflict",
     "CreditCardRefundExceeded",
     "CreditCardRefundSourceInvalid",

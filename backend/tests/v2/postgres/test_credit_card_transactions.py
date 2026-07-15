@@ -5,7 +5,8 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import create_engine, func, select, text
+from sqlalchemy import create_engine, event, func, select, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.tests.v2.fixtures.synchronous import JournalScenario, seed_journal_scenario
@@ -985,6 +986,82 @@ def test_independent_verifier_accepts_typed_credit_card_projection(pg_engine) ->
     assert report.status == "PASS", report.issues
     assert report.counts["credit_card_transactions"] == 1
     assert "credit_cards" in report.projection_hashes
+
+
+def test_independent_verifier_uses_a_fixed_number_of_streaming_queries(
+    pg_engine,
+) -> None:
+    scenario, _ = _seed_card_accounts(pg_engine)
+    _execute(pg_engine, scenario, _charge(scenario, "12.34"))
+    extra_book_ids = [uuid4() for _ in range(24)]
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "insert into books "
+                "(book_id, current_name, base_asset_code, write_state) "
+                "values (:book_id, 'Verifier scale', null, 'active')"
+            ),
+            [{"book_id": book_id} for book_id in extra_book_ids],
+        )
+        connection.execute(
+            text(
+                "insert into book_event_heads (book_id, last_position, last_hash) "
+                "values (:book_id, 0, :zero_hash)"
+            ),
+            [
+                {"book_id": book_id, "zero_hash": bytes(32)}
+                for book_id in extra_book_ids
+            ],
+        )
+
+    select_count = 0
+    streamed_tables: set[str] = set()
+    stream_markers = {
+        "book_event_heads": "book_event_heads.last_position",
+        "event_stream_heads": "event_stream_heads.last_event_id",
+        "ledger_events": "ledger_events.payload",
+        "journal_transactions": "journal_transactions.effective_at",
+        "journal_postings": "journal_postings.posting_id",
+        "account_balances": "account_balances.balance_units",
+        "credit_card_transactions": "credit_card_transactions.card_account_id",
+    }
+
+    def capture_selects(
+        _connection,
+        _cursor,
+        statement: str,
+        _parameters,
+        context,
+        _executemany,
+    ) -> None:
+        nonlocal select_count
+        normalized = " ".join(statement.casefold().split())
+        if not normalized.startswith("select"):
+            return
+        select_count += 1
+        if context.execution_options.get("yield_per"):
+            for table, marker in stream_markers.items():
+                if marker in normalized:
+                    streamed_tables.add(table)
+
+    event.listen(Engine, "before_cursor_execute", capture_selects)
+    try:
+        report = verify_v2_ledger(pg_engine.url.render_as_string(hide_password=False))
+    finally:
+        event.remove(Engine, "before_cursor_execute", capture_selects)
+
+    assert report.status == "PASS", report.issues
+    assert report.counts["books"] == 25
+    assert select_count <= 10
+    assert streamed_tables == {
+        "book_event_heads",
+        "event_stream_heads",
+        "ledger_events",
+        "journal_transactions",
+        "journal_postings",
+        "account_balances",
+        "credit_card_transactions",
+    }
 
 
 def test_refund_cap_excludes_reversed_refunds_and_allows_exact_full_refund(

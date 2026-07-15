@@ -2,16 +2,11 @@ from __future__ import annotations
 
 from argparse import Namespace
 from dataclasses import dataclass
-from functools import wraps
 from typing import Any, Callable
 
 import click
 
-from .commands import (
-    IDEMPOTENCY_KEY_COMMAND_PATHS,
-    UNAUTHENTICATED_COMMAND_PATHS,
-    dispatch_api_command,
-)
+from .commands import command_definition, dispatch_api_command
 from .config import CliConfig, resolve_token_with_diagnostics
 from .exit_codes import EXIT_VALIDATION
 from .output import CliDiagnostic
@@ -32,6 +27,8 @@ class ClickState:
     json_mode: bool
     no_color: bool
     requester: Requester
+    resource: str | None = None
+    api_key_file: Any | None = None
     no_input: bool = False
     agent_mode: bool = False
 
@@ -96,7 +93,9 @@ def common_args(
 ) -> Namespace:
     return Namespace(
         base_url=state.base_url,
+        resource=state.resource,
         token=state.token,
+        api_key_file=state.api_key_file,
         insecure_automation=state.insecure_automation,
         json=state.json_mode or json_mode,
         no_color=state.no_color or no_color,
@@ -106,25 +105,9 @@ def common_args(
     )
 
 
-def api_command(command_path: str):
-    def decorator(fn):
-        @wraps(fn)
-        def wrapper(*args, **kwargs):
-            state = kwargs.pop("state")
-            json_mode = kwargs.pop("json_mode", False)
-            no_color = kwargs.pop("no_color", False)
-            namespace = fn(
-                *args, state=state, json_mode=json_mode, no_color=no_color, **kwargs
-            )
-            return run_api(namespace, state=state, command_path=command_path)
-
-        return wrapper
-
-    return decorator
-
-
 def run_api(args: Namespace, *, state: ClickState, command_path: str) -> int:
-    if command_path in UNAUTHENTICATED_COMMAND_PATHS:
+    definition = command_definition(command_path)
+    if not definition.requires_auth:
         from .config import TokenResolution
 
         token_resolution = TokenResolution(token=None, diagnostics=[])
@@ -135,14 +118,37 @@ def run_api(args: Namespace, *, state: ClickState, command_path: str) -> int:
             outcome = build_outcome(command_path, 401, {"detail": str(exc)})
             emit_outcome(outcome, json_mode=args.json, no_color=args.no_color)
             return outcome.exit_code
+        try:
+            from .oauth_login import refresh_token_resolution
+
+            token_resolution = refresh_token_resolution(
+                token_resolution,
+                requester=state.requester,
+            )
+        except RuntimeError as exc:
+            outcome = build_outcome(command_path, 401, {"detail": str(exc)})
+            emit_outcome(outcome, json_mode=args.json, no_color=args.no_color)
+            return outcome.exit_code
     config = CliConfig(
         base_url=args.base_url,
-        token=token_resolution.token,
+        token=(
+            token_resolution.credential.secret
+            if token_resolution.credential is not None
+            and token_resolution.credential.kind == "oauth"
+            else None
+        ),
+        api_key=(
+            token_resolution.credential.secret
+            if token_resolution.credential is not None
+            and token_resolution.credential.kind == "api_key"
+            else None
+        ),
+        resource=getattr(args, "resource", None),
         insecure_automation=args.insecure_automation,
     )
     if (
         getattr(args, "agent_mode", False)
-        and command_path in IDEMPOTENCY_KEY_COMMAND_PATHS
+        and definition.idempotent
         and not getattr(args, "idempotency_key", None)
     ):
         outcome = build_outcome(

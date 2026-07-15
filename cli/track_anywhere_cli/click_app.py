@@ -13,6 +13,7 @@ from .click_credit_card import register as register_credit_card
 from .click_investment import register as register_investment
 from .click_ledger import register as register_ledger
 from .click_system import register as register_system
+from .config import canonical_base_url, canonical_resource
 from .exit_codes import EXIT_SUCCESS, EXIT_VALIDATION
 from .http import request_json
 from .protocol import capabilities_payload, schema_payload, version_payload
@@ -25,16 +26,51 @@ from .renderers import emit_outcome
 from .runtime import build_outcome
 
 
+def _canonical_base_option(
+    _ctx: click.Context, param: click.Parameter, value: str
+) -> str:
+    try:
+        return canonical_base_url(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param=param) from exc
+
+
+def _canonical_resource_option(
+    _ctx: click.Context, param: click.Parameter, value: str | None
+) -> str | None:
+    if value is None:
+        return None
+    try:
+        return canonical_resource(value)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param=param) from exc
+
+
 @click.group()
 @click.option(
     "--base-url",
     envvar=["TRACK_ANYWHERE_API", "TRACK_ANYWHERE_SERVICE_URL"],
     default="http://localhost:8000",
+    callback=_canonical_base_option,
+)
+@click.option(
+    "--resource",
+    envvar="TRACK_ANYWHERE_RESOURCE",
+    default=None,
+    callback=_canonical_resource_option,
+    help="OAuth protected-resource identifier. Defaults to <base-url>/api/v2.",
 )
 @click.option(
     "--token",
     default=None,
     help="Bearer token. Prefer OS keyring; this is for one-shot use.",
+)
+@click.option(
+    "--api-key-file",
+    envvar="TRACK_ANYWHERE_API_KEY_FILE",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Machine API key file. The key is sent only with X-API-Key.",
 )
 @click.option(
     "--insecure-automation",
@@ -60,7 +96,9 @@ from .runtime import build_outcome
 def cli(
     ctx,
     base_url: str,
+    resource: str | None,
     token: str | None,
+    api_key_file: Path | None,
     insecure_automation: bool,
     output_format: str | None,
     json_mode: bool,
@@ -75,7 +113,9 @@ def cli(
     effective_agent = agent_mode or env_agent
     ctx.obj = ClickState(
         base_url=base_url,
+        resource=resource,
         token=token,
+        api_key_file=api_key_file,
         insecure_automation=insecure_automation,
         json_mode=json_mode or output_format == "json" or effective_agent,
         no_color=no_color or effective_agent,

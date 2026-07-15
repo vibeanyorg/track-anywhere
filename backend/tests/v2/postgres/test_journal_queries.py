@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.tests.v2.fixtures.synchronous import JournalScenario, seed_journal_scenario
@@ -29,7 +29,10 @@ from track_anywhere.application.journal.reverse_transaction import (
 from track_anywhere.domain.journal.events import ReversalReasonCode
 from track_anywhere.domain.journal.models import PostingSide, TransactionKind
 from track_anywhere.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
-from track_anywhere.queries.balances import get_book_balances
+from track_anywhere.queries.balances import (
+    get_book_balances,
+    get_verified_book_balances,
+)
 from track_anywhere.queries.journal import list_journal
 
 
@@ -111,6 +114,111 @@ def _seed(
     return scenario
 
 
+def test_current_balance_query_uses_projection_without_reading_journal_history(
+    pg_engine,
+) -> None:
+    scenario = _seed(pg_engine)
+    _post(pg_engine, scenario, when=BASE_TIME, amount="12.34")
+    statements: list[str] = []
+
+    def capture_statement(
+        _connection,
+        _cursor,
+        statement,
+        _parameters,
+        _context,
+        _executemany,
+    ) -> None:
+        statements.append(statement.lower())
+
+    event.listen(pg_engine, "before_cursor_execute", capture_statement)
+    try:
+        with Session(pg_engine) as session:
+            snapshot = get_book_balances(session, scenario.book_id)
+    finally:
+        event.remove(pg_engine, "before_cursor_execute", capture_statement)
+
+    balance_read_statements = [
+        statement
+        for statement in statements
+        if any(
+            f"from {table}" in statement
+            for table in (
+                "book_event_heads",
+                "account_balances",
+                "accounts",
+                "journal_postings",
+            )
+        )
+    ]
+    assert len(balance_read_statements) == 3
+    assert not any("journal_postings" in statement for statement in statements)
+    assert snapshot.projection_matches_reference is None
+
+
+def test_verified_balance_query_falls_back_to_reference_on_projection_mismatch(
+    pg_engine,
+) -> None:
+    scenario = _seed(pg_engine)
+    _post(pg_engine, scenario, when=BASE_TIME, amount="12.34")
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "update account_balances set balance_units=balance_units + 1 "
+                "where book_id=:book_id and account_id=:account_id"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "account_id": scenario.debit_account_id,
+            },
+        )
+
+    with Session(pg_engine) as session:
+        verified = get_verified_book_balances(session, scenario.book_id)
+
+    debit_balance = {item.account_id: item for item in verified.items}[
+        scenario.debit_account_id
+    ]
+    assert verified.projection_matches_reference is False
+    assert debit_balance.raw_accounting_units == 1234
+
+
+def test_explicit_as_of_head_reads_immutable_history_not_current_projection(
+    pg_engine,
+) -> None:
+    scenario = _seed(pg_engine)
+    _, head_position = _post(
+        pg_engine,
+        scenario,
+        when=BASE_TIME,
+        amount="12.34",
+    )
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "update account_balances set balance_units=balance_units + 1 "
+                "where book_id=:book_id and account_id=:account_id"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "account_id": scenario.debit_account_id,
+            },
+        )
+
+    with Session(pg_engine) as session:
+        historical = get_book_balances(
+            session,
+            scenario.book_id,
+            as_of_book_position=head_position,
+        )
+
+    debit_balance = {item.account_id: item for item in historical.items}[
+        scenario.debit_account_id
+    ]
+    assert historical.projection_matches_reference is None
+    assert debit_balance.raw_accounting_units == 1234
+
+
 def test_journal_cursor_is_stable_and_honors_as_of_position(pg_engine) -> None:
     scenario = _seed(pg_engine)
     late_id, late_position = _post(
@@ -176,7 +284,7 @@ def test_transaction_query_returns_exact_item_and_honors_as_of(pg_engine) -> Non
     assert [posting.units for posting in item.postings] == [1234, 1234]
 
 
-def test_balance_query_matches_posting_reference_and_survives_account_close(
+def test_balance_query_uses_projection_and_historical_postings_after_account_close(
     pg_engine,
 ) -> None:
     scenario = _seed(pg_engine)
@@ -227,7 +335,7 @@ def test_balance_query_matches_posting_reference_and_survives_account_close(
     current_by_account = {row.account_id: row for row in current.items}
     assert current_by_account[scenario.debit_account_id].account_status == "closed"
     assert current_by_account[scenario.credit_account_id].account_status == "active"
-    assert current.projection_matches_reference is True
+    assert current.projection_matches_reference is None
     assert {(row.account_id, row.raw_accounting_units) for row in historical.items} == {
         (scenario.debit_account_id, 1234),
         (scenario.credit_account_id, -1234),
@@ -302,7 +410,7 @@ def test_balance_query_preserves_raw_projection_and_exposes_natural_liability(
     assert expense.balance_semantics == "natural_expense_balance"
     assert expense.outstanding_units is None
     assert expense.overpayment_units is None
-    assert charged.projection_matches_reference is True
+    assert charged.projection_matches_reference is None
     charge_item = next(
         item
         for item in charged_journal.items
@@ -344,7 +452,7 @@ def test_balance_query_preserves_raw_projection_and_exposes_natural_liability(
     assert paid_card.natural_units == -766
     assert paid_card.outstanding_units == 0
     assert paid_card.overpayment_units == 766
-    assert paid.projection_matches_reference is True
+    assert paid.projection_matches_reference is None
     payment_item = next(
         item
         for item in paid_journal.items
@@ -368,7 +476,7 @@ def test_balance_query_preserves_raw_projection_and_exposes_natural_liability(
             },
         )
     with Session(pg_engine) as session:
-        corrupted_projection = get_book_balances(session, scenario.book_id)
+        corrupted_projection = get_verified_book_balances(session, scenario.book_id)
 
     safe_card = {item.account_id: item for item in corrupted_projection.items}[
         scenario.credit_account_id

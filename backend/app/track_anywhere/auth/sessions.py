@@ -66,20 +66,22 @@ class PersistentSessionService:
         self._session = session
 
     def issue_from_api_key(self, raw_token: str) -> IssuedBrowserSession:
-        credential, user = self.authenticate_credential(raw_token)
+        credential, user = self.authenticate_credential(
+            raw_token,
+            allowed_auth_kinds=frozenset({"api_key"}),
+        )
         return self.issue_browser_session(credential=credential, user=user)
 
     def authenticate_credential(
         self,
         raw_token: str,
+        *,
+        allowed_auth_kinds: frozenset[str] | None = None,
+        required_resource: str | None = None,
     ) -> tuple[CredentialSnapshot, UserSnapshot]:
-        observed_at = datetime.now(UTC)
         repository = AuthRepository(self._session)
         try:
-            credential = repository.mark_credential_used(
-                secret_digest(raw_token),
-                observed_at,
-            )
+            credential = repository.mark_credential_used(secret_digest(raw_token))
             user = repository.get_user(credential.actor_subject_id)
         except (AuthRecordNotFound, CredentialUnavailable, ValueError) as error:
             raise AuthPolicyDenied(
@@ -87,6 +89,13 @@ class PersistentSessionService:
             ) from error
         if user.status != "active":
             raise AuthPolicyDenied("credential subject is disabled")
+        if (
+            allowed_auth_kinds is not None
+            and credential.auth_kind not in allowed_auth_kinds
+        ):
+            raise AuthPolicyDenied("credential kind is not accepted here")
+        if required_resource is not None and credential.resource != required_resource:
+            raise AuthPolicyDenied("credential audience does not match this resource")
         return credential, user
 
     def issue_browser_session(
@@ -109,6 +118,9 @@ class PersistentSessionService:
             actor_type=user.subject_type,
             auth_kind="browser_session",
             book_id=credential.book_id,
+            oauth_client_id=None,
+            resource=None,
+            refresh_family_id=None,
             scopes=list(credential.scopes),
             issued_at=now,
             expires_at=expires_at,
@@ -170,7 +182,10 @@ class PersistentSessionService:
             or user.status != "active"
         ):
             return None
-        browser.last_seen_at = now
+        # Safe reads do not need a write transaction. Mutation paths already
+        # hold the row lock, so their audit timestamp is monotonic as well.
+        if lock:
+            browser.last_seen_at = now
         return ActiveBrowserSession(browser, credential, user)
 
     def verify_csrf(self, active: ActiveBrowserSession, csrf_token: str | None) -> bool:

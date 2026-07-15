@@ -3,6 +3,7 @@ from __future__ import annotations
 import click
 
 from .click_common import common_args, output_options, pass_state, run_api
+from .command_investment import request_acquire_lot, request_dispose_lot
 
 
 def register(root: click.Group) -> None:
@@ -34,7 +35,11 @@ def register(root: click.Group) -> None:
             investment_command="acquire",
             **values,
         )
-        return run_api(args, state=state, command_path="investment.acquire")
+        return run_api(
+            args,
+            state=state,
+            command_path=request_acquire_lot.command_path,
+        )
 
     @investment.command("dispose")
     @click.argument("book_id")
@@ -69,4 +74,8 @@ def register(root: click.Group) -> None:
             investment_command="dispose",
             **values,
         )
-        return run_api(args, state=state, command_path="investment.dispose")
+        return run_api(
+            args,
+            state=state,
+            command_path=request_dispose_lot.command_path,
+        )

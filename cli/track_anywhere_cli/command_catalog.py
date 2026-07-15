@@ -1,65 +1,20 @@
 from __future__ import annotations
 
 from argparse import Namespace
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import quote
 
+from .command_definition import CommandDefinition, Requester, api_command
 from .config import CliConfig
 from .http import with_query
 from .structured_inputs import validate_account_semantics
-
-
-Requester = Callable[
-    [CliConfig, str, str, dict[str, Any] | None, str | None],
-    tuple[int, Any],
-]
-CommandHandler = Callable[[Namespace, CliConfig, Requester], tuple[int, Any]]
 
 
 def compact_payload(values: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in values.items() if value is not None}
 
 
-def handle_catalog_command(
-    args: Namespace,
-    config: CliConfig,
-    requester: Requester,
-) -> tuple[int, Any] | None:
-    command_path = infer_catalog_command_path(args)
-    if command_path is None:
-        return None
-    handler = CATALOG_COMMAND_HANDLERS.get(command_path)
-    if handler is None:
-        return None
-    return handler(args, config, requester)
-
-
-def infer_catalog_command_path(args: Namespace) -> str | None:
-    command = getattr(args, "command", None)
-    subcommand = getattr(args, f"{command}_command", None)
-    if command == "book" and subcommand in {
-        "create",
-        "list",
-        "balances",
-        "reporting-lines",
-    }:
-        return f"book.{subcommand.replace('-', '_')}"
-    if command == "asset" and subcommand in {"create", "list"}:
-        return f"asset.{subcommand}"
-    if command == "account" and subcommand in {
-        "create",
-        "list",
-        "show",
-        "balance",
-        "close",
-        "reopen",
-    }:
-        return f"account.{subcommand}"
-    if command == "category" and subcommand in {"create", "list"}:
-        return f"category.{subcommand}"
-    return None
-
-
+@api_command("book.create", mutating=True)
 def request_create_book(
     args: Namespace,
     config: CliConfig,
@@ -75,6 +30,7 @@ def request_create_book(
     return requester(config, "POST", "/api/v2/books", payload, None)
 
 
+@api_command("book.list")
 def request_list_books(
     _args: Namespace,
     config: CliConfig,
@@ -83,6 +39,7 @@ def request_list_books(
     return requester(config, "GET", "/api/v2/books", None, None)
 
 
+@api_command("asset.create", mutating=True)
 def request_create_asset(
     args: Namespace,
     config: CliConfig,
@@ -105,6 +62,7 @@ def request_create_asset(
     )
 
 
+@api_command("asset.list")
 def request_list_assets(
     args: Namespace,
     config: CliConfig,
@@ -119,6 +77,7 @@ def request_list_assets(
     )
 
 
+@api_command("account.create", mutating=True)
 def request_create_account(
     args: Namespace,
     config: CliConfig,
@@ -149,6 +108,7 @@ def request_create_account(
     )
 
 
+@api_command("account.list")
 def request_list_accounts(
     args: Namespace,
     config: CliConfig,
@@ -167,6 +127,7 @@ def request_list_accounts(
     return requester(config, "GET", path, None, None)
 
 
+@api_command("account.show")
 def request_show_account(
     args: Namespace,
     config: CliConfig,
@@ -181,6 +142,7 @@ def request_show_account(
     )
 
 
+@api_command("account.balance")
 def request_account_balance(
     args: Namespace,
     config: CliConfig,
@@ -198,6 +160,7 @@ def request_account_balance(
     )
 
 
+@api_command("account.close", mutating=True)
 def request_close_account(
     args: Namespace,
     config: CliConfig,
@@ -215,6 +178,7 @@ def request_close_account(
     )
 
 
+@api_command("account.reopen", mutating=True)
 def request_reopen_account(
     args: Namespace,
     config: CliConfig,
@@ -232,6 +196,7 @@ def request_reopen_account(
     )
 
 
+@api_command("category.create", mutating=True)
 def request_create_category(
     args: Namespace,
     config: CliConfig,
@@ -255,6 +220,7 @@ def request_create_category(
     )
 
 
+@api_command("category.list")
 def request_list_categories(
     args: Namespace,
     config: CliConfig,
@@ -269,6 +235,7 @@ def request_list_categories(
     )
 
 
+@api_command("book.balances")
 def request_book_balances(
     args: Namespace,
     config: CliConfig,
@@ -281,6 +248,7 @@ def request_book_balances(
     return requester(config, "GET", path, None, None)
 
 
+@api_command("book.reporting_lines")
 def request_book_reporting_lines(
     args: Namespace,
     config: CliConfig,
@@ -309,19 +277,19 @@ def _invalid_input(error: ValueError) -> tuple[int, dict[str, Any]]:
     }
 
 
-CATALOG_COMMAND_HANDLERS: dict[str, CommandHandler] = {
-    "book.create": request_create_book,
-    "book.list": request_list_books,
-    "asset.create": request_create_asset,
-    "asset.list": request_list_assets,
-    "account.create": request_create_account,
-    "account.list": request_list_accounts,
-    "account.show": request_show_account,
-    "account.balance": request_account_balance,
-    "account.close": request_close_account,
-    "account.reopen": request_reopen_account,
-    "category.create": request_create_category,
-    "category.list": request_list_categories,
-    "book.balances": request_book_balances,
-    "book.reporting_lines": request_book_reporting_lines,
-}
+CATALOG_COMMAND_DEFINITIONS: tuple[CommandDefinition, ...] = (
+    request_create_book,
+    request_list_books,
+    request_create_asset,
+    request_list_assets,
+    request_create_account,
+    request_list_accounts,
+    request_show_account,
+    request_account_balance,
+    request_close_account,
+    request_reopen_account,
+    request_create_category,
+    request_list_categories,
+    request_book_balances,
+    request_book_reporting_lines,
+)

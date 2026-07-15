@@ -8,7 +8,7 @@ from uuid import uuid4
 from sqlalchemy.engine import make_url
 
 from .api_clients import BackendApiClient
-from .helpers import auth_headers, bearer_headers, unique
+from .helpers import auth_headers, unique
 
 
 SNAPSHOT = (
@@ -70,11 +70,11 @@ def test_post_query_classify_and_reverse_contract(
 
     journal = backend_client.get(
         f"/api/v2/books/{ledger['book_id']}/journal?limit=10&as_of_book_position=1",
-        headers=bearer_headers(backend_client),
+        headers=auth_headers(backend_client),
     )
     balances = backend_client.get(
         f"/api/v2/books/{ledger['book_id']}/balances?as_of_book_position=1",
-        headers=bearer_headers(backend_client),
+        headers=auth_headers(backend_client),
     )
 
     assert journal.status_code == 200
@@ -136,7 +136,7 @@ def test_post_query_classify_and_reverse_contract(
 
     reporting = backend_client.get(
         f"/api/v2/books/{ledger['book_id']}/reporting-lines?as_of_book_position=2",
-        headers=bearer_headers(backend_client),
+        headers=auth_headers(backend_client),
     )
     assert reporting.status_code == 200
     assert reporting.data["items"][0]["units"] == "1234"
@@ -268,7 +268,7 @@ def test_api_key_session_and_oauth_metadata_contract(
     current = backend_client.get("/api/v2/auth/session")
     status = backend_client.get(
         "/api/v2/auth/token-status",
-        headers=bearer_headers(backend_client),
+        headers=auth_headers(backend_client),
     )
     assert current.data["authenticated"] is True
     assert current.data["identity"]["user_id"] == "human:contract-v2"
@@ -276,14 +276,22 @@ def test_api_key_session_and_oauth_metadata_contract(
     assert status.data["auth_kind"] == "api_key"
 
     rejected = backend_client.post("/api/v2/auth/logout")
-    logout = backend_client.post(
+    internal_origin = backend_client.post(
         "/api/v2/auth/logout",
         headers={
             "X-CSRF-Token": login.data["csrf_token"],
             "Origin": "http://testserver",
         },
     )
+    logout = backend_client.post(
+        "/api/v2/auth/logout",
+        headers={
+            "X-CSRF-Token": login.data["csrf_token"],
+            "Origin": authorization_server.data["issuer"].rstrip("/"),
+        },
+    )
     assert rejected.status_code == 403
+    assert internal_origin.status_code == 403
     assert logout.status_code == 200
     assert backend_client.get("/api/v2/auth/session").data == {
         "authenticated": False,

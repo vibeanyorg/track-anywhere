@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
+from track_anywhere.application.credit_cards import record as credit_card_record
 from track_anywhere.application.credit_cards.record import (
     ChargeCreditCardCommand,
     PaymentCreditCardCommand,
@@ -127,3 +128,25 @@ def test_commands_expose_only_semantic_accounts_not_posting_sides() -> None:
 
     assert "side" not in payment.idempotency_payload()
     assert refund.original_transaction_id == original_id
+
+
+def test_credit_card_variants_share_one_typed_command_contract() -> None:
+    book_id, command_id, transaction_id, card_id, source_id, *_ = _ids()
+    payment = PaymentCreditCardCommand(
+        book_id=book_id,
+        command_id=command_id,
+        transaction_id=transaction_id,
+        expected_stream_version=0,
+        card_account_id=card_id,
+        source_account_id=source_id,
+        asset_code="USD",
+        amount="10.00",
+        effective_at=EFFECTIVE_AT,
+    )
+
+    assert hasattr(credit_card_record, "CreditCardCommand"), (
+        "credit-card variants need a shared typed base command"
+    )
+    assert isinstance(payment, credit_card_record.CreditCardCommand)
+    assert payment.intent is CreditCardIntent.PAYMENT
+    assert payment.operation == "credit_card.payment"

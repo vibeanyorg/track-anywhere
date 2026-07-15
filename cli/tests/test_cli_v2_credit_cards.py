@@ -6,8 +6,7 @@ from argparse import Namespace
 import pytest
 
 from track_anywhere_cli.click_app import cli, run
-from track_anywhere_cli.command_credit_card import infer_credit_card_command_path
-from track_anywhere_cli.commands import command_paths
+from track_anywhere_cli.commands import command_paths, infer_command_path
 from track_anywhere_cli.protocol import command_schema
 
 
@@ -144,9 +143,7 @@ def test_card_command_schema_exposes_no_posting_side_or_sign_inputs(subcommand):
 @pytest.mark.parametrize("subcommand", ["charge", "payment", "refund", "fee"])
 def test_card_command_path_inference(subcommand):
     assert (
-        infer_credit_card_command_path(
-            Namespace(command="card", card_command=subcommand)
-        )
+        infer_command_path(Namespace(command="card", card_command=subcommand))
         == f"card.{subcommand}"
     )
 

@@ -1,55 +1,17 @@
 from __future__ import annotations
 
 from argparse import Namespace
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import quote
 
 from .command_catalog import compact_payload
+from .command_definition import CommandDefinition, Requester, api_command
 from .config import CliConfig, command_idempotency_key
 from .http import with_query
 from .structured_inputs import parse_external_reference
 
 
-Requester = Callable[
-    [CliConfig, str, str, dict[str, Any] | None, str | None],
-    tuple[int, Any],
-]
-CommandHandler = Callable[[Namespace, CliConfig, Requester], tuple[int, Any]]
-
-
-def handle_ledger_command(
-    args: Namespace,
-    config: CliConfig,
-    requester: Requester,
-) -> tuple[int, Any] | None:
-    command_path = infer_ledger_command_path(args)
-    if command_path is None:
-        return None
-    handler = LEDGER_COMMAND_HANDLERS.get(command_path)
-    if handler is None:
-        return None
-    return handler(args, config, requester)
-
-
-def infer_ledger_command_path(args: Namespace) -> str | None:
-    if getattr(args, "command", None) != "tx":
-        return None
-    subcommand = getattr(args, "tx_command", None)
-    if subcommand in {
-        "record",
-        "list",
-        "show",
-        "reverse",
-        "correct",
-        "correct-reference",
-        "fx",
-        "classify",
-        "clear-classification",
-    }:
-        return f"tx.{subcommand.replace('-', '_')}"
-    return None
-
-
+@api_command("tx.record", mutating=True, idempotent=True)
 def request_record_transaction(
     args: Namespace,
     config: CliConfig,
@@ -83,6 +45,7 @@ def request_record_transaction(
     )
 
 
+@api_command("tx.list")
 def request_list_transactions(
     args: Namespace,
     config: CliConfig,
@@ -99,6 +62,7 @@ def request_list_transactions(
     return requester(config, "GET", path, None, None)
 
 
+@api_command("tx.show")
 def request_show_transaction(
     args: Namespace,
     config: CliConfig,
@@ -114,6 +78,7 @@ def request_show_transaction(
     return requester(config, "GET", path, None, None)
 
 
+@api_command("tx.reverse", mutating=True, idempotent=True)
 def request_reverse_transaction(
     args: Namespace,
     config: CliConfig,
@@ -141,6 +106,7 @@ def request_reverse_transaction(
     )
 
 
+@api_command("tx.correct", mutating=True, idempotent=True)
 def request_correct_transaction(
     args: Namespace,
     config: CliConfig,
@@ -188,6 +154,7 @@ def request_correct_transaction(
     )
 
 
+@api_command("tx.correct_reference", mutating=True, idempotent=True)
 def request_correct_external_reference(
     args: Namespace,
     config: CliConfig,
@@ -213,6 +180,7 @@ def request_correct_external_reference(
     )
 
 
+@api_command("tx.fx", mutating=True, idempotent=True)
 def request_record_fx(
     args: Namespace,
     config: CliConfig,
@@ -251,6 +219,7 @@ def request_record_fx(
     )
 
 
+@api_command("tx.classify", mutating=True, idempotent=True)
 def request_assign_reporting_lines(
     args: Namespace,
     config: CliConfig,
@@ -278,6 +247,7 @@ def request_assign_reporting_lines(
     )
 
 
+@api_command("tx.clear_classification", mutating=True, idempotent=True)
 def request_clear_reporting_lines(
     args: Namespace,
     config: CliConfig,
@@ -358,14 +328,14 @@ def _path(value: object) -> str:
     return quote(str(value), safe="")
 
 
-LEDGER_COMMAND_HANDLERS: dict[str, CommandHandler] = {
-    "tx.record": request_record_transaction,
-    "tx.list": request_list_transactions,
-    "tx.show": request_show_transaction,
-    "tx.reverse": request_reverse_transaction,
-    "tx.correct": request_correct_transaction,
-    "tx.correct_reference": request_correct_external_reference,
-    "tx.fx": request_record_fx,
-    "tx.classify": request_assign_reporting_lines,
-    "tx.clear_classification": request_clear_reporting_lines,
-}
+LEDGER_COMMAND_DEFINITIONS: tuple[CommandDefinition, ...] = (
+    request_record_transaction,
+    request_list_transactions,
+    request_show_transaction,
+    request_reverse_transaction,
+    request_correct_transaction,
+    request_correct_external_reference,
+    request_record_fx,
+    request_assign_reporting_lines,
+    request_clear_reporting_lines,
+)

@@ -53,7 +53,9 @@ services:
     environment:
       TRACK_ANYWHERE_MODE: local
       TRACK_ANYWHERE_DATABASE_URL: postgresql+psycopg://${TRACK_ANYWHERE_RUNTIME_ROLE:-track_anywhere_runtime}:${TRACK_ANYWHERE_RUNTIME_PASSWORD:-track_anywhere_runtime_test}@postgres:5432/track_anywhere
-      TRACK_ANYWHERE_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      TRACK_ANYWHERE_ALLOWED_ORIGINS: ${TRACK_ANYWHERE_E2E_PUBLIC_BASE_URL:-http://127.0.0.1:13000}
+      TRACK_ANYWHERE_PUBLIC_BASE_URL: ${TRACK_ANYWHERE_E2E_PUBLIC_BASE_URL:-http://127.0.0.1:13000}
+      TRACK_ANYWHERE_MCP_TRUSTED_PROXY_HOSTS: api:8000
       PYTHONUNBUFFERED: "1"
     ports:
       - "${TRACK_ANYWHERE_E2E_API_BIND:-127.0.0.1}:${TRACK_ANYWHERE_E2E_API_PORT:-18080}:8000"
@@ -68,6 +70,7 @@ services:
         condition: service_healthy
     environment:
       TRACK_ANYWHERE_BACKEND_URL: http://api:8000
+      TRACK_ANYWHERE_PUBLIC_BASE_URL: ${TRACK_ANYWHERE_E2E_PUBLIC_BASE_URL:-http://127.0.0.1:13000}
     ports:
       - "${TRACK_ANYWHERE_E2E_WEB_BIND:-127.0.0.1}:${TRACK_ANYWHERE_E2E_WEB_PORT:-13000}:3000"
 

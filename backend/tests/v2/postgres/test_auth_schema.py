@@ -170,11 +170,12 @@ def _insert_authorization_grant(
         engine,
         """
         insert into oauth_authorization_grants (
-            code_hash, client_id, redirect_uri, actor_subject_id, scopes,
+            code_hash, client_id, redirect_uri, registered_redirect_uri,
+            actor_subject_id, scopes,
             code_challenge, challenge_method, resource, created_at, expires_at,
             used_at, revoked_at
         ) values (
-            :code_hash, :client_id, :redirect_uri, :actor_subject_id,
+            :code_hash, :client_id, :redirect_uri, :redirect_uri, :actor_subject_id,
             '["book:read"]'::jsonb, :code_challenge, 'S256', :resource,
             :created_at, :expires_at, null, null
         )
@@ -749,11 +750,13 @@ def test_oauth_clients_redirects_and_authorization_grants_are_bound_and_hashed(
     }
     grant_statement = """
         insert into oauth_authorization_grants (
-            code_hash, client_id, redirect_uri, actor_subject_id, scopes,
+            code_hash, client_id, redirect_uri, registered_redirect_uri,
+            actor_subject_id, scopes,
             code_challenge, challenge_method, created_at, expires_at,
             used_at, revoked_at
         ) values (
             :code_hash, 'public-client', 'https://client.example/callback',
+            'https://client.example/callback',
             :actor_subject_id, '["book:read"]'::jsonb,
             'abcdefghijklmnopqrstuvwxyzABCDEFGHJKLMNOPQRSTUVWXYZ0123456789_-',
             'S256', :created_at, :expires_at, null, null
@@ -1084,11 +1087,13 @@ def test_oauth_grants_retain_the_bound_resource(pg_engine) -> None:
         pg_engine,
         """
         insert into oauth_authorization_grants (
-            code_hash, client_id, redirect_uri, actor_subject_id, scopes,
+            code_hash, client_id, redirect_uri, registered_redirect_uri,
+            actor_subject_id, scopes,
             code_challenge, challenge_method, resource, created_at, expires_at,
             used_at, revoked_at
         ) values (
             :code_hash, 'resource-client', 'https://client.example/resource',
+            'https://client.example/resource',
             'user:resource', '[]'::jsonb, :challenge, 'S256',
             'https://ledger.example', :created_at, :expires_at, null, null
         )

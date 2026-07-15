@@ -7,6 +7,7 @@ from typing import cast
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy.orm import Session
@@ -75,10 +76,56 @@ def _default_auth_client() -> TestClient:
     return TestClient(app)
 
 
+def test_query_routes_are_owned_by_business_modules_without_path_drift() -> None:
+    from track_anywhere.api.v2.queries import create_query_router
+
+    router = create_query_router(
+        _get_session,
+        authorize_book_read=lambda _session, _request, _book_id: None,
+    )
+
+    route_owners = {
+        (tuple(sorted(route.methods)), route.path): route.endpoint.__module__
+        for route in router.routes
+        if isinstance(route, APIRoute)
+    }
+
+    assert route_owners == {
+        (("GET",), "/api/v2/books"): ("track_anywhere.api.v2.query_routes.catalog"),
+        (("GET",), "/api/v2/books/{book_id}/assets"): (
+            "track_anywhere.api.v2.query_routes.catalog"
+        ),
+        (("GET",), "/api/v2/books/{book_id}/accounts"): (
+            "track_anywhere.api.v2.query_routes.catalog"
+        ),
+        (("GET",), "/api/v2/books/{book_id}/accounts/{account_id}"): (
+            "track_anywhere.api.v2.query_routes.catalog"
+        ),
+        (("GET",), "/api/v2/books/{book_id}/accounts/{account_id}/balance"): (
+            "track_anywhere.api.v2.query_routes.catalog"
+        ),
+        (("GET",), "/api/v2/books/{book_id}/categories"): (
+            "track_anywhere.api.v2.query_routes.catalog"
+        ),
+        (("GET",), "/api/v2/books/{book_id}/journal"): (
+            "track_anywhere.api.v2.query_routes.journal"
+        ),
+        (("GET",), "/api/v2/books/{book_id}/journal/transactions/{transaction_id}"): (
+            "track_anywhere.api.v2.query_routes.journal"
+        ),
+        (("GET",), "/api/v2/books/{book_id}/balances"): (
+            "track_anywhere.api.v2.query_routes.reporting"
+        ),
+        (("GET",), "/api/v2/books/{book_id}/reporting-lines"): (
+            "track_anywhere.api.v2.query_routes.reporting"
+        ),
+    }
+
+
 def test_journal_contract_forwards_cursor_and_as_of_and_stringifies_units(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from track_anywhere.api.v2 import queries as query_api
+    from track_anywhere.api.v2.query_routes import journal as query_api
 
     authorization_calls: list[tuple[object, Request, UUID]] = []
     query_calls: list[tuple[object, UUID, int, str | None, int | None]] = []
@@ -189,7 +236,7 @@ def test_journal_contract_forwards_cursor_and_as_of_and_stringifies_units(
 def test_balance_contract_names_raw_and_natural_liability_semantics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from track_anywhere.api.v2 import queries as query_api
+    from track_anywhere.api.v2.query_routes import reporting as query_api
 
     query_calls: list[tuple[object, UUID, int | None]] = []
 
@@ -253,7 +300,7 @@ def test_balance_contract_names_raw_and_natural_liability_semantics(
 def test_catalog_read_contracts_include_zero_balances_and_current_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from track_anywhere.api.v2 import queries as query_api
+    from track_anywhere.api.v2.query_routes import catalog as query_api
 
     zero_balance = BalanceItem(
         account_id=ACCOUNT_ID,
@@ -302,11 +349,11 @@ def test_catalog_read_contracts_include_zero_balances_and_current_names(
     )
     monkeypatch.setattr(
         query_api,
-        "_request_identity",
+        "authenticate_request_actor",
         lambda *_args: SimpleNamespace(
-            user_id="human:reader",
-            book_id=None,
-            scopes=("ledger:read",),
+            command_actor=SimpleNamespace(subject_id="human:reader"),
+            credential_book_id=None,
+            scopes=frozenset({"ledger:read"}),
         ),
     )
     monkeypatch.setattr(
@@ -354,9 +401,7 @@ def test_catalog_read_contracts_include_zero_balances_and_current_names(
         },
     )
     shown = client.get(f"/api/v2/books/{BOOK_ID}/accounts/{ACCOUNT_ID}")
-    balance = client.get(
-        f"/api/v2/books/{BOOK_ID}/accounts/{ACCOUNT_ID}/balance"
-    )
+    balance = client.get(f"/api/v2/books/{BOOK_ID}/accounts/{ACCOUNT_ID}/balance")
     categories = client.get(f"/api/v2/books/{BOOK_ID}/categories")
 
     assert books.status_code == 200
@@ -404,7 +449,7 @@ def test_catalog_read_contracts_include_zero_balances_and_current_names(
 def test_transaction_show_contract_returns_one_journal_item(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from track_anywhere.api.v2 import queries as query_api
+    from track_anywhere.api.v2.query_routes import journal as query_api
 
     item = JournalItem(
         transaction_id=TRANSACTION_ID,
@@ -444,7 +489,7 @@ def test_transaction_show_contract_returns_one_journal_item(
 def test_reporting_contract_requires_as_of_and_stringifies_units(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from track_anywhere.api.v2 import queries as query_api
+    from track_anywhere.api.v2.query_routes import reporting as query_api
 
     query_calls: list[tuple[object, UUID, int]] = []
 
@@ -510,7 +555,7 @@ def test_reporting_contract_requires_as_of_and_stringifies_units(
 def test_book_authorization_denial_prevents_query_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from track_anywhere.api.v2 import queries as query_api
+    from track_anywhere.api.v2.query_routes import reporting as query_api
 
     def deny(_session: Session, _request: Request, _book_id: UUID) -> None:
         raise HTTPException(status_code=403, detail="Book read access is denied")
@@ -529,7 +574,8 @@ def test_book_authorization_denial_prevents_query_execution(
 def test_query_errors_have_stable_http_statuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from track_anywhere.api.v2 import queries as query_api
+    from track_anywhere.api.v2.query_routes import journal as journal_api
+    from track_anywhere.api.v2.query_routes import reporting as reporting_api
     from track_anywhere.queries.journal import InvalidJournalCursor
 
     client = _client(lambda *_args: None)
@@ -537,7 +583,7 @@ def test_query_errors_have_stable_http_statuses(
     def invalid_cursor(*_args, **_kwargs):
         raise InvalidJournalCursor("internal cursor detail")
 
-    monkeypatch.setattr(query_api, "list_journal", invalid_cursor)
+    monkeypatch.setattr(journal_api, "list_journal", invalid_cursor)
     invalid = client.get(
         f"/api/v2/books/{BOOK_ID}/journal",
         params={"cursor": "bad"},
@@ -546,10 +592,14 @@ def test_query_errors_have_stable_http_statuses(
     def missing_book(*_args, **_kwargs):
         raise LookupError("database detail")
 
-    monkeypatch.setattr(query_api, "get_book_balances", missing_book)
+    monkeypatch.setattr(reporting_api, "get_book_balances", missing_book)
     missing = client.get(f"/api/v2/books/{BOOK_ID}/balances")
 
-    monkeypatch.setattr(query_api, "list_current_reporting_lines", missing_book)
+    monkeypatch.setattr(
+        reporting_api,
+        "list_current_reporting_lines",
+        missing_book,
+    )
     missing_reporting = client.get(
         f"/api/v2/books/{BOOK_ID}/reporting-lines",
         params={"as_of_book_position": 1},
@@ -558,7 +608,11 @@ def test_query_errors_have_stable_http_statuses(
     def invalid_as_of(*_args, **_kwargs):
         raise ValueError("as_of_book_position is outside the Book head")
 
-    monkeypatch.setattr(query_api, "list_current_reporting_lines", invalid_as_of)
+    monkeypatch.setattr(
+        reporting_api,
+        "list_current_reporting_lines",
+        invalid_as_of,
+    )
     invalid_reporting = client.get(
         f"/api/v2/books/{BOOK_ID}/reporting-lines",
         params={"as_of_book_position": 99},
@@ -579,19 +633,25 @@ def test_query_errors_have_stable_http_statuses(
 def test_default_authorizer_requires_credential_and_active_book_membership_scopes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from track_anywhere.api.v2 import queries as query_api
+    from track_anywhere.api.v2.query_routes import authorization as authorization_api
+    from track_anywhere.api.v2.query_routes import reporting as reporting_api
+    from track_anywhere.auth.sessions import PersistentSessionService
 
-    class OAuthService:
-        def __init__(self, session: Session) -> None:
-            assert session is SESSION
-
-        def token_status(self, raw_token: str) -> dict[str, object]:
-            assert raw_token == "ta_api_key"
-            return {
-                "actor_subject_id": "human:reader",
-                "book_id": str(BOOK_ID),
-                "scopes": ["ledger:read"],
-            }
+    def authenticate_credential(
+        service: PersistentSessionService,
+        raw_token: str,
+        **_kwargs: object,
+    ) -> tuple[SimpleNamespace, SimpleNamespace]:
+        assert service._session is SESSION
+        assert raw_token == "ta_api_key"
+        return (
+            SimpleNamespace(
+                auth_kind="pkce",
+                book_id=BOOK_ID,
+                scopes=("ledger:read",),
+            ),
+            SimpleNamespace(user_id="human:reader"),
+        )
 
     class Repository:
         def __init__(self, session: Session) -> None:
@@ -605,10 +665,14 @@ def test_default_authorizer_requires_credential_and_active_book_membership_scope
                 scopes=("ledger:read",),
             )
 
-    monkeypatch.setattr(query_api, "PersistentOAuthService", OAuthService)
-    monkeypatch.setattr(query_api, "AuthRepository", Repository)
     monkeypatch.setattr(
-        query_api,
+        PersistentSessionService,
+        "authenticate_credential",
+        authenticate_credential,
+    )
+    monkeypatch.setattr(authorization_api, "AuthRepository", Repository)
+    monkeypatch.setattr(
+        reporting_api,
         "get_book_balances",
         lambda *_args, **_kwargs: BalanceSnapshot(
             items=(),
@@ -628,20 +692,25 @@ def test_default_authorizer_requires_credential_and_active_book_membership_scope
 def test_default_authorizer_rejects_cross_book_credential_before_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from track_anywhere.api.v2 import queries as query_api
+    from track_anywhere.api.v2.query_routes import authorization as authorization_api
+    from track_anywhere.api.v2.query_routes import reporting as reporting_api
+    from track_anywhere.auth.sessions import PersistentSessionService
 
     other_book_id = UUID("99999999-9999-4999-8999-999999999999")
 
-    class OAuthService:
-        def __init__(self, _session: Session) -> None:
-            pass
-
-        def token_status(self, _raw_token: str) -> dict[str, object]:
-            return {
-                "actor_subject_id": "human:reader",
-                "book_id": str(other_book_id),
-                "scopes": ["ledger:read"],
-            }
+    def authenticate_credential(
+        _service: PersistentSessionService,
+        _raw_token: str,
+        **_kwargs: object,
+    ) -> tuple[SimpleNamespace, SimpleNamespace]:
+        return (
+            SimpleNamespace(
+                auth_kind="pkce",
+                book_id=other_book_id,
+                scopes=("ledger:read",),
+            ),
+            SimpleNamespace(user_id="human:reader"),
+        )
 
     class UnexpectedRepository:
         def __init__(self, _session: Session) -> None:
@@ -650,9 +719,17 @@ def test_default_authorizer_rejects_cross_book_credential_before_query(
     def unexpected_query(*_args, **_kwargs):
         raise AssertionError("unauthorized query must not execute")
 
-    monkeypatch.setattr(query_api, "PersistentOAuthService", OAuthService)
-    monkeypatch.setattr(query_api, "AuthRepository", UnexpectedRepository)
-    monkeypatch.setattr(query_api, "get_book_balances", unexpected_query)
+    monkeypatch.setattr(
+        PersistentSessionService,
+        "authenticate_credential",
+        authenticate_credential,
+    )
+    monkeypatch.setattr(
+        authorization_api,
+        "AuthRepository",
+        UnexpectedRepository,
+    )
+    monkeypatch.setattr(reporting_api, "get_book_balances", unexpected_query)
 
     response = _default_auth_client().get(
         f"/api/v2/books/{BOOK_ID}/balances",
@@ -661,3 +738,75 @@ def test_default_authorizer_rejects_cross_book_credential_before_query(
 
     assert response.status_code == 403
     assert response.json() == {"detail": "Book read access is denied"}
+
+
+def test_default_authorizer_accepts_api_key_header_for_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from track_anywhere.api.v2.query_routes import authorization as authorization_api
+    from track_anywhere.api.v2.query_routes import reporting as reporting_api
+    from track_anywhere.auth.sessions import PersistentSessionService
+
+    authentication_calls: list[str] = []
+
+    def authenticate_credential(
+        service: PersistentSessionService,
+        raw_token: str,
+        **_kwargs: object,
+    ) -> tuple[SimpleNamespace, SimpleNamespace]:
+        assert service._session is SESSION
+        authentication_calls.append(raw_token)
+        return (
+            SimpleNamespace(
+                auth_kind="api_key",
+                book_id=BOOK_ID,
+                scopes=("ledger:read",),
+            ),
+            SimpleNamespace(user_id="human:reader"),
+        )
+
+    def current(
+        _service: PersistentSessionService,
+        _raw_session: str | None,
+        *,
+        lock: bool = False,
+    ) -> None:
+        assert lock is False
+        return None
+
+    class Repository:
+        def __init__(self, session: Session) -> None:
+            assert session is SESSION
+
+        def get_membership(self, book_id: UUID, user_id: str) -> SimpleNamespace:
+            assert (book_id, user_id) == (BOOK_ID, "human:reader")
+            return SimpleNamespace(
+                status="active",
+                revoked_at=None,
+                scopes=("ledger:read",),
+            )
+
+    monkeypatch.setattr(
+        PersistentSessionService,
+        "authenticate_credential",
+        authenticate_credential,
+    )
+    monkeypatch.setattr(PersistentSessionService, "current", current)
+    monkeypatch.setattr(authorization_api, "AuthRepository", Repository)
+    monkeypatch.setattr(
+        reporting_api,
+        "get_book_balances",
+        lambda *_args, **_kwargs: BalanceSnapshot(
+            items=(),
+            as_of_book_position=0,
+            projection_matches_reference=True,
+        ),
+    )
+
+    response = _default_auth_client().get(
+        f"/api/v2/books/{BOOK_ID}/balances",
+        headers={"X-API-Key": "ta_api_key"},
+    )
+
+    assert response.status_code == 200
+    assert authentication_calls == ["ta_api_key"]

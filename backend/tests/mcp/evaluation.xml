@@ -1,0 +1,42 @@
+<evaluation>
+  <qa_pair>
+    <question>在唯一可访问 Book 的不可变快照 as_of_book_position=7 中，以 limit=2 逐页读完交易。定位唯一被冲销的原交易及其冲销交易，再分别读取两笔明细。它们的 effective_at 相差多少秒？只回答十进制整数。</question>
+    <answer>120</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>在唯一可访问 Book 的不可变快照 as_of_book_position=7 中，以 limit=2 逐页读完交易。找出唯一具有非空 original_transaction_id 的信用卡交易，并读取它及其原交易的完整明细。退款 units 占原消费 units 的百分比是多少？使用无小数的 NN% 格式。</question>
+    <answer>20%</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>审计唯一可访问 Book 截至 as_of_book_position=7 的固定历史。先以 limit=2 逐页取得所有日记账交易位置，从信用卡关系发现 card_account_id，再分别检查位置 1、3、4、5、6、7 的历史余额。该卡的 outstanding_units 在哪个 Book position 达到最大值？只回答位置整数。</question>
+    <answer>4</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>审计唯一可访问 Book 截至 as_of_book_position=7 的固定历史。逐页读取交易，并比较从信用卡关系发现的卡账户在位置 1、3、4、5、6、7 的 outstanding_units。达到峰值后，哪一笔后续交易首次令 outstanding_units 低于峰值？回答该交易的 effective_at，并规范化为 YYYY-MM-DDTHH:MM:SSZ。</question>
+    <answer>2026-07-14T12:34:00Z</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>在唯一可访问 Book 的不可变快照 as_of_book_position=7 中，以 limit=2 逐页审计全部交易。对信用卡交易按 charge + fee - refund - payment 汇总 units，并用位置 7 的卡账户 outstanding_units 交叉核对。只回答最终原始 ledger units 的十进制整数。</question>
+    <answer>5500</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>在唯一可访问 Book 的不可变快照 as_of_book_position=7 中，以 limit=2 逐页读取交易。先从 charge、refund 和 fee 的 credit_card_relation 找到共同 counter_account_id；只对信用卡交易计算该账户的 debit units 减 credit units，再确认普通原交易与冲销交易对它的净额为零。只回答有符号原始 ledger units。</question>
+    <answer>8500</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>在唯一可访问 Book 截至 as_of_book_position=7 的固定历史中，比较位置 4、5、6、7 的余额快照。找出唯一一次卡账户 outstanding_units 的下降量，恰好等于该交易 counter_account_id 对应账户 raw_accounting_units 的绝对变化量，并读取对应交易明细。只回答 credit_card_relation.intent。</question>
+    <answer>payment</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>在唯一可访问 Book 的不可变快照 as_of_book_position=7 中，以 limit=2 逐页读取全部交易。找出唯一具有非空 original_transaction_id 的信用卡交易，读取它及原交易，并验证原交易 intent 为 charge 且两者的 card_account_id 与 counter_account_id 相同。退款交易在卡账户上的 posting side 是什么？只回答小写精确字符串。</question>
+    <answer>debit</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>在唯一可访问 Book 的不可变快照 as_of_book_position=7 中，以 limit=2 逐页读取并检查每笔完整交易。对 credit_card_relation 非空的交易，使用任意一侧 posting 的 units 作为交易金额，避免把借贷两侧重复相加。金额最大的交易是什么 transaction_kind？只回答精确字符串。</question>
+    <answer>credit_card_charge</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>在唯一可访问 Book 的不可变快照 as_of_book_position=7 中，以 limit=2 逐页审计全部六笔日记账交易。验证每笔交易在每种 asset_code 下 debit units 等于 credit units，并验证唯一冲销交易按相同账户、相同资产和相同 units 精确反转原交易的 posting side。两个条件是否都成立？只回答 True 或 False。</question>
+    <answer>True</answer>
+  </qa_pair>
+</evaluation>

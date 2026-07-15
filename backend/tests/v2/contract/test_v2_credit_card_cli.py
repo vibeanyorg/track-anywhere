@@ -84,7 +84,9 @@ def _client(engine) -> TestClient:
 
 def _requester(client: TestClient):
     def request(config, method, path, payload=None, key=None):
-        headers = {"Authorization": f"Bearer {config.token}"}
+        assert config.token is None
+        assert config.api_key == TOKEN
+        headers = {"X-API-Key": config.api_key}
         if key is not None:
             headers["X-Idempotency-Key"] = key
         response = client.request(method, path, headers=headers, json=payload)
@@ -94,13 +96,15 @@ def _requester(client: TestClient):
 
 
 def _run(requester, *args: str) -> None:
-    assert run(["--token", TOKEN, *args, "--json"], requester=requester) == 0
+    assert run(["--insecure-automation", *args, "--json"], requester=requester) == 0
 
 
 def test_cli_creates_credit_card_then_records_charge_and_payment(
     pg_engine,
     capsys,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setenv("TRACK_ANYWHERE_API_KEY", TOKEN)
     requester = _requester(_client(pg_engine))
     book_id = uuid4()
     card_id = uuid4()

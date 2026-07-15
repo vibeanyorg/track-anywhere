@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
+from typing import ClassVar
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from sqlalchemy import and_, func, select
@@ -75,167 +76,174 @@ class CreditCardRefundSourceReversed(CreditCardRefundConflict):
     pass
 
 
-def _validate_common(command: object) -> None:
-    for name in ("book_id", "command_id", "transaction_id", "card_account_id"):
-        if type(getattr(command, name, None)) is not UUID:
-            raise IdempotencyValidationError(f"{name} must be a UUID")
-    expected = getattr(command, "expected_stream_version", None)
-    if type(expected) is not int or expected != 0:
-        raise IdempotencyValidationError(
-            "a credit-card transaction stream must start at version zero"
-        )
-    asset_code = getattr(command, "asset_code", None)
-    if (
-        type(asset_code) is not str
-        or not asset_code
-        or len(asset_code) > 16
-        or asset_code.upper() != asset_code
-    ):
-        raise IdempotencyValidationError("asset_code is invalid")
-    amount = getattr(command, "amount", None)
-    if (
-        type(amount) is not str
-        or _AMOUNT_LITERAL.fullmatch(amount) is None
-        or amount.rstrip("0").rstrip(".") in {"", "0"}
-    ):
-        raise IdempotencyValidationError(
-            "amount must be a positive unsigned plain-decimal string"
-        )
-    try:
-        format_utc_microseconds(getattr(command, "effective_at", None))
-    except (TypeError, ValueError):
-        raise IdempotencyValidationError(
-            "effective_at must be a timezone-aware datetime"
-        ) from None
-    description_ref = getattr(command, "description_ref", None)
-    if description_ref is not None and type(description_ref) is not UUID:
-        raise IdempotencyValidationError("description_ref must be a UUID or null")
-    references = getattr(command, "external_references", None)
-    if type(references) is not tuple or any(
-        type(reference) is not FinancialExternalReference for reference in references
-    ):
-        raise IdempotencyValidationError(
-            "external_references must be an immutable typed tuple"
-        )
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CreditCardCommand:
+    book_id: UUID
+    command_id: UUID
+    transaction_id: UUID
+    expected_stream_version: int
+    card_account_id: UUID
+    asset_code: str
+    amount: str
+    effective_at: datetime
+    description_ref: UUID | None = None
+    external_references: tuple[FinancialExternalReference, ...] = ()
+
+    intent: ClassVar[CreditCardIntent]
+    operation: ClassVar[str]
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("book_id", self.book_id),
+            ("command_id", self.command_id),
+            ("transaction_id", self.transaction_id),
+            ("card_account_id", self.card_account_id),
+        ):
+            if type(value) is not UUID:
+                raise IdempotencyValidationError(f"{name} must be a UUID")
+        if (
+            type(self.expected_stream_version) is not int
+            or self.expected_stream_version != 0
+        ):
+            raise IdempotencyValidationError(
+                "a credit-card transaction stream must start at version zero"
+            )
+        if (
+            type(self.asset_code) is not str
+            or not self.asset_code
+            or len(self.asset_code) > 16
+            or self.asset_code.upper() != self.asset_code
+        ):
+            raise IdempotencyValidationError("asset_code is invalid")
+        if (
+            type(self.amount) is not str
+            or _AMOUNT_LITERAL.fullmatch(self.amount) is None
+            or self.amount.rstrip("0").rstrip(".") in {"", "0"}
+        ):
+            raise IdempotencyValidationError(
+                "amount must be a positive unsigned plain-decimal string"
+            )
+        try:
+            format_utc_microseconds(self.effective_at)
+        except (TypeError, ValueError):
+            raise IdempotencyValidationError(
+                "effective_at must be a timezone-aware datetime"
+            ) from None
+        if self.description_ref is not None and type(self.description_ref) is not UUID:
+            raise IdempotencyValidationError("description_ref must be a UUID or null")
+        if type(self.external_references) is not tuple or any(
+            type(reference) is not FinancialExternalReference
+            for reference in self.external_references
+        ):
+            raise IdempotencyValidationError(
+                "external_references must be an immutable typed tuple"
+            )
 
 
-def _payload(command: object, *, counter_name: str) -> dict[str, JSONValue]:
+def _payload(
+    command: CreditCardCommand,
+    *,
+    counter_name: str,
+    counter_id: UUID,
+) -> dict[str, JSONValue]:
     return {
-        "amount": getattr(command, "amount"),
-        "asset_code": getattr(command, "asset_code"),
-        "card_account_id": str(getattr(command, "card_account_id")),
-        counter_name: str(getattr(command, counter_name)),
+        "amount": command.amount,
+        "asset_code": command.asset_code,
+        "card_account_id": str(command.card_account_id),
+        counter_name: str(counter_id),
         "description_ref": (
-            None
-            if getattr(command, "description_ref") is None
-            else str(getattr(command, "description_ref"))
+            None if command.description_ref is None else str(command.description_ref)
         ),
-        "effective_at": format_utc_microseconds(getattr(command, "effective_at")),
-        "expected_stream_version": getattr(command, "expected_stream_version"),
+        "effective_at": format_utc_microseconds(command.effective_at),
+        "expected_stream_version": command.expected_stream_version,
         "external_references": [
             reference.model_dump(mode="json")
-            for reference in getattr(command, "external_references")
+            for reference in command.external_references
         ],
-        "transaction_id": str(getattr(command, "transaction_id")),
+        "transaction_id": str(command.transaction_id),
     }
 
 
-@dataclass(frozen=True, slots=True)
-class ChargeCreditCardCommand:
-    book_id: UUID
-    command_id: UUID
-    transaction_id: UUID
-    expected_stream_version: int
-    card_account_id: UUID
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChargeCreditCardCommand(CreditCardCommand):
     expense_account_id: UUID
-    asset_code: str
-    amount: str
-    effective_at: datetime
-    description_ref: UUID | None = None
-    external_references: tuple[FinancialExternalReference, ...] = ()
-    operation: str = field(default="credit_card.charge", init=False)
+
+    intent: ClassVar[CreditCardIntent] = CreditCardIntent.CHARGE
+    operation: ClassVar[str] = "credit_card.charge"
 
     def __post_init__(self) -> None:
-        _validate_common(self)
+        CreditCardCommand.__post_init__(self)
         if type(self.expense_account_id) is not UUID:
             raise IdempotencyValidationError("expense_account_id must be a UUID")
 
     def idempotency_payload(self) -> dict[str, JSONValue]:
-        return _payload(self, counter_name="expense_account_id")
+        return _payload(
+            self,
+            counter_name="expense_account_id",
+            counter_id=self.expense_account_id,
+        )
 
 
-@dataclass(frozen=True, slots=True)
-class FeeCreditCardCommand:
-    book_id: UUID
-    command_id: UUID
-    transaction_id: UUID
-    expected_stream_version: int
-    card_account_id: UUID
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FeeCreditCardCommand(CreditCardCommand):
     expense_account_id: UUID
-    asset_code: str
-    amount: str
-    effective_at: datetime
-    description_ref: UUID | None = None
-    external_references: tuple[FinancialExternalReference, ...] = ()
-    operation: str = field(default="credit_card.fee", init=False)
+
+    intent: ClassVar[CreditCardIntent] = CreditCardIntent.FEE
+    operation: ClassVar[str] = "credit_card.fee"
 
     def __post_init__(self) -> None:
-        _validate_common(self)
+        CreditCardCommand.__post_init__(self)
         if type(self.expense_account_id) is not UUID:
             raise IdempotencyValidationError("expense_account_id must be a UUID")
 
     def idempotency_payload(self) -> dict[str, JSONValue]:
-        return _payload(self, counter_name="expense_account_id")
+        return _payload(
+            self,
+            counter_name="expense_account_id",
+            counter_id=self.expense_account_id,
+        )
 
 
-@dataclass(frozen=True, slots=True)
-class PaymentCreditCardCommand:
-    book_id: UUID
-    command_id: UUID
-    transaction_id: UUID
-    expected_stream_version: int
-    card_account_id: UUID
+@dataclass(frozen=True, slots=True, kw_only=True)
+class PaymentCreditCardCommand(CreditCardCommand):
     source_account_id: UUID
-    asset_code: str
-    amount: str
-    effective_at: datetime
-    description_ref: UUID | None = None
-    external_references: tuple[FinancialExternalReference, ...] = ()
-    operation: str = field(default="credit_card.payment", init=False)
+
+    intent: ClassVar[CreditCardIntent] = CreditCardIntent.PAYMENT
+    operation: ClassVar[str] = "credit_card.payment"
 
     def __post_init__(self) -> None:
-        _validate_common(self)
+        CreditCardCommand.__post_init__(self)
         if type(self.source_account_id) is not UUID:
             raise IdempotencyValidationError("source_account_id must be a UUID")
 
     def idempotency_payload(self) -> dict[str, JSONValue]:
-        return _payload(self, counter_name="source_account_id")
+        return _payload(
+            self,
+            counter_name="source_account_id",
+            counter_id=self.source_account_id,
+        )
 
 
-@dataclass(frozen=True, slots=True)
-class RefundCreditCardCommand:
-    book_id: UUID
-    command_id: UUID
-    transaction_id: UUID
-    expected_stream_version: int
-    card_account_id: UUID
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RefundCreditCardCommand(CreditCardCommand):
     original_transaction_id: UUID
-    asset_code: str
-    amount: str
-    effective_at: datetime
-    description_ref: UUID | None = None
-    external_references: tuple[FinancialExternalReference, ...] = ()
-    operation: str = field(default="credit_card.refund", init=False)
+
+    intent: ClassVar[CreditCardIntent] = CreditCardIntent.REFUND
+    operation: ClassVar[str] = "credit_card.refund"
 
     def __post_init__(self) -> None:
-        _validate_common(self)
+        CreditCardCommand.__post_init__(self)
         if type(self.original_transaction_id) is not UUID:
             raise IdempotencyValidationError("original_transaction_id must be a UUID")
         if self.original_transaction_id == self.transaction_id:
             raise IdempotencyValidationError("a refund cannot reference itself")
 
     def idempotency_payload(self) -> dict[str, JSONValue]:
-        return _payload(self, counter_name="original_transaction_id")
+        return _payload(
+            self,
+            counter_name="original_transaction_id",
+            counter_id=self.original_transaction_id,
+        )
 
 
 def execute_charge_credit_card(
@@ -244,7 +252,7 @@ def execute_charge_credit_card(
 ) -> CommandOutcome:
     if type(command) is not ChargeCreditCardCommand:
         raise IdempotencyValidationError("command must be a ChargeCreditCardCommand")
-    return _execute_credit_card(command, intent=CreditCardIntent.CHARGE, **kwargs)
+    return _execute_credit_card(command, **kwargs)
 
 
 def execute_fee_credit_card(
@@ -253,7 +261,7 @@ def execute_fee_credit_card(
 ) -> CommandOutcome:
     if type(command) is not FeeCreditCardCommand:
         raise IdempotencyValidationError("command must be a FeeCreditCardCommand")
-    return _execute_credit_card(command, intent=CreditCardIntent.FEE, **kwargs)
+    return _execute_credit_card(command, **kwargs)
 
 
 def execute_payment_credit_card(
@@ -262,7 +270,7 @@ def execute_payment_credit_card(
 ) -> CommandOutcome:
     if type(command) is not PaymentCreditCardCommand:
         raise IdempotencyValidationError("command must be a PaymentCreditCardCommand")
-    return _execute_credit_card(command, intent=CreditCardIntent.PAYMENT, **kwargs)
+    return _execute_credit_card(command, **kwargs)
 
 
 def execute_refund_credit_card(
@@ -271,18 +279,12 @@ def execute_refund_credit_card(
 ) -> CommandOutcome:
     if type(command) is not RefundCreditCardCommand:
         raise IdempotencyValidationError("command must be a RefundCreditCardCommand")
-    return _execute_credit_card(command, intent=CreditCardIntent.REFUND, **kwargs)
+    return _execute_credit_card(command, **kwargs)
 
 
 def _execute_credit_card(
-    command: (
-        ChargeCreditCardCommand
-        | FeeCreditCardCommand
-        | PaymentCreditCardCommand
-        | RefundCreditCardCommand
-    ),
+    command: CreditCardCommand,
     *,
-    intent: CreditCardIntent,
     raw_key: str,
     actor: CommandActor,
     uow_factory,
@@ -301,7 +303,7 @@ def _execute_credit_card(
             raise IdempotencyValidationError("unexpected credit-card command")
         if locked_head.book_id != command.book_id:
             raise IdempotencyValidationError("locked Book does not match command")
-        payload = _build_payload(command, intent=intent, uow=uow)
+        payload = _build_payload(command, uow=uow)
         pending = PendingEvent(
             event_id=uuid5(_EVENT_NAMESPACE, str(command.command_id)),
             stream_type="journal_transaction",
@@ -324,7 +326,7 @@ def _execute_credit_card(
             status_code=201,
             body={
                 "transaction_id": str(command.transaction_id),
-                "intent": intent.value,
+                "intent": command.intent.value,
                 "as_of_book_position": locked_head.last_position + 1,
             },
         )
@@ -342,14 +344,8 @@ def _execute_credit_card(
 
 
 def _build_payload(
-    command: (
-        ChargeCreditCardCommand
-        | FeeCreditCardCommand
-        | PaymentCreditCardCommand
-        | RefundCreditCardCommand
-    ),
+    command: CreditCardCommand,
     *,
-    intent: CreditCardIntent,
     uow: UnitOfWork,
 ) -> CreditCardTransactionRecorded:
     catalogs = CatalogRepository(uow.session)
@@ -387,11 +383,14 @@ def _build_payload(
         )
 
     expected_counter_type = (
-        AccountType.ASSET if intent is CreditCardIntent.PAYMENT else AccountType.EXPENSE
+        AccountType.ASSET
+        if command.intent is CreditCardIntent.PAYMENT
+        else AccountType.EXPENSE
     )
     if counter.account_type != expected_counter_type.value:
         raise CreditCardAccountInvalid(
-            f"{intent.value} counter account must be {expected_counter_type.value}"
+            f"{command.intent.value} counter account must be "
+            f"{expected_counter_type.value}"
         )
     if (
         card.asset_code != command.asset_code
@@ -415,7 +414,7 @@ def _build_payload(
     if type(command) is RefundCreditCardCommand:
         _validate_refund_capacity(command, uow, requested_units=units)
 
-    if intent in {CreditCardIntent.CHARGE, CreditCardIntent.FEE}:
+    if command.intent in {CreditCardIntent.CHARGE, CreditCardIntent.FEE}:
         legs = (
             (counter.account_id, PostingSide.DEBIT),
             (card.account_id, PostingSide.CREDIT),
@@ -464,7 +463,7 @@ def _build_payload(
         ),
     )
     return CreditCardTransactionRecorded(
-        intent=intent,
+        intent=command.intent,
         transaction_id=command.transaction_id,
         card_account_id=card.account_id,
         counter_account_id=counter.account_id,
@@ -567,6 +566,7 @@ def _validate_refund_capacity(
 __all__ = [
     "ChargeCreditCardCommand",
     "CreditCardAccountInvalid",
+    "CreditCardCommand",
     "CreditCardRefundConflict",
     "CreditCardRefundExceeded",
     "CreditCardRefundSourceInvalid",

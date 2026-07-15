@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  normalizeSameSiteRequestHeaders,
   resolvePublicOrigin,
+  rewriteAllUpstreamJsonUrls,
   rewriteUpstreamJsonUrls,
   rewriteUpstreamLocation
 } from "../app/lib/proxy-origin.mjs";
@@ -32,37 +32,23 @@ test("resolves the browser-facing origin from proxy request headers", () => {
   );
 });
 
-test("normalizes only same-site Origin and Referer for the trusted upstream", () => {
-  const normalized = normalizeSameSiteRequestHeaders(
-    {
-      origin: publicOrigin,
-      referer: `${publicOrigin}/auth/callback?code=one`,
-      authorization: "Bearer token"
-    },
-    publicOrigin,
-    upstreamOrigin
-  );
-
-  assert.equal(normalized.get("origin"), upstreamOrigin);
+test("configured public origin wins over untrusted forwarded headers", () => {
   assert.equal(
-    normalized.get("referer"),
-    `${upstreamOrigin}/auth/callback?code=one`
+    resolvePublicOrigin(
+      {
+        host: "next:3000",
+        "x-forwarded-host": "attacker.example",
+        "x-forwarded-proto": "https"
+      },
+      "http://next:3000",
+      "https://ledger.example.com"
+    ),
+    "https://ledger.example.com"
   );
-  assert.equal(normalized.get("authorization"), "Bearer token");
-});
-
-test("does not normalize a foreign request origin", () => {
-  const normalized = normalizeSameSiteRequestHeaders(
-    {
-      origin: "https://attacker.example",
-      referer: "https://attacker.example/submit"
-    },
-    publicOrigin,
-    upstreamOrigin
+  assert.throws(
+    () => resolvePublicOrigin({}, "http://next:3000", "https://ledger.example.com/path"),
+    /must be an HTTP\(S\) origin/
   );
-
-  assert.equal(normalized.get("origin"), "https://attacker.example");
-  assert.equal(normalized.get("referer"), "https://attacker.example/submit");
 });
 
 test("rewrites only absolute upstream V2 URLs in JSON responses", () => {
@@ -80,6 +66,25 @@ test("rewrites only absolute upstream V2 URLs in JSON responses", () => {
       verification_uri_complete: `${publicOrigin}/api/v2/auth/device?user_code=ABCD`,
       redirect_uri: "http://127.0.0.1:49152/callback?code=one",
       internal_admin: `${upstreamOrigin}/admin`
+    }
+  );
+});
+
+test("rewrites every internal URL in public OAuth discovery metadata", () => {
+  const body = JSON.stringify({
+    issuer: `${upstreamOrigin}/`,
+    authorization_endpoint: `${upstreamOrigin}/api/v2/oauth/authorize`,
+    resource: `${upstreamOrigin}/mcp`,
+    external_documentation: "https://modelcontextprotocol.io/specification"
+  });
+
+  assert.deepEqual(
+    JSON.parse(rewriteAllUpstreamJsonUrls(body, publicOrigin, upstreamOrigin)),
+    {
+      issuer: `${publicOrigin}/`,
+      authorization_endpoint: `${publicOrigin}/api/v2/oauth/authorize`,
+      resource: `${publicOrigin}/mcp`,
+      external_documentation: "https://modelcontextprotocol.io/specification"
     }
   );
 });

@@ -44,6 +44,35 @@ def get_book_balances(
     *,
     as_of_book_position: int | None = None,
 ) -> BalanceSnapshot:
+    return _get_book_balances(
+        session,
+        book_id,
+        as_of_book_position=as_of_book_position,
+        verify_current_projection=False,
+    )
+
+
+def get_verified_book_balances(
+    session: Session,
+    book_id: UUID,
+) -> BalanceSnapshot:
+    """Compare the current projection to immutable postings and safely fall back."""
+
+    return _get_book_balances(
+        session,
+        book_id,
+        as_of_book_position=None,
+        verify_current_projection=True,
+    )
+
+
+def _get_book_balances(
+    session: Session,
+    book_id: UUID,
+    *,
+    as_of_book_position: int | None,
+    verify_current_projection: bool,
+) -> BalanceSnapshot:
     if type(book_id) is not UUID:
         raise ValueError("book_id must be a UUID")
     head = session.scalar(
@@ -53,41 +82,13 @@ def get_book_balances(
     )
     if head is None:
         raise LookupError("Book not found")
+    use_current_projection = as_of_book_position is None
     as_of = head if as_of_book_position is None else as_of_book_position
     if type(as_of) is not int or not 0 <= as_of <= head:
         raise ValueError("as_of_book_position is outside the Book head")
 
-    signed_units = case(
-        (JournalPostingRecord.side == "debit", JournalPostingRecord.units),
-        else_=-JournalPostingRecord.units,
-    )
-    reference_rows = session.execute(
-        select(
-            JournalPostingRecord.account_id,
-            JournalPostingRecord.asset_code,
-            func.sum(signed_units),
-        )
-        .join(
-            JournalTransactionRecord,
-            (JournalTransactionRecord.book_id == JournalPostingRecord.book_id)
-            & (
-                JournalTransactionRecord.transaction_id
-                == JournalPostingRecord.transaction_id
-            ),
-        )
-        .where(
-            JournalPostingRecord.book_id == book_id,
-            JournalTransactionRecord.source_position <= as_of,
-        )
-        .group_by(JournalPostingRecord.account_id, JournalPostingRecord.asset_code)
-    )
-    reference = {
-        (account_id, asset_code): int(units)
-        for account_id, asset_code, units in reference_rows
-    }
     parity: bool | None = None
-    values = reference
-    if as_of == head:
+    if use_current_projection:
         projection = {
             (row.account_id, row.asset_code): int(row.balance_units)
             for row in session.scalars(
@@ -96,8 +97,14 @@ def get_book_balances(
                 )
             )
         }
-        parity = projection == reference
-        values = projection if parity else reference
+        values = projection
+        if verify_current_projection:
+            reference = _load_reference_balances(session, book_id, as_of)
+            parity = projection == reference
+            if not parity:
+                values = reference
+    else:
+        values = _load_reference_balances(session, book_id, as_of)
     account_semantics = {
         (account_id, asset_code): (
             AccountType(account_type),
@@ -144,6 +151,40 @@ def get_book_balances(
     )
 
 
+def _load_reference_balances(
+    session: Session,
+    book_id: UUID,
+    as_of_book_position: int,
+) -> dict[tuple[UUID, str], int]:
+    signed_units = case(
+        (JournalPostingRecord.side == "debit", JournalPostingRecord.units),
+        else_=-JournalPostingRecord.units,
+    )
+    rows = session.execute(
+        select(
+            JournalPostingRecord.account_id,
+            JournalPostingRecord.asset_code,
+            func.sum(signed_units),
+        )
+        .join(
+            JournalTransactionRecord,
+            (JournalTransactionRecord.book_id == JournalPostingRecord.book_id)
+            & (
+                JournalTransactionRecord.transaction_id
+                == JournalPostingRecord.transaction_id
+            ),
+        )
+        .where(
+            JournalPostingRecord.book_id == book_id,
+            JournalTransactionRecord.source_position <= as_of_book_position,
+        )
+        .group_by(JournalPostingRecord.account_id, JournalPostingRecord.asset_code)
+    )
+    return {
+        (account_id, asset_code): int(units) for account_id, asset_code, units in rows
+    }
+
+
 def build_balance_item(
     *,
     account_id: UUID,
@@ -181,4 +222,5 @@ __all__ = [
     "BalanceSnapshot",
     "build_balance_item",
     "get_book_balances",
+    "get_verified_book_balances",
 ]

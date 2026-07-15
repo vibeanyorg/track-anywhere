@@ -77,8 +77,10 @@ def require_same_origin(
     referer: str | None,
     allowed_origin: str,
 ) -> None:
-    if origin == allowed_origin:
-        return
+    if origin is not None:
+        if origin == allowed_origin:
+            return
+        raise AuthSecurityError("missing or invalid Origin/Referer")
     if referer:
         parsed = urlparse(referer)
         referer_origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -104,7 +106,13 @@ def require_scope_subset(requested: tuple[str, ...], available: set[str]) -> Non
 
 def validate_redirect_uri(value: str) -> str:
     parsed = urlparse(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
         raise AuthSecurityError("redirect_uri must be an absolute http(s) URL")
     if parsed.scheme == "http" and parsed.hostname not in {
         "localhost",
@@ -113,6 +121,21 @@ def validate_redirect_uri(value: str) -> str:
     }:
         raise AuthSecurityError("http redirect_uri is only allowed on loopback")
     return value
+
+
+def redirect_uri_matches(registered: str, requested: str) -> bool:
+    registered_parsed = urlparse(validate_redirect_uri(registered))
+    requested_parsed = urlparse(validate_redirect_uri(requested))
+    if registered_parsed.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return hmac.compare_digest(registered, requested)
+    if requested_parsed.hostname != registered_parsed.hostname:
+        return False
+    return (
+        requested_parsed.scheme == registered_parsed.scheme == "http"
+        and requested_parsed.path == registered_parsed.path
+        and requested_parsed.params == registered_parsed.params
+        and requested_parsed.query == registered_parsed.query
+    )
 
 
 def redirect_with_params(value: str, params: dict[str, str | None]) -> str:
@@ -132,28 +155,54 @@ def pkce_challenge(verifier: str) -> str:
 def authorization_server_metadata(issuer: str) -> dict[str, object]:
     base = issuer.rstrip("/")
     return {
-        "issuer": base,
+        "issuer": f"{base}/",
         "authorization_endpoint": f"{base}/api/v2/oauth/authorize",
         "token_endpoint": f"{base}/api/v2/oauth/token",
         "device_authorization_endpoint": f"{base}/api/v2/oauth/device/authorize",
         "registration_endpoint": f"{base}/api/v2/oauth/register",
         "revocation_endpoint": f"{base}/api/v2/oauth/revoke",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code", DEVICE_GRANT_TYPE],
+        "grant_types_supported": [
+            "authorization_code",
+            "refresh_token",
+            DEVICE_GRANT_TYPE,
+        ],
         "code_challenge_methods_supported": ["S256"],
         "token_endpoint_auth_methods_supported": ["none"],
+        "revocation_endpoint_auth_methods_supported": ["none"],
         "scopes_supported": sorted(AGENT_ALLOWED_SCOPES),
+        "resource_parameter_supported": True,
     }
 
 
-def protected_resource_metadata(issuer: str) -> dict[str, object]:
+def protected_resource_metadata(
+    issuer: str,
+    resource: str,
+    *,
+    scopes: tuple[str, ...] | None = None,
+) -> dict[str, object]:
     base = issuer.rstrip("/")
     return {
-        "resource": f"{base}/api/v2",
-        "authorization_servers": [base],
+        "resource": resource,
+        "authorization_servers": [f"{base}/"],
         "bearer_methods_supported": ["header"],
-        "scopes_supported": sorted(AGENT_ALLOWED_SCOPES),
+        "scopes_supported": sorted(scopes or AGENT_ALLOWED_SCOPES),
     }
+
+
+def protected_resource_metadata_url(resource: str) -> str:
+    parsed = urlparse(resource)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise AuthSecurityError("resource must be an absolute http(s) URL")
+    suffix = parsed.path.rstrip("/")
+    return urlunparse(
+        parsed._replace(
+            path=f"/.well-known/oauth-protected-resource{suffix}",
+            params="",
+            query="",
+            fragment="",
+        )
+    )
 
 
 __all__ = [
@@ -164,6 +213,8 @@ __all__ = [
     "parse_requested_scopes",
     "pkce_challenge",
     "protected_resource_metadata",
+    "protected_resource_metadata_url",
+    "redirect_uri_matches",
     "redirect_with_params",
     "require_scope_subset",
     "require_same_origin",

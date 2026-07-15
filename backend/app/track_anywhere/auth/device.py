@@ -16,6 +16,7 @@ from .contracts import (
 )
 from .errors import AuthPolicyDenied, AuthSecurityError, OAuthFlowError
 from .oauth import PersistentOAuthService
+from .resources import configured_public_base_url, require_oauth_resource
 from .security import (
     new_secret,
     new_user_code,
@@ -28,8 +29,9 @@ from .sessions import ActiveBrowserSession
 
 
 class PersistentDeviceService:
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, public_base_url: str | None = None) -> None:
         self._session = session
+        self._public_base_url = public_base_url or configured_public_base_url()
 
     def create_authorization(
         self,
@@ -37,6 +39,7 @@ class PersistentDeviceService:
         issuer: str,
     ) -> dict[str, object]:
         client = self._active_client(command.client_id)
+        require_oauth_resource(command.resource, self._public_base_url)
         scopes = parse_requested_scopes(command.scope)
         require_scope_subset(scopes, set(client.scopes))
         raw_device_code = new_secret("dev")
@@ -63,7 +66,7 @@ class PersistentDeviceService:
             )
         )
         self._session.flush()
-        verification_uri = f"{issuer.rstrip('/')}/api/v2/auth/device"
+        verification_uri = f"{issuer.rstrip('/')}/auth/device"
         return {
             "device_code": raw_device_code,
             "user_code": raw_user_code,
@@ -157,10 +160,15 @@ class PersistentDeviceService:
 
         grant.status = "consumed"
         grant.consumed_at = now
-        body = PersistentOAuthService(self._session).issue_access_token(
+        body = PersistentOAuthService(
+            self._session,
+            self._public_base_url,
+        ).issue_token_pair(
             actor_subject_id=grant.approved_actor_subject_id,
             scopes=tuple(grant.scopes),
             auth_kind="device",
+            client_id=grant.client_id,
+            resource=command.resource,
             issued_at=now,
         )
         self._session.flush()

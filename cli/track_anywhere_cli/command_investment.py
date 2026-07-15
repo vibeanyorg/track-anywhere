@@ -1,43 +1,15 @@
 from __future__ import annotations
 
 from argparse import Namespace
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import quote
 
 from .command_catalog import compact_payload
+from .command_definition import CommandDefinition, Requester, api_command
 from .config import CliConfig, command_idempotency_key
 
 
-Requester = Callable[
-    [CliConfig, str, str, dict[str, Any] | None, str | None],
-    tuple[int, Any],
-]
-CommandHandler = Callable[[Namespace, CliConfig, Requester], tuple[int, Any]]
-
-
-def handle_investment_command(
-    args: Namespace,
-    config: CliConfig,
-    requester: Requester,
-) -> tuple[int, Any] | None:
-    command_path = infer_investment_command_path(args)
-    if command_path is None:
-        return None
-    handler = INVESTMENT_COMMAND_HANDLERS.get(command_path)
-    if handler is None:
-        return None
-    return handler(args, config, requester)
-
-
-def infer_investment_command_path(args: Namespace) -> str | None:
-    if getattr(args, "command", None) != "investment":
-        return None
-    subcommand = getattr(args, "investment_command", None)
-    if subcommand in {"acquire", "dispose"}:
-        return f"investment.{subcommand}"
-    return None
-
-
+@api_command("investment.acquire", mutating=True, idempotent=True)
 def request_acquire_lot(
     args: Namespace,
     config: CliConfig,
@@ -66,6 +38,7 @@ def request_acquire_lot(
     )
 
 
+@api_command("investment.dispose", mutating=True, idempotent=True)
 def request_dispose_lot(
     args: Namespace,
     config: CliConfig,
@@ -118,7 +91,7 @@ def _path(value: object) -> str:
     return quote(str(value), safe="")
 
 
-INVESTMENT_COMMAND_HANDLERS: dict[str, CommandHandler] = {
-    "investment.acquire": request_acquire_lot,
-    "investment.dispose": request_dispose_lot,
-}
+INVESTMENT_COMMAND_DEFINITIONS: tuple[CommandDefinition, ...] = (
+    request_acquire_lot,
+    request_dispose_lot,
+)

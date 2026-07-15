@@ -45,10 +45,6 @@ class BackendApiClient(Protocol):
     def close(self) -> None: ...
 
 
-def bearer(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
-
-
 def parse_json_response(
     status_code: int,
     headers: dict[str, str],
@@ -81,6 +77,7 @@ class FastApiClient:
             engine=self._engine,
             expected_runtime_role=expected_runtime_role,
             cookie_secure=False,
+            public_base_url="https://ledger.example.com",
         )
         self._client = TestClient(self._application)
 

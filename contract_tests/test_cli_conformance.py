@@ -9,13 +9,13 @@ from track_anywhere_cli.config import CliConfig
 
 from .api_clients import BackendApiClient
 from .cli_clients import requester_for_backend
-from .helpers import issue_contract_token, unique
+from .helpers import unique
 
 
 def cli_config(client: BackendApiClient) -> CliConfig:
     return CliConfig(
-        base_url=f"contract://{client.name}",
-        token=issue_contract_token(client),
+        base_url=f"https://{client.name}.contract.test",
+        api_key=client.api_key,
     )
 
 
@@ -198,7 +198,10 @@ def test_cli_requester_auth_contract(
             name="Unauthenticated",
             base_asset_code=None,
         ),
-        CliConfig(base_url=f"contract://{backend_client.name}", token=None),
+        CliConfig(
+            base_url=f"https://{backend_client.name}.contract.test",
+            token=None,
+        ),
         requester_for_backend(backend_client),
     )
 

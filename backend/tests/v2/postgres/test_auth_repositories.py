@@ -108,10 +108,12 @@ def _seed_auth(pg_engine):
         connection.execute(
             text("""
             insert into oauth_authorization_grants (
-                code_hash, client_id, redirect_uri, actor_subject_id, scopes,
+                code_hash, client_id, redirect_uri, registered_redirect_uri,
+                actor_subject_id, scopes,
                 code_challenge, challenge_method, created_at, expires_at
             ) values (
                 :code_hash, 'client-1', 'https://client.example/callback',
+                'https://client.example/callback',
                 'human:test', '["ledger:write"]', :challenge, 'S256', :now, :expires
             )
             """),

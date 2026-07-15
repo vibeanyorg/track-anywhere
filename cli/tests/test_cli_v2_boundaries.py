@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
 
 from track_anywhere_cli.click_app import cli, run
-from track_anywhere_cli.commands import command_paths
+from track_anywhere_cli import commands as cli_commands
+from track_anywhere_cli.commands import command_paths, command_spec
 from track_anywhere_cli.config import CliConfig
 from track_anywhere_cli.http import request_json
 from track_anywhere_cli.protocol import command_schema
@@ -51,6 +53,49 @@ def test_capabilities_advertise_only_v2_implemented_commands(capsys):
     assert not any(path.startswith(("payment.", "recurring.")) for path in advertised)
     assert payload["data"]["api_version"] == "v2"
     assert payload["data"]["schema_version"] == "2026-07-15"
+
+
+def test_command_definitions_are_the_single_source_for_paths_and_policy():
+    assert hasattr(cli_commands, "command_definitions"), (
+        "CLI command paths and policy need one definition registry"
+    )
+    definitions = cli_commands.command_definitions()
+
+    assert sorted(definitions) == command_paths()
+    assert definitions["system.health"].requires_auth is False
+    assert definitions["account.list"].mutating is False
+    assert definitions["account.create"].mutating is True
+    assert definitions["account.create"].idempotent is False
+    assert definitions["tx.record"].mutating is True
+    assert definitions["tx.record"].idempotent is True
+    assert definitions["release.bump"].local is True
+
+    for command_path, definition in definitions.items():
+        if definition.local:
+            continue
+        assert command_spec(command_path).requires_auth is definition.requires_auth
+
+
+def test_command_path_inference_uses_the_definition_registry(monkeypatch):
+    existing_definition = cli_commands.API_COMMAND_HANDLERS["system.health"]
+    monkeypatch.setattr(
+        cli_commands,
+        "API_COMMAND_HANDLERS",
+        {"future.do_work": existing_definition},
+    )
+
+    assert (
+        cli_commands.infer_command_path(
+            Namespace(command="future", future_command="do-work")
+        )
+        == "future.do_work"
+    )
+    assert (
+        cli_commands.infer_command_path(
+            Namespace(command="future", future_command="not-registered")
+        )
+        is None
+    )
 
 
 def test_v2_schema_describes_exact_string_amount_transport():

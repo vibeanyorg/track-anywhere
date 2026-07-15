@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKeyConstraint,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -178,6 +179,13 @@ class CredentialRecord(V2Base):
             ondelete="RESTRICT",
             onupdate="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["oauth_client_id"],
+            ["oauth_clients.client_id"],
+            name="fk_credentials_oauth_client_id_oauth_clients",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
         UniqueConstraint("token_hash", name="uq_credentials_token_hash"),
         UniqueConstraint(
             "token_hash",
@@ -185,10 +193,12 @@ class CredentialRecord(V2Base):
             name="uq_credentials_token_actor",
         ),
         UniqueConstraint("jti", name="uq_credentials_jti"),
+        Index("ix_credentials_refresh_family_id", "refresh_family_id"),
         CheckConstraint("octet_length(token_hash) = 32", name="token_hash_length"),
         CheckConstraint("actor_type in ('human', 'machine')", name="actor_type_valid"),
         CheckConstraint(
-            "auth_kind in ('api_key', 'pkce', 'device', 'browser_session')",
+            "auth_kind in ('api_key', 'pkce', 'device', 'oauth_refresh', "
+            "'refresh_token', 'browser_session')",
             name="auth_kind_valid",
         ),
         CheckConstraint(_SCOPE_ARRAY_CHECK, name="scopes_array"),
@@ -206,6 +216,15 @@ class CredentialRecord(V2Base):
             "or (auth_kind = 'api_key' and book_id is not null)",
             name="machine_book_required",
         ),
+        CheckConstraint(
+            "(auth_kind in ('pkce', 'device', 'oauth_refresh', 'refresh_token') "
+            "and oauth_client_id is not null and resource is not null "
+            "and refresh_family_id is not null) or "
+            "(auth_kind not in ('pkce', 'device', 'oauth_refresh', 'refresh_token') "
+            "and oauth_client_id is null and resource is null "
+            "and refresh_family_id is null)",
+            name="oauth_binding_shape",
+        ),
     )
 
     credential_id: Mapped[UUID] = mapped_column(primary_key=True)
@@ -215,6 +234,9 @@ class CredentialRecord(V2Base):
     actor_type: Mapped[str] = mapped_column(String(16))
     auth_kind: Mapped[str] = mapped_column(String(32))
     book_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    oauth_client_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    resource: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_family_id: Mapped[UUID | None] = mapped_column(nullable=True)
     scopes: Mapped[list[str]] = mapped_column(JSONB)
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -285,7 +307,7 @@ class OAuthAuthorizationGrantRecord(V2Base):
     __tablename__ = "oauth_authorization_grants"
     __table_args__ = (
         ForeignKeyConstraint(
-            ["client_id", "redirect_uri"],
+            ["client_id", "registered_redirect_uri"],
             [
                 "oauth_client_redirect_uris.client_id",
                 "oauth_client_redirect_uris.redirect_uri",
@@ -323,6 +345,7 @@ class OAuthAuthorizationGrantRecord(V2Base):
     code_hash: Mapped[bytes] = mapped_column(LargeBinary, primary_key=True)
     client_id: Mapped[str] = mapped_column(String(256))
     redirect_uri: Mapped[str] = mapped_column(String(512))
+    registered_redirect_uri: Mapped[str] = mapped_column(String(512))
     actor_subject_id: Mapped[str] = mapped_column(String(128))
     scopes: Mapped[list[str]] = mapped_column(JSONB)
     code_challenge: Mapped[str] = mapped_column(String(128))

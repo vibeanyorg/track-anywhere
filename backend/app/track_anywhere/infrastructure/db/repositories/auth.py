@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -74,6 +74,9 @@ class CredentialSnapshot:
     actor_type: str
     auth_kind: str
     book_id: UUID | None
+    oauth_client_id: str | None
+    resource: str | None
+    refresh_family_id: UUID | None
     scopes: tuple[str, ...]
     issued_at: datetime
     expires_at: datetime
@@ -299,17 +302,25 @@ class AuthRepository(BookMembershipRepository):
     def mark_credential_used(
         self,
         token_hash: bytes,
-        used_at: datetime,
+        used_at: datetime | None = None,
     ) -> CredentialSnapshot:
         record = self._credential_record(token_hash, lock=RowLock.UPDATE)
+        # Capture the normal request timestamp only after acquiring the row
+        # lock. Otherwise two requests can observe t1 < t2 but acquire the lock
+        # in the opposite order and incorrectly turn the later request into a
+        # 401. Explicit timestamps remain supported for lifecycle tests.
+        effective_used_at = datetime.now(UTC) if used_at is None else used_at
         if (
             record.revoked_at is not None
-            or record.expires_at <= used_at
-            or used_at < record.issued_at
-            or (record.last_used_at is not None and used_at < record.last_used_at)
+            or record.expires_at <= effective_used_at
+            or effective_used_at < record.issued_at
+            or (
+                record.last_used_at is not None
+                and effective_used_at < record.last_used_at
+            )
         ):
             raise CredentialUnavailable("credential is revoked or expired")
-        record.last_used_at = used_at
+        record.last_used_at = effective_used_at
         self._session.flush()
         return self._credential_snapshot(record)
 
@@ -541,6 +552,9 @@ class AuthRepository(BookMembershipRepository):
             actor_type=record.actor_type,
             auth_kind=record.auth_kind,
             book_id=record.book_id,
+            oauth_client_id=record.oauth_client_id,
+            resource=record.resource,
+            refresh_family_id=record.refresh_family_id,
             scopes=tuple(record.scopes),
             issued_at=record.issued_at,
             expires_at=record.expires_at,

@@ -5,13 +5,7 @@ from typing import Any
 
 import click
 
-from .commands import (
-    IDEMPOTENCY_KEY_COMMAND_PATHS,
-    LOCAL_COMMAND_PATHS,
-    MUTATING_COMMAND_PATHS,
-    UNAUTHENTICATED_COMMAND_PATHS,
-    command_paths,
-)
+from .commands import command_definition, command_paths
 from .output import CLI_SCHEMA_VERSION
 
 
@@ -59,18 +53,16 @@ def schema_payload(
 def command_schema(root: click.Group, command_path: str) -> dict[str, Any]:
     tokens = command_tokens(command_path)
     command = click_command(root, tokens)
+    definition = command_definition(command_path)
     return {
         "command_path": command_path,
         "command": ["ta", *tokens],
         "description": command.help or command.short_help or "",
         "side_effects": side_effects(command_path),
-        "idempotent": command_path in IDEMPOTENCY_KEY_COMMAND_PATHS,
+        "idempotent": definition.idempotent,
         "supports_dry_run": _has_option(command, "--dry-run"),
         "supports_input_stdin": False,
-        "requires_auth": (
-            command_path not in LOCAL_COMMAND_PATHS
-            and command_path not in UNAUTHENTICATED_COMMAND_PATHS
-        ),
+        "requires_auth": definition.requires_auth,
         "arguments": [
             _argument_schema(param)
             for param in command.params
@@ -119,7 +111,7 @@ def supports_payload() -> dict[str, Any]:
 
 
 def side_effects(command_path: str) -> list[str]:
-    if command_path not in MUTATING_COMMAND_PATHS:
+    if not command_definition(command_path).mutating:
         return []
     return [f"mutates:{command_path}"]
 

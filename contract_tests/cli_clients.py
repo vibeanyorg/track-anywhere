@@ -16,7 +16,9 @@ def requester_for_backend(client: BackendApiClient):
         key: str | None = None,
     ) -> tuple[int, Any]:
         headers = {}
-        if config.token:
+        if config.api_key:
+            headers["X-API-Key"] = config.api_key
+        elif config.token:
             headers["Authorization"] = f"Bearer {config.token}"
         if key:
             headers["X-Idempotency-Key"] = key

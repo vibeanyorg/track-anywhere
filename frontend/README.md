@@ -7,7 +7,7 @@ Node.js 22 is the supported frontend runtime.
 Run the FastAPI backend first:
 
 ```bash
-uv run uvicorn track_anywhere.api:app --app-dir ../backend/app --host 127.0.0.1 --port 8000
+uv run uvicorn track_anywhere.server:app --app-dir ../backend/app --host 127.0.0.1 --port 8000
 ```
 
 Then run the frontend:

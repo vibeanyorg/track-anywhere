@@ -10,7 +10,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "test:proxy": "node --test tests/proxy-origin.test.mjs"
+    "test": "npm run test:proxy && npm run test:oauth",
+    "test:proxy": "node --test tests/proxy-origin.test.mjs tests/proxy-headers.test.mjs",
+    "test:oauth": "node --test tests/oauth-consent.test.mjs"
   },
   "dependencies": {
     "next": "^16.0.0",

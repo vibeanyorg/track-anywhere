@@ -27,7 +27,8 @@ Status meanings:
 | Classification assign/clear | Implemented | Reporting-line command routes |
 | Balances and reporting-line queries | Implemented | Book-scoped V2 query routes with an optional/required as-of position; balances expose current account status and natural liability semantics |
 | Investment lot acquire/dispose | Implemented | Book-scoped lot command routes |
-| API-key status and device/PKCE login | Implemented | V2 auth/OAuth routes only |
+| OAuth status, logout, refresh, device, and PKCE login | Implemented | OAuth discovery first; authorization-code + S256 PKCE is the interactive default and device flow is explicit |
+| Machine API key | Implemented | `--api-key-file` sends only `X-API-Key`; env use requires `--insecure-automation`; `--token` is OAuth-only |
 | Local version, schema, and capability output | Implemented | Local CLI metadata; no server fallback |
 | Payment instruments and payment profiles | Removed | No V2 route or CLI command group |
 | Recurring items, reminders, and draft generation | Removed | No V2 route or CLI command group |
@@ -45,10 +46,11 @@ silently maps an unsupported command to another operation.
 
 | Capability | Status | V2 boundary |
 | --- | --- | --- |
-| Same-origin API proxy | Implemented | `/api/v2/*` only, forwarded to the configured backend origin |
+| Same-origin protocol proxy | Implemented | `/api/v2/*`, `/.well-known/*`, and Streamable HTTP `/mcp` are forwarded to the configured backend origin |
 | API-key to browser-session exchange | Implemented | `POST /api/v2/auth/session/api-key` |
 | Session status and logout | Implemented | V2 session routes with CSRF/same-origin enforcement |
 | OAuth metadata, PKCE callback, and device approval | Implemented | V2 auth/OAuth routes only |
+| ChatGPT MCP connector | Implemented | OAuth-only, read-only tools, resource-bound `ledger:read`, no API-key fallback |
 | Ledger entry, query, classify, and reverse UI | Deferred | HTTP contract is implemented; product UI is not yet shipped |
 | Payment, recurring, backup, budget, and V1 draft UI | Removed | No V1 proxy or fallback exists |
 
