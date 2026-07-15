@@ -9,7 +9,6 @@ from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.tests.v2.fixtures.synchronous import JournalScenario, seed_journal_scenario
-from backend.tools.backfill_v1.verify import verify_target
 from track_anywhere.application.catalogs.close_account import (
     AccountBalanceProjectionMismatch,
     AccountBalanceNonzero,
@@ -94,6 +93,7 @@ from track_anywhere.infrastructure.projections.synchronous import (
     SynchronousProjectionError,
 )
 from track_anywhere.serialization.event_registry import PRODUCTION_EVENT_REGISTRY
+from track_anywhere.verification import verify_v2_ledger
 
 
 EFFECTIVE_AT = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
@@ -894,147 +894,6 @@ def _append_bypassed_reversal(engine, scenario, pending: PendingEvent) -> None:
         )
 
 
-def _append_legacy_generic_card_transaction(
-    engine,
-    scenario: JournalScenario,
-    *,
-    effective_at: datetime = EFFECTIVE_AT,
-) -> UUID:
-    transaction_id = uuid4()
-    command_id = uuid4()
-    pending = PendingEvent(
-        event_id=uuid4(),
-        stream_type="journal_transaction",
-        stream_id=transaction_id,
-        payload=JournalTransactionPosted(
-            transaction_id=transaction_id,
-            kind=TransactionKind.STANDARD,
-            postings=(
-                JournalPostingFact(
-                    posting_id=uuid4(),
-                    position=0,
-                    account_id=scenario.debit_account_id,
-                    asset_code="USD",
-                    side=PostingSide.DEBIT,
-                    units="1000",
-                ),
-                JournalPostingFact(
-                    posting_id=uuid4(),
-                    position=1,
-                    account_id=scenario.credit_account_id,
-                    asset_code="USD",
-                    side=PostingSide.CREDIT,
-                    units="1000",
-                ),
-            ),
-        ),
-        command_id=command_id,
-        actor_subject_id=scenario.actor_subject_id,
-        correlation_id=command_id,
-        causation_event_id=None,
-        effective_at=effective_at,
-    )
-    with Session(engine) as session, session.begin():
-        committer = LedgerCommitter()
-        locked = committer.execute_under_book_lock(session, scenario.book_id)
-        committer.append_and_project(
-            session,
-            locked_head=locked,
-            expected_stream_versions={(pending.stream_type, pending.stream_id): 0},
-            events=(pending,),
-        )
-    return transaction_id
-
-
-def test_legacy_generic_card_history_uses_card_reversal_and_correction_guards(
-    pg_engine,
-) -> None:
-    scenario, source_id = _seed_card_accounts(pg_engine)
-    legacy_transaction_id = _append_legacy_generic_card_transaction(
-        pg_engine,
-        scenario,
-    )
-    early_reversal = ReverseTransactionCommand(
-        book_id=scenario.book_id,
-        command_id=uuid4(),
-        reversal_transaction_id=uuid4(),
-        reverses_transaction_id=legacy_transaction_id,
-        expected_stream_version=0,
-        reason_code=ReversalReasonCode.USER_CORRECTION,
-        effective_at=EFFECTIVE_AT - timedelta(microseconds=1),
-    )
-    with pytest.raises(CreditCardReversalPrecedesOriginal):
-        execute_reverse_transaction(
-            early_reversal,
-            raw_key=f"legacy-card-reverse:{early_reversal.command_id}",
-            actor=_actor(scenario),
-            uow_factory=_uow_factory(pg_engine),
-        )
-
-    correction = CorrectTransactionCommand(
-        book_id=scenario.book_id,
-        command_id=uuid4(),
-        reverses_transaction_id=legacy_transaction_id,
-        reversal_transaction_id=uuid4(),
-        expected_reversal_stream_version=0,
-        reason_code=ReversalReasonCode.USER_CORRECTION,
-        reversal_effective_at=EFFECTIVE_AT + timedelta(minutes=1),
-        replacement=CorrectionReplacement(
-            transaction_id=uuid4(),
-            expected_stream_version=0,
-            kind=TransactionKind.STANDARD,
-            postings=(
-                PostTransactionPosting(
-                    posting_id=uuid4(),
-                    account_id=scenario.debit_account_id,
-                    asset_code="USD",
-                    side=PostingSide.DEBIT,
-                    amount="10.00",
-                ),
-                PostTransactionPosting(
-                    posting_id=uuid4(),
-                    account_id=source_id,
-                    asset_code="USD",
-                    side=PostingSide.CREDIT,
-                    amount="10.00",
-                ),
-            ),
-            effective_at=EFFECTIVE_AT + timedelta(minutes=2),
-        ),
-    )
-    with pytest.raises(CreditCardGeneralCorrectionForbidden):
-        _execute_correction(pg_engine, scenario, correction)
-
-    valid_reversal = replace(
-        early_reversal,
-        command_id=uuid4(),
-        reversal_transaction_id=uuid4(),
-        effective_at=EFFECTIVE_AT + timedelta(minutes=3),
-    )
-    execute_reverse_transaction(
-        valid_reversal,
-        raw_key=f"legacy-card-reverse:{valid_reversal.command_id}",
-        actor=_actor(scenario),
-        uow_factory=_uow_factory(pg_engine),
-    )
-    reversal_of_reversal = ReverseTransactionCommand(
-        book_id=scenario.book_id,
-        command_id=uuid4(),
-        reversal_transaction_id=uuid4(),
-        reverses_transaction_id=valid_reversal.reversal_transaction_id,
-        expected_stream_version=0,
-        reason_code=ReversalReasonCode.USER_CORRECTION,
-        effective_at=EFFECTIVE_AT + timedelta(minutes=4),
-    )
-    with pytest.raises(CreditCardReversalChainForbidden):
-        execute_reverse_transaction(
-            reversal_of_reversal,
-            raw_key=f"legacy-card-chain:{reversal_of_reversal.command_id}",
-            actor=_actor(scenario),
-            uow_factory=_uow_factory(pg_engine),
-        )
-
-
 def test_charge_payment_and_fee_write_typed_events_with_canonical_postings(
     pg_engine,
 ) -> None:
@@ -1121,7 +980,7 @@ def test_independent_verifier_accepts_typed_credit_card_projection(pg_engine) ->
     charge = _charge(scenario, "12.34")
     _execute(pg_engine, scenario, charge)
 
-    report = verify_target(pg_engine.url.render_as_string(hide_password=False))
+    report = verify_v2_ledger(pg_engine.url.render_as_string(hide_password=False))
 
     assert report.status == "PASS", report.issues
     assert report.counts["credit_card_transactions"] == 1

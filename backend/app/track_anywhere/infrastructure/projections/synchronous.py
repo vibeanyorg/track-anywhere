@@ -452,7 +452,6 @@ class SynchronousProjector:
                     line_kind=line.line_kind.value,
                     dimension=line.dimension.value,
                     dimension_id=line.dimension_id,
-                    counterparty_id=line.counterparty_id,
                     description_ref=line.description_ref,
                     source_event_id=stored.event_id,
                 )

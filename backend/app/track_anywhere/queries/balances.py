@@ -125,7 +125,7 @@ def get_book_balances(
         raise RuntimeError("balance projection references an unavailable account")
 
     items = tuple(
-        _balance_item(
+        build_balance_item(
             account_id=account_id,
             asset_code=asset_code,
             account_type=account_semantics[(account_id, asset_code)][0],
@@ -144,7 +144,7 @@ def get_book_balances(
     )
 
 
-def _balance_item(
+def build_balance_item(
     *,
     account_id: UUID,
     asset_code: str,
@@ -176,4 +176,9 @@ def _balance_item(
     )
 
 
-__all__ = ["BalanceItem", "BalanceSnapshot", "get_book_balances"]
+__all__ = [
+    "BalanceItem",
+    "BalanceSnapshot",
+    "build_balance_item",
+    "get_book_balances",
+]

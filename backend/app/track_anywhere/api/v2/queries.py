@@ -16,8 +16,25 @@ from ...infrastructure.db.repositories.auth import (
     AuthRecordNotFound,
     AuthRepository,
 )
-from ...queries.balances import BalanceSnapshot, get_book_balances
-from ...queries.journal import InvalidJournalCursor, JournalPage, list_journal
+from ...queries.balances import BalanceItem, BalanceSnapshot, get_book_balances
+from ...queries.catalogs import (
+    AccountSummary,
+    AssetSummary,
+    BookSummary,
+    CategorySummary,
+    get_account,
+    list_accessible_books,
+    list_accounts,
+    list_assets,
+    list_categories,
+)
+from ...queries.journal import (
+    InvalidJournalCursor,
+    JournalItem,
+    JournalPage,
+    get_journal_transaction,
+    list_journal,
+)
 from ...queries.reporting import ReportingLine, list_current_reporting_lines
 from ...serialization.canonical_json import format_utc_microseconds
 from ..dependencies import SessionDependency
@@ -93,6 +110,74 @@ class BalanceSnapshotResponse(BaseModel):
     projection_matches_reference: bool | None
 
 
+class BookResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    book_id: UUID
+    current_name: str
+    base_asset_code: str | None
+    write_state: str
+
+
+class BookListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[BookResponse, ...]
+
+
+class AssetResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    asset_code: str
+    kind: str
+    ledger_scale: int
+    input_scale: int
+    display_scale: int
+    current_name: str
+    status: str
+
+
+class AssetListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[AssetResponse, ...]
+
+
+class AccountResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    account_id: UUID
+    asset_code: str
+    account_type: str
+    account_subtype: str | None
+    system_role: str | None
+    current_name: str
+    status: str
+    balance: BalanceItemResponse
+
+
+class AccountListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[AccountResponse, ...]
+
+
+class CategoryResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    category_id: UUID
+    parent_category_id: UUID | None
+    current_version_id: UUID | None
+    current_name: str
+    status: str
+
+
+class CategoryListResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[CategoryResponse, ...]
+
+
 class ReportingLineResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -107,7 +192,6 @@ class ReportingLineResponse(BaseModel):
     line_kind: str
     dimension: str
     dimension_id: UUID | None
-    counterparty_id: UUID | None
 
 
 class ReportingLinesResponse(BaseModel):
@@ -164,6 +248,95 @@ def create_query_router(
         authorize_book_read(session, request, book_id)
         return session
 
+    @router.get("/books", response_model=BookListResponse)
+    def books(
+        request: Request,
+        session: Session = Depends(get_session),
+    ) -> BookListResponse:
+        identity = _request_identity(session, request)
+        if BOOK_READ_SCOPE not in identity.scopes:
+            raise _book_access_denied()
+        values = list_accessible_books(
+            session,
+            user_id=identity.user_id,
+            restricted_book_id=identity.book_id,
+        )
+        return BookListResponse(items=tuple(_serialize_book(item) for item in values))
+
+    @router.get("/books/{book_id}/assets", response_model=AssetListResponse)
+    def assets(
+        book_id: UUID,
+        session: Session = Depends(authorized_session),
+    ) -> AssetListResponse:
+        try:
+            values = list_assets(session, book_id)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="Book not found") from error
+        return AssetListResponse(items=tuple(_serialize_asset(item) for item in values))
+
+    @router.get("/books/{book_id}/accounts", response_model=AccountListResponse)
+    def accounts(
+        book_id: UUID,
+        account_type: str | None = Query(default=None, max_length=32),
+        account_subtype: str | None = Query(default=None, max_length=64),
+        status: str | None = Query(default=None, max_length=16),
+        asset_code: str | None = Query(default=None, max_length=16),
+        name: str | None = Query(default=None, max_length=128),
+        session: Session = Depends(authorized_session),
+    ) -> AccountListResponse:
+        try:
+            values = list_accounts(
+                session,
+                book_id,
+                account_type=account_type,
+                account_subtype=account_subtype,
+                status=status,
+                asset_code=asset_code,
+                name=name,
+            )
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="Book not found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return AccountListResponse(
+            items=tuple(_serialize_account(item) for item in values)
+        )
+
+    @router.get(
+        "/books/{book_id}/accounts/{account_id}",
+        response_model=AccountResponse,
+    )
+    def account(
+        book_id: UUID,
+        account_id: UUID,
+        session: Session = Depends(authorized_session),
+    ) -> AccountResponse:
+        return _read_account(session, book_id, account_id)
+
+    @router.get(
+        "/books/{book_id}/accounts/{account_id}/balance",
+        response_model=BalanceItemResponse,
+    )
+    def account_balance(
+        book_id: UUID,
+        account_id: UUID,
+        session: Session = Depends(authorized_session),
+    ) -> BalanceItemResponse:
+        return _read_account(session, book_id, account_id).balance
+
+    @router.get("/books/{book_id}/categories", response_model=CategoryListResponse)
+    def categories(
+        book_id: UUID,
+        session: Session = Depends(authorized_session),
+    ) -> CategoryListResponse:
+        try:
+            values = list_categories(session, book_id)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail="Book not found") from error
+        return CategoryListResponse(
+            items=tuple(_serialize_category(item) for item in values)
+        )
+
     @router.get(
         "/books/{book_id}/journal",
         response_model=JournalPageResponse,
@@ -193,6 +366,34 @@ def create_query_router(
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         return _serialize_journal_page(page)
+
+    @router.get(
+        "/books/{book_id}/journal/transactions/{transaction_id}",
+        response_model=JournalItemResponse,
+    )
+    def journal_transaction(
+        book_id: UUID,
+        transaction_id: UUID,
+        as_of_book_position: int | None = Query(default=None, ge=0),
+        session: Session = Depends(authorized_session),
+    ) -> JournalItemResponse:
+        try:
+            item = get_journal_transaction(
+                session,
+                book_id,
+                transaction_id,
+                as_of_book_position=as_of_book_position,
+            )
+        except LookupError as error:
+            detail = (
+                "Transaction not found"
+                if str(error) == "Transaction not found"
+                else "Book not found"
+            )
+            raise HTTPException(status_code=404, detail=detail) from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        return _serialize_journal_item(item)
 
     @router.get(
         "/books/{book_id}/balances",
@@ -299,47 +500,125 @@ def _book_access_denied() -> HTTPException:
     return HTTPException(status_code=403, detail="Book read access is denied")
 
 
+def _read_account(
+    session: Session,
+    book_id: UUID,
+    account_id: UUID,
+) -> AccountResponse:
+    try:
+        value = get_account(session, book_id, account_id)
+    except LookupError as error:
+        detail = (
+            "Account not found"
+            if str(error) == "Account not found"
+            else "Book not found"
+        )
+        raise HTTPException(status_code=404, detail=detail) from error
+    return _serialize_account(value)
+
+
+def _serialize_book(value: BookSummary) -> BookResponse:
+    return BookResponse(
+        book_id=value.book_id,
+        current_name=value.current_name,
+        base_asset_code=value.base_asset_code,
+        write_state=value.write_state,
+    )
+
+
+def _serialize_asset(value: AssetSummary) -> AssetResponse:
+    return AssetResponse(
+        asset_code=value.asset_code,
+        kind=value.kind,
+        ledger_scale=value.ledger_scale,
+        input_scale=value.input_scale,
+        display_scale=value.display_scale,
+        current_name=value.current_name,
+        status=value.status,
+    )
+
+
+def _serialize_account(value: AccountSummary) -> AccountResponse:
+    return AccountResponse(
+        account_id=value.account_id,
+        asset_code=value.asset_code,
+        account_type=value.account_type.value,
+        account_subtype=value.account_subtype,
+        system_role=value.system_role,
+        current_name=value.current_name,
+        status=value.status,
+        balance=_serialize_balance_item(value.balance),
+    )
+
+
+def _serialize_category(value: CategorySummary) -> CategoryResponse:
+    return CategoryResponse(
+        category_id=value.category_id,
+        parent_category_id=value.parent_category_id,
+        current_version_id=value.current_version_id,
+        current_name=value.current_name,
+        status=value.status,
+    )
+
+
+def _serialize_balance_item(item: BalanceItem) -> BalanceItemResponse:
+    return BalanceItemResponse(
+        account_id=item.account_id,
+        asset_code=item.asset_code,
+        account_type=item.account_type.value,
+        account_subtype=item.account_subtype,
+        account_status=item.account_status,
+        raw_accounting_units=str(item.raw_accounting_units),
+        natural_units=str(item.natural_units),
+        normal_side=item.normal_side.value,
+        balance_semantics=item.balance_semantics,
+        outstanding_units=(
+            None if item.outstanding_units is None else str(item.outstanding_units)
+        ),
+        overpayment_units=(
+            None if item.overpayment_units is None else str(item.overpayment_units)
+        ),
+    )
+
+
 def _serialize_journal_page(page: JournalPage) -> JournalPageResponse:
     return JournalPageResponse(
-        items=tuple(
-            JournalItemResponse(
-                transaction_id=item.transaction_id,
-                effective_at=format_utc_microseconds(item.effective_at),
-                book_position=item.book_position,
-                transaction_kind=item.transaction_kind,
-                postings=tuple(
-                    JournalPostingResponse(
-                        posting_id=posting.posting_id,
-                        position=posting.position,
-                        account_id=posting.account_id,
-                        asset_code=posting.asset_code,
-                        side=posting.side,
-                        units=str(posting.units),
-                    )
-                    for posting in item.postings
-                ),
-                is_reversed=item.reversed_by_transaction_id is not None,
-                reversed_by_transaction_id=item.reversed_by_transaction_id,
-                reverses_transaction_id=item.reverses_transaction_id,
-                credit_card_relation=(
-                    None
-                    if item.credit_card_relation is None
-                    else CreditCardRelationResponse(
-                        intent=item.credit_card_relation.intent,
-                        card_account_id=item.credit_card_relation.card_account_id,
-                        counter_account_id=(
-                            item.credit_card_relation.counter_account_id
-                        ),
-                        original_transaction_id=(
-                            item.credit_card_relation.original_transaction_id
-                        ),
-                    )
-                ),
-            )
-            for item in page.items
-        ),
+        items=tuple(_serialize_journal_item(item) for item in page.items),
         next_cursor=page.next_cursor,
         as_of_book_position=page.as_of_book_position,
+    )
+
+
+def _serialize_journal_item(item: JournalItem) -> JournalItemResponse:
+    return JournalItemResponse(
+        transaction_id=item.transaction_id,
+        effective_at=format_utc_microseconds(item.effective_at),
+        book_position=item.book_position,
+        transaction_kind=item.transaction_kind,
+        postings=tuple(
+            JournalPostingResponse(
+                posting_id=posting.posting_id,
+                position=posting.position,
+                account_id=posting.account_id,
+                asset_code=posting.asset_code,
+                side=posting.side,
+                units=str(posting.units),
+            )
+            for posting in item.postings
+        ),
+        is_reversed=item.reversed_by_transaction_id is not None,
+        reversed_by_transaction_id=item.reversed_by_transaction_id,
+        reverses_transaction_id=item.reverses_transaction_id,
+        credit_card_relation=(
+            None
+            if item.credit_card_relation is None
+            else CreditCardRelationResponse(
+                intent=item.credit_card_relation.intent,
+                card_account_id=item.credit_card_relation.card_account_id,
+                counter_account_id=item.credit_card_relation.counter_account_id,
+                original_transaction_id=item.credit_card_relation.original_transaction_id,
+            )
+        ),
     )
 
 
@@ -347,30 +626,7 @@ def _serialize_balance_snapshot(
     snapshot: BalanceSnapshot,
 ) -> BalanceSnapshotResponse:
     return BalanceSnapshotResponse(
-        items=tuple(
-            BalanceItemResponse(
-                account_id=item.account_id,
-                asset_code=item.asset_code,
-                account_type=item.account_type.value,
-                account_subtype=item.account_subtype,
-                account_status=item.account_status,
-                raw_accounting_units=str(item.raw_accounting_units),
-                natural_units=str(item.natural_units),
-                normal_side=item.normal_side.value,
-                balance_semantics=item.balance_semantics,
-                outstanding_units=(
-                    None
-                    if item.outstanding_units is None
-                    else str(item.outstanding_units)
-                ),
-                overpayment_units=(
-                    None
-                    if item.overpayment_units is None
-                    else str(item.overpayment_units)
-                ),
-            )
-            for item in snapshot.items
-        ),
+        items=tuple(_serialize_balance_item(item) for item in snapshot.items),
         as_of_book_position=snapshot.as_of_book_position,
         projection_matches_reference=snapshot.projection_matches_reference,
     )
@@ -394,7 +650,6 @@ def _serialize_reporting_lines(
                 line_kind=line.line_kind,
                 dimension=line.dimension,
                 dimension_id=line.dimension_id,
-                counterparty_id=line.counterparty_id,
             )
             for line in lines
         ),
@@ -406,10 +661,18 @@ __all__ = [
     "BOOK_READ_SCOPE",
     "BalanceItemResponse",
     "BalanceSnapshotResponse",
+    "AccountListResponse",
+    "AccountResponse",
+    "AssetListResponse",
+    "AssetResponse",
+    "BookListResponse",
+    "BookResponse",
     "BookReadAuthorizer",
     "JournalItemResponse",
     "JournalPageResponse",
     "JournalPostingResponse",
+    "CategoryListResponse",
+    "CategoryResponse",
     "ReportingLineResponse",
     "ReportingLinesResponse",
     "authorize_book_read",

@@ -211,7 +211,7 @@ Credit-card purchases, repayments, refunds, and fees all use positive amounts:
 The service generates the debit/credit legs. Never use a generic expense,
 transfer, raw posting, or balance-adjust command to imitate a card operation.
 To replace an incorrect card fact, exact-reverse it and record a new typed card
-transaction. A refund cannot point at an ambiguous historical generic event.
+transaction. A refund can point only at a typed V2 charge event.
 
 SafePal USD/USD24 profile automation and automatic backing settlement are not
 part of the V2 card ledger contract. Do not assume `1 USD = 1 USD24`, invent a
@@ -227,7 +227,7 @@ deadline/due date, minimum due, statement-item matching, or reconciliation
 surface.
 
 Treat all of these as deferred. Do not put them in the account name, emulate
-them with generic journal adjustments, or call legacy profile commands. They
+them with generic journal adjustments, or call removed profile commands. They
 require a separate read model/aggregate and an explicitly approved rollout.
 
 ## Investment Events

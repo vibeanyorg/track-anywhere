@@ -250,6 +250,197 @@ def test_balance_contract_names_raw_and_natural_liability_semantics(
     assert query_calls == [(SESSION, BOOK_ID, 19)]
 
 
+def test_catalog_read_contracts_include_zero_balances_and_current_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from track_anywhere.api.v2 import queries as query_api
+
+    zero_balance = BalanceItem(
+        account_id=ACCOUNT_ID,
+        asset_code="CNY",
+        account_type=AccountType.LIABILITY,
+        account_subtype="credit_card",
+        account_status="active",
+        raw_accounting_units=0,
+        natural_units=0,
+        normal_side=PostingSide.CREDIT,
+        balance_semantics="natural_liability_balance",
+        outstanding_units=0,
+        overpayment_units=0,
+    )
+    book = SimpleNamespace(
+        book_id=BOOK_ID,
+        current_name="Personal",
+        base_asset_code="CNY",
+        write_state="active",
+    )
+    asset = SimpleNamespace(
+        asset_code="CNY",
+        kind="fiat",
+        ledger_scale=2,
+        input_scale=2,
+        display_scale=2,
+        current_name="人民币",
+        status="active",
+    )
+    account = SimpleNamespace(
+        account_id=ACCOUNT_ID,
+        asset_code="CNY",
+        account_type=AccountType.LIABILITY,
+        account_subtype="credit_card",
+        system_role=None,
+        current_name="交通银行信用卡",
+        status="active",
+        balance=zero_balance,
+    )
+    category = SimpleNamespace(
+        category_id=DIMENSION_ID,
+        parent_category_id=None,
+        current_version_id=LINE_VERSION_ID,
+        current_name="餐饮",
+        status="active",
+    )
+    monkeypatch.setattr(
+        query_api,
+        "_request_identity",
+        lambda *_args: SimpleNamespace(
+            user_id="human:reader",
+            book_id=None,
+            scopes=("ledger:read",),
+        ),
+    )
+    monkeypatch.setattr(
+        query_api,
+        "list_accessible_books",
+        lambda *_args, **_kwargs: (book,),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        query_api,
+        "list_assets",
+        lambda *_args, **_kwargs: (asset,),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        query_api,
+        "list_accounts",
+        lambda *_args, **_kwargs: (account,),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        query_api,
+        "get_account",
+        lambda *_args, **_kwargs: account,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        query_api,
+        "list_categories",
+        lambda *_args, **_kwargs: (category,),
+        raising=False,
+    )
+    client = _client(lambda *_args: None)
+
+    books = client.get("/api/v2/books")
+    assets = client.get(f"/api/v2/books/{BOOK_ID}/assets")
+    accounts = client.get(
+        f"/api/v2/books/{BOOK_ID}/accounts",
+        params={
+            "account_type": "liability",
+            "account_subtype": "credit_card",
+            "status": "active",
+            "asset_code": "CNY",
+            "name": "交通",
+        },
+    )
+    shown = client.get(f"/api/v2/books/{BOOK_ID}/accounts/{ACCOUNT_ID}")
+    balance = client.get(
+        f"/api/v2/books/{BOOK_ID}/accounts/{ACCOUNT_ID}/balance"
+    )
+    categories = client.get(f"/api/v2/books/{BOOK_ID}/categories")
+
+    assert books.status_code == 200
+    assert books.json()["items"] == [
+        {
+            "book_id": str(BOOK_ID),
+            "current_name": "Personal",
+            "base_asset_code": "CNY",
+            "write_state": "active",
+        }
+    ]
+    assert assets.status_code == 200
+    assert assets.json()["items"][0]["current_name"] == "人民币"
+    assert accounts.status_code == 200
+    assert accounts.json()["items"] == [
+        {
+            "account_id": str(ACCOUNT_ID),
+            "asset_code": "CNY",
+            "account_type": "liability",
+            "account_subtype": "credit_card",
+            "system_role": None,
+            "current_name": "交通银行信用卡",
+            "status": "active",
+            "balance": {
+                "account_id": str(ACCOUNT_ID),
+                "asset_code": "CNY",
+                "account_type": "liability",
+                "account_subtype": "credit_card",
+                "account_status": "active",
+                "raw_accounting_units": "0",
+                "natural_units": "0",
+                "normal_side": "credit",
+                "balance_semantics": "natural_liability_balance",
+                "outstanding_units": "0",
+                "overpayment_units": "0",
+            },
+        }
+    ]
+    assert shown.json() == accounts.json()["items"][0]
+    assert balance.json() == accounts.json()["items"][0]["balance"]
+    assert categories.status_code == 200
+    assert categories.json()["items"][0]["current_name"] == "餐饮"
+
+
+def test_transaction_show_contract_returns_one_journal_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from track_anywhere.api.v2 import queries as query_api
+
+    item = JournalItem(
+        transaction_id=TRANSACTION_ID,
+        effective_at=datetime(2026, 7, 15, tzinfo=UTC),
+        book_position=12,
+        transaction_kind="standard",
+        postings=(),
+        reversed_by_transaction_id=None,
+        reverses_transaction_id=None,
+    )
+    monkeypatch.setattr(
+        query_api,
+        "get_journal_transaction",
+        lambda *_args, **_kwargs: item,
+        raising=False,
+    )
+
+    response = _client(lambda *_args: None).get(
+        f"/api/v2/books/{BOOK_ID}/journal/transactions/{TRANSACTION_ID}",
+        params={"as_of_book_position": 12},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "transaction_id": str(TRANSACTION_ID),
+        "effective_at": "2026-07-15T00:00:00.000000Z",
+        "book_position": 12,
+        "transaction_kind": "standard",
+        "postings": [],
+        "is_reversed": False,
+        "reversed_by_transaction_id": None,
+        "reverses_transaction_id": None,
+        "credit_card_relation": None,
+    }
+
+
 def test_reporting_contract_requires_as_of_and_stringifies_units(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -309,7 +500,6 @@ def test_reporting_contract_requires_as_of_and_stringifies_units(
                 "line_kind": "category",
                 "dimension": "category",
                 "dimension_id": str(DIMENSION_ID),
-                "counterparty_id": None,
             }
         ],
         "as_of_book_position": 37,

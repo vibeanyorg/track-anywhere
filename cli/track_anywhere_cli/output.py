@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 
-CLI_SCHEMA_VERSION = "2026-05-20"
+CLI_SCHEMA_VERSION = "2026-07-15"
 
 
 @dataclass(frozen=True)

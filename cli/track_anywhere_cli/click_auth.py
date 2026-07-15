@@ -5,7 +5,6 @@ from argparse import Namespace
 import click
 
 from .click_common import ClickState, output_options, pass_state
-from .command_payment import unsupported_capability
 from .config import CliConfig, TokenStore, resolve_token_with_diagnostics
 from .device_login import run_device_login
 from .exit_codes import EXIT_VALIDATION
@@ -98,17 +97,6 @@ def _register_auth_group(root: click.Group) -> None:
             device=device,
             callback_value=callback_value,
         )
-
-    @auth.command("dev-token")
-    @output_options
-    @pass_state
-    def auth_dev_token(state: ClickState, json_mode: bool, no_color: bool) -> int:
-        output_json = state.json_mode or json_mode
-        output_no_color = state.no_color or no_color
-        status, data = unsupported_capability("auth.dev_token")
-        outcome = build_outcome("auth.dev_token", status, data)
-        emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
-        return outcome.exit_code
 
     @auth.command("status")
     @output_options

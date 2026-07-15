@@ -84,10 +84,8 @@ jobs:
         run: uv run --extra postgres pytest backend/tests/v2/postgres -q
       - name: Multiprocess concurrency gate
         run: uv run --extra postgres pytest backend/tests/v2/concurrency -q
-      - name: Replay and synthetic backfill gate
-        # The real frozen dump contains local production-derived data and remains a
-        # local-only manual release gate; CI deliberately runs only synthetic data.
-        run: uv run --extra postgres pytest backend/tests/v2/replay backend/tests/v2/backfill -m 'not frozen_dump' -q
+      - name: Deterministic replay gate
+        run: uv run --extra postgres pytest backend/tests/v2/replay -q
       - name: API contract and CLI gate
         run: uv run --extra postgres pytest backend/tests/v2/contract cli/tests contract_tests -q
       - name: Clean migration and role separation gate

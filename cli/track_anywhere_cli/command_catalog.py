@@ -37,14 +37,26 @@ def handle_catalog_command(
 def infer_catalog_command_path(args: Namespace) -> str | None:
     command = getattr(args, "command", None)
     subcommand = getattr(args, f"{command}_command", None)
-    if command == "book" and subcommand in {"create", "balances", "reporting-lines"}:
+    if command == "book" and subcommand in {
+        "create",
+        "list",
+        "balances",
+        "reporting-lines",
+    }:
         return f"book.{subcommand.replace('-', '_')}"
-    if command == "asset" and subcommand == "create":
-        return "asset.create"
-    if command == "account" and subcommand in {"create", "close", "reopen"}:
+    if command == "asset" and subcommand in {"create", "list"}:
+        return f"asset.{subcommand}"
+    if command == "account" and subcommand in {
+        "create",
+        "list",
+        "show",
+        "balance",
+        "close",
+        "reopen",
+    }:
         return f"account.{subcommand}"
-    if command == "category" and subcommand == "create":
-        return "category.create"
+    if command == "category" and subcommand in {"create", "list"}:
+        return f"category.{subcommand}"
     return None
 
 
@@ -61,6 +73,14 @@ def request_create_book(
         }
     )
     return requester(config, "POST", "/api/v2/books", payload, None)
+
+
+def request_list_books(
+    _args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    return requester(config, "GET", "/api/v2/books", None, None)
 
 
 def request_create_asset(
@@ -81,6 +101,20 @@ def request_create_asset(
         "POST",
         f"/api/v2/books/{_path(args.book_id)}/assets",
         payload,
+        None,
+    )
+
+
+def request_list_assets(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    return requester(
+        config,
+        "GET",
+        f"/api/v2/books/{_path(args.book_id)}/assets",
+        None,
         None,
     )
 
@@ -111,6 +145,55 @@ def request_create_account(
         "POST",
         f"/api/v2/books/{_path(args.book_id)}/accounts",
         payload,
+        None,
+    )
+
+
+def request_list_accounts(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    path = with_query(
+        f"/api/v2/books/{_path(args.book_id)}/accounts",
+        {
+            "account_type": args.account_type,
+            "account_subtype": args.account_subtype,
+            "status": args.status,
+            "asset_code": args.asset_code,
+            "name": args.name,
+        },
+    )
+    return requester(config, "GET", path, None, None)
+
+
+def request_show_account(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    return requester(
+        config,
+        "GET",
+        f"/api/v2/books/{_path(args.book_id)}/accounts/{_path(args.account_id)}",
+        None,
+        None,
+    )
+
+
+def request_account_balance(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    return requester(
+        config,
+        "GET",
+        (
+            f"/api/v2/books/{_path(args.book_id)}/accounts/"
+            f"{_path(args.account_id)}/balance"
+        ),
+        None,
         None,
     )
 
@@ -172,6 +255,20 @@ def request_create_category(
     )
 
 
+def request_list_categories(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    return requester(
+        config,
+        "GET",
+        f"/api/v2/books/{_path(args.book_id)}/categories",
+        None,
+        None,
+    )
+
+
 def request_book_balances(
     args: Namespace,
     config: CliConfig,
@@ -214,11 +311,17 @@ def _invalid_input(error: ValueError) -> tuple[int, dict[str, Any]]:
 
 CATALOG_COMMAND_HANDLERS: dict[str, CommandHandler] = {
     "book.create": request_create_book,
+    "book.list": request_list_books,
     "asset.create": request_create_asset,
+    "asset.list": request_list_assets,
     "account.create": request_create_account,
+    "account.list": request_list_accounts,
+    "account.show": request_show_account,
+    "account.balance": request_account_balance,
     "account.close": request_close_account,
     "account.reopen": request_reopen_account,
     "category.create": request_create_category,
+    "category.list": request_list_categories,
     "book.balances": request_book_balances,
     "book.reporting_lines": request_book_reporting_lines,
 }

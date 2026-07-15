@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -139,6 +140,40 @@ def test_journal_cursor_is_stable_and_honors_as_of_position(pg_engine) -> None:
     assert [item.transaction_id for item in historical.items] == [early_id, late_id]
     assert historical.as_of_book_position == early_position
     assert late_position == 1 and middle_position == 3
+
+
+def test_transaction_query_returns_exact_item_and_honors_as_of(pg_engine) -> None:
+    try:
+        from track_anywhere.queries.journal import get_journal_transaction
+    except ImportError as error:
+        pytest.fail(f"transaction query is missing: {error}")
+
+    scenario = _seed(pg_engine)
+    transaction_id, position = _post(
+        pg_engine,
+        scenario,
+        when=BASE_TIME,
+        amount="12.34",
+    )
+
+    with Session(pg_engine) as session:
+        item = get_journal_transaction(
+            session,
+            scenario.book_id,
+            transaction_id,
+            as_of_book_position=position,
+        )
+        with pytest.raises(LookupError, match="Transaction not found"):
+            get_journal_transaction(
+                session,
+                scenario.book_id,
+                transaction_id,
+                as_of_book_position=position - 1,
+            )
+
+    assert item.transaction_id == transaction_id
+    assert item.book_position == position
+    assert [posting.units for posting in item.postings] == [1234, 1234]
 
 
 def test_balance_query_matches_posting_reference_and_survives_account_close(

@@ -665,9 +665,9 @@ run_with_timeout "$COMPOSE_TIMEOUT" \
 import json
 import os
 
-from backend.tools.backfill_v1.verify import verify_target
+from track_anywhere.verification import verify_v2_ledger
 
-report = verify_target(os.environ["TRACK_ANYWHERE_DATABASE_URL"])
+report = verify_v2_ledger(os.environ["TRACK_ANYWHERE_DATABASE_URL"])
 print(json.dumps(report.to_dict(), sort_keys=True))
 if report.status != "PASS":
     raise SystemExit("independent replay/hash verification failed")

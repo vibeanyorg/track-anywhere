@@ -28,7 +28,6 @@ def test_ci_requires_every_v2_gate_before_both_image_channels() -> None:
     assert "backend/tests/v2/postgres" in source
     assert "backend/tests/v2/concurrency" in source
     assert "backend/tests/v2/replay" in source
-    assert "backend/tests/v2/backfill" in source
     assert "backend/tests/v2/contract cli/tests contract_tests" in source
     assert "--emit-role migrator" in source
     assert "role-name --kind runtime" in source
@@ -37,8 +36,8 @@ def test_ci_requires_every_v2_gate_before_both_image_channels() -> None:
     assert "npm --prefix frontend ci" in source
     assert "npm --prefix frontend run lint" in source
     assert "npm --prefix frontend run build" in source
-    assert "not frozen_dump" in source
-    assert "local-only manual release gate" in source
+    assert "backend/tests/v2/backfill" not in source
+    assert "frozen_dump" not in source
     assert source.index("actions/setup-node@v4") < source.index(
         "npm --prefix frontend ci"
     )

@@ -38,6 +38,7 @@ def infer_ledger_command_path(args: Namespace) -> str | None:
     if subcommand in {
         "record",
         "list",
+        "show",
         "reverse",
         "correct",
         "correct-reference",
@@ -94,6 +95,21 @@ def request_list_transactions(
             "cursor": args.cursor,
             "as_of_book_position": args.as_of_book_position,
         },
+    )
+    return requester(config, "GET", path, None, None)
+
+
+def request_show_transaction(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    path = with_query(
+        (
+            f"/api/v2/books/{_path(args.book_id)}/journal/transactions/"
+            f"{_path(args.transaction_id)}"
+        ),
+        {"as_of_book_position": args.as_of_book_position},
     )
     return requester(config, "GET", path, None, None)
 
@@ -345,6 +361,7 @@ def _path(value: object) -> str:
 LEDGER_COMMAND_HANDLERS: dict[str, CommandHandler] = {
     "tx.record": request_record_transaction,
     "tx.list": request_list_transactions,
+    "tx.show": request_show_transaction,
     "tx.reverse": request_reverse_transaction,
     "tx.correct": request_correct_transaction,
     "tx.correct_reference": request_correct_external_reference,

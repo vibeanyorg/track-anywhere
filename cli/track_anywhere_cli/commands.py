@@ -13,8 +13,6 @@ from .command_investment import (
     infer_investment_command_path,
 )
 from .command_ledger import LEDGER_COMMAND_HANDLERS, infer_ledger_command_path
-from .command_payment import PAYMENT_COMMAND_HANDLERS
-from .command_recurring import RECURRING_COMMAND_HANDLERS
 from .command_system import SYSTEM_COMMAND_HANDLERS, infer_system_command_path
 from .config import CliConfig
 from .output import CommandResult
@@ -25,14 +23,19 @@ DispatcherResult = tuple[int, Any]
 ApiCommandHandler = Callable[[Namespace, CliConfig, Requester], DispatcherResult]
 
 PUBLIC_COMMAND_PATHS = (
+    "account.balance",
     "account.close",
     "account.create",
+    "account.list",
     "account.reopen",
+    "account.show",
     "asset.create",
+    "asset.list",
     "auth.login",
     "auth.status",
     "book.balances",
     "book.create",
+    "book.list",
     "book.reporting_lines",
     "card.charge",
     "card.fee",
@@ -40,6 +43,7 @@ PUBLIC_COMMAND_PATHS = (
     "card.refund",
     "capabilities",
     "category.create",
+    "category.list",
     "investment.acquire",
     "investment.dispose",
     "release.bump",
@@ -54,6 +58,7 @@ PUBLIC_COMMAND_PATHS = (
     "tx.list",
     "tx.record",
     "tx.reverse",
+    "tx.show",
     "version",
 )
 
@@ -121,8 +126,6 @@ API_COMMAND_HANDLERS: dict[str, ApiCommandHandler] = {
     **CREDIT_CARD_COMMAND_HANDLERS,
     **INVESTMENT_COMMAND_HANDLERS,
     **LEDGER_COMMAND_HANDLERS,
-    **PAYMENT_COMMAND_HANDLERS,
-    **RECURRING_COMMAND_HANDLERS,
 }
 
 missing_api_handlers = sorted(set(API_COMMAND_PATHS) - set(API_COMMAND_HANDLERS))

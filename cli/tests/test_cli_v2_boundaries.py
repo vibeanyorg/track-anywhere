@@ -17,29 +17,28 @@ def _never_request(*_args, **_kwargs):
 
 
 @pytest.mark.parametrize(
-    "argv, command_path",
+    "argv",
     [
-        (
-            ["--token", "token", "payment", "profile", "list", "--json"],
-            "payment.profile.list",
-        ),
-        (
-            ["--token", "token", "recurring", "list", "--json"],
-            "recurring.list",
-        ),
-        (["data", "backup", "--json"], "data.backup"),
-        (["auth", "dev-token", "--json"], "auth.dev_token"),
+        ["--token", "token", "payment", "profile", "list", "--json"],
+        ["--token", "token", "recurring", "list", "--json"],
+        ["data", "backup", "--json"],
+        ["auth", "dev-token", "--json"],
     ],
 )
-def test_deferred_capabilities_fail_fast_locally(
-    argv,
-    command_path,
-    capsys,
-):
+def test_removed_commands_are_absent_and_fail_before_network(argv, capsys):
     assert run(argv, requester=_never_request) != 0
     payload = json.loads(capsys.readouterr().err)
-    assert payload["command"] == command_path
-    assert "did not" in payload["data"]["detail"]
+    assert payload["command"] == "cli.parse"
+    assert payload["data"]["error"]["code"] == "unknown_command"
+
+
+def test_root_help_exposes_only_current_v2_groups(capsys):
+    assert run(["--help"], requester=_never_request) == 0
+    help_text = capsys.readouterr().out
+
+    assert "\n  payment " not in help_text
+    assert "\n  recurring " not in help_text
+    assert "\n  data " not in help_text
 
 
 def test_capabilities_advertise_only_v2_implemented_commands(capsys):
@@ -51,6 +50,7 @@ def test_capabilities_advertise_only_v2_implemented_commands(capsys):
     assert all(command["registered"] for command in payload["data"]["commands"])
     assert not any(path.startswith(("payment.", "recurring.")) for path in advertised)
     assert payload["data"]["api_version"] == "v2"
+    assert payload["data"]["schema_version"] == "2026-07-15"
 
 
 def test_v2_schema_describes_exact_string_amount_transport():

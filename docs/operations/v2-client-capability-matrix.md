@@ -15,11 +15,11 @@ Status meanings:
 | Capability | Status | V2 boundary |
 | --- | --- | --- |
 | System health and readiness | Implemented | `GET /api/v2/health`, `GET /api/v2/ready` |
-| Book creation | Implemented | `POST /api/v2/books` |
-| Asset creation | Implemented | `POST /api/v2/books/{book_id}/assets` |
-| Account creation, close, and reopen | Implemented | Book-scoped account lifecycle routes; credit cards must be exactly zero before close |
-| Category creation | Implemented | `POST /api/v2/books/{book_id}/categories` |
-| Journal post and list | Implemented | Book-scoped journal command/query routes |
+| Book creation and listing | Implemented | `POST/GET /api/v2/books`; listing is restricted to readable Books |
+| Asset creation and listing | Implemented | `POST/GET /api/v2/books/{book_id}/assets` |
+| Account creation, listing, detail, balance, close, and reopen | Implemented | Book-scoped account routes; list/detail include zero-balance accounts and credit cards must be exactly zero before close |
+| Category creation and listing | Implemented | `POST/GET /api/v2/books/{book_id}/categories` |
+| Journal post, list, and transaction detail | Implemented | Book-scoped journal command/query routes with optional as-of positions |
 | Credit-card charge, payment, refund, and fee | Implemented | Book-scoped semantic card routes; positive amounts only and no caller-selected posting sides |
 | Reverse and correct | Implemented | Explicit reversal/correction command routes |
 | External-reference correction | Implemented | Explicit journal reference correction route |
@@ -29,11 +29,11 @@ Status meanings:
 | Investment lot acquire/dispose | Implemented | Book-scoped lot command routes |
 | API-key status and device/PKCE login | Implemented | V2 auth/OAuth routes only |
 | Local version, schema, and capability output | Implemented | Local CLI metadata; no server fallback |
-| Payment instruments and payment profiles | Removed | No V2 route; command fails before HTTP |
-| Recurring items, reminders, and draft generation | Removed | No V2 route; command fails before HTTP |
-| SQLite/data backup command | Removed | V2 backup is not a client-side SQLite copy |
+| Payment instruments and payment profiles | Removed | No V2 route or CLI command group |
+| Recurring items, reminders, and draft generation | Removed | No V2 route or CLI command group |
+| SQLite/data backup command | Removed | No CLI command group; V2 backup is not a client-side SQLite copy |
 | V1 draft capture/confirm/reject/supersede | Removed | Replaced by explicit V2 journal commands |
-| Budgets, reconciliation, attachments, backoffice, and broad catalog listing | Deferred | Add only with a reviewed V2 contract |
+| Budgets, reconciliation, attachments, backoffice, and broad search | Deferred | Add only with a reviewed V2 contract |
 | Valuation/performance reports outside lot commands | Deferred | No V2 route yet |
 
 Financial CLI commands preserve caller-provided decimal strings byte-for-byte

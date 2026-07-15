@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "track-anywhere"
 version = "0.1.1"
-description = "Personal accounting system with a strict ledger core and draft-first capture."
+description = "Personal accounting system with a strict PostgreSQL event-ledger core."
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "alembic>=1.13",
@@ -46,6 +46,3 @@ include = ["track_anywhere*", "track_anywhere_cli*"]
 pythonpath = ["backend/app", "cli"]
 testpaths = ["backend/tests", "cli/tests", "contract_tests"]
 addopts = "-q"
-markers = [
-  "frozen_dump: local-only contract for the fixed V1 dump and an already restored read-only source",
-]

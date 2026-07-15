@@ -7,7 +7,7 @@ import sqlalchemy as sa
 
 
 revision = "v2_0009_account_semantics"
-down_revision = "v2_0008_backfill_control"
+down_revision = "v2_0007_monthly_summary"
 branch_labels = None
 depends_on = None
 

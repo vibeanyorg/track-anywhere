@@ -16,10 +16,18 @@
       "get"
     ],
     "/api/v2/books": [
+      "get",
       "post"
     ],
     "/api/v2/books/{book_id}/accounts": [
+      "get",
       "post"
+    ],
+    "/api/v2/books/{book_id}/accounts/{account_id}": [
+      "get"
+    ],
+    "/api/v2/books/{book_id}/accounts/{account_id}/balance": [
+      "get"
     ],
     "/api/v2/books/{book_id}/accounts/{account_id}/close": [
       "post"
@@ -28,12 +36,14 @@
       "post"
     ],
     "/api/v2/books/{book_id}/assets": [
+      "get",
       "post"
     ],
     "/api/v2/books/{book_id}/balances": [
       "get"
     ],
     "/api/v2/books/{book_id}/categories": [
+      "get",
       "post"
     ],
     "/api/v2/books/{book_id}/credit-cards/charges": [
@@ -62,6 +72,9 @@
     ],
     "/api/v2/books/{book_id}/journal/transactions": [
       "post"
+    ],
+    "/api/v2/books/{book_id}/journal/transactions/{transaction_id}": [
+      "get"
     ],
     "/api/v2/books/{book_id}/journal/transactions/{transaction_id}/correct": [
       "post"
@@ -125,18 +138,6 @@
           "title": "Classification Revision",
           "type": "integer"
         },
-        "counterparty_id": {
-          "anyOf": [
-            {
-              "format": "uuid",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Counterparty Id"
-        },
         "dimension": {
           "title": "Dimension",
           "type": "string"
@@ -192,8 +193,7 @@
         "units",
         "line_kind",
         "dimension",
-        "dimension_id",
-        "counterparty_id"
+        "dimension_id"
       ],
       "title": "ReportingLineResponse",
       "type": "object"

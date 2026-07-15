@@ -120,7 +120,7 @@ tests.
 - Use FastAPI `TestClient` for HTTP-level tests unless the app is intentionally
   moved to a fully async test stack.
 - PostgreSQL 17 is mandatory for every database-bearing persistence, migration,
-  repository, concurrency, replay, and backfill test. Pure unit tests must not
+  repository, concurrency, and replay test. Pure unit tests must not
   silently install a database fallback.
 - Test security-sensitive behavior directly: auth failures, CSRF/origin checks,
   idempotency conflicts, stale versions, and sensitive-data redaction.
@@ -135,8 +135,7 @@ tests.
 ## Migration Rules
 
 - V2 Alembic migrations start from a clean PostgreSQL 17 schema. Do not add an
-  in-place V1-to-V2 compatibility path; V1 data moves through the separately
-  verified backfill workflow.
+  in-place V1-to-V2 compatibility path or an implicit historical import path.
 - Alembic migrations must be deterministic, reviewable, and reversible when the
   database operation allows it.
 - Do not modify an existing migration that may already have been applied unless

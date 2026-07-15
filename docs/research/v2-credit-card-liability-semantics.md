@@ -2,7 +2,7 @@
 
 > Research Date: 2026-07-15
 > Related Code: `backend/app/track_anywhere/domain/journal`, `backend/app/track_anywhere/queries/balances.py`, `backend/app/track_anywhere/api/v2`, `cli/track_anywhere_cli`
-> Status: Implemented and verified locally — Option A (2026-07-15); fixed-backup deterministic rehearsal PASS, while exact-image staging and production cutover remain separate release gates
+> Status: Implemented and verified locally — Option A (2026-07-15); exact-image staging and production cutover remain separate release gates
 
 ## Background
 
@@ -16,8 +16,6 @@ V2 已经使用显式 debit/credit 和正整数 units，复式记账内核本身
 - V1 的卡片 profile、余额语义和信用卡服务已在 V2 清理中删除，V2 没有替代入口。
 
 这意味着实施前的 V2 即使保持分录平衡，agent 或客户端仍可能把消费、还款、退款的方向写反；即使写对，余额输出也会把“欠款增加”显示为更大的负数。Option A 已通过严格账户语义、semantic card commands 和 natural balance 输出关闭这些缺口。
-
-固定备份快照也说明这不是理论问题：其中有 5 个 liability 卡账户、23 条相关 posting，18 条仍带 legacy signed 语义。新内核必须先锁定信用卡语义，再做确定性 backfill 和人工审计，不能让迁移脚本猜经济含义。
 
 ## Method
 
@@ -117,7 +115,7 @@ hledger 证明信用卡不需要污染 journal kernel：严格平衡、账户正
 | 手续费/利息是独立费用 | 4/4 | Dr Fee/Interest Expense / Cr Card Liability |
 | raw 算术与用户余额语义分层 | GnuCash、hledger 显式；Actual、Firefly只保留 raw negative | API 同时命名 raw 与 natural，不能暴露无语义 `units` |
 | 卡号、额度、账单日、到期日不属于 journal kernel | 4/4 | profile/statement 是独立 read model/aggregate |
-| provider 符号需要边界归一化 | Actual 明确，其他工具由 importer/parser 处理 | 新导入先归一化为可证明的 liability intent；含糊历史 backfill 保留原始 posting，不猜 typed intent |
+| provider 符号需要边界归一化 | Actual 明确，其他工具由 importer/parser 处理 | 未来导入必须先定义可证明的 liability intent 和独立契约，不能直接进入 journal |
 
 ## Pre-implementation V2 Failure Modes
 
@@ -172,7 +170,7 @@ canonical positive-unit debit/credit postings
 具体边界：
 
 1. 增加严格 `AccountType`：`asset | liability | equity | income | expense | fund | system`，应用层和新 Alembic migration 都 fail closed。
-2. 增加独立 `account_subtype` slug；card 命令要求 `account_type=liability` 且 `account_subtype=credit_card`。`legacy_credit_card` 只在 backfill adapter 中归一化，不进入新写入契约。
+2. 增加独立 `account_subtype` slug；card 命令要求 `account_type=liability` 且 `account_subtype=credit_card`。
 3. journal projection 继续保存 raw `debit-credit` 以保持确定性；查询改为显式返回 `raw_accounting_units`、`natural_units`、`normal_side` 和 `balance_semantics`。
 4. liability 额外返回 `outstanding_units=max(natural_units, 0)` 与 `overpayment_units=max(-natural_units, 0)`；不再保留含糊的裸 `units`。
 5. 增加 API/CLI 语义命令，所有 amount 必须为正：
@@ -181,11 +179,11 @@ canonical positive-unit debit/credit postings
    - refund：Dr Card Liability / Cr original Expense；
    - fee/interest：Dr Fee Expense / Cr Card Liability。
 6. 整单撤销复用现有 reversal；部分退款必须关联原 charge、累计不可超过可退金额，并生成新 journal，禁止改写历史分录。
-7. 将业务 intent 持久化为 typed transaction kind/relation，保证 replay、审计和 backfill 不依赖 endpoint 名或 description 猜测。
+7. 将业务 intent 持久化为 typed transaction kind/relation，保证 replay 和审计不依赖 endpoint 名或 description 猜测。
 8. card profile、credit limit、statement close/due date、minimum payment、reconciliation 单独设计，不进入本轮 journal kernel。
 
-**Benefits:** 方向安全、agent API 简单、余额语义明确、兼容不可变审计和确定性 backfill。
-**Delivered:** catalog、migration、event schema、query、API、CLI、typed projection/reversal guards、replay 和 backfill verifier 已形成同一套可执行契约。Owner-sealed historical generic-event admission 与 typed card 的 DB-level active-account guard 仍是明确的 production-cutover blockers。
+**Benefits:** 方向安全、agent API 简单、余额语义明确、兼容不可变审计和确定性 replay。
+**Delivered:** catalog、migration、event schema、query、API、CLI、typed projection/reversal guards、replay 和独立 V2 verifier 已形成同一套可执行契约。
 **Implementation Complexity:** Medium-High。
 
 ### Option B: Natural Balance Patch Only
@@ -212,7 +210,7 @@ canonical positive-unit debit/credit postings
 | 自然负债余额 | 完整 | 完整 | 完整 |
 | 退款审计链 | 完整 | 无 | 完整 |
 | 账单日/最低还款 | 延后、边界清晰 | 无 | 本轮实现 |
-| backfill 可验证性 | 强 | 中 | 强但范围大 |
+| 导入边界安全性 | 强：当前无隐式导入 | 弱 | 强但范围大 |
 | 实现风险 | 中 | 低但遗留高风险 | 高 |
 
 ## Decision and Outcome
@@ -226,34 +224,19 @@ canonical positive-unit debit/credit postings
 3. 它保留 Track Anywhere 已有的不可变事件、reversal、idempotency 和 replay 优势。
 4. 它把 statement/profile 留在独立边界，之后可以增量实现，不会污染或阻塞财务真相层。
 
-## Historical cutover contract
+## Current source boundary
 
-固定 V1 快照中的信用卡相关交易并不都能安全恢复为 typed intent：其中同时存在
-普通消费、还款、余额快照/系统调整、方向修正、冲销以及多资产多腿交易。仅凭账户方向
-无法区分 charge、fee、snapshot 和 correction，也无法为部分退款证明唯一的原消费关系。
-因此 backfill 采用以下 fail-closed 边界：
+当前 HEAD 只接受原生 V2 事实：
 
-1. `legacy_credit_card` 账户确定性归一化为 `liability + credit_card`；
-2. 历史 transaction/reversal 原样转为通用不可变 Journal event，保持 posting、时间、
-   raw balance 和冲销关系，不根据 memo 或 description 猜 typed intent；
-3. cutover 后的新交易必须使用 typed card commands；这些交易才进入
-   `credit_card_transactions` 并参与退款额度约束；
-4. typed refund 只接受 cutover 后的 typed charge。引用历史 generic transaction 会明确
-   拒绝，而不会悄悄降级。历史交易需要整单取消时，只能对原事件做 exact reversal；
-   替代经济事实必须用对应的 typed card command 重新录入。若替代事实无法由现有 typed
-   command 表达，或必须绑定历史 generic transaction，则必须先批准并执行一套可证明、
-   可重复的 deterministic migration，不能使用 generic card adjustment；
-5. [cutover regression test](../../backend/tests/v2/backfill/test_source_target_semantics.py)
-   同时证明历史保持 generic、新账户 subtype 正确、历史 typed refund fail closed，以及
-   同一回填账户上的新 charge/refund 正常工作。
-
-这个边界不是 V1 compatibility layer，而是“不从含糊历史猜经济意图”的数据完整性约束。
+1. 信用卡账户必须显式创建为 `liability + credit_card`；
+2. 通用 journal 命令拒绝任何信用卡账户，消费、还款、退款和费用只能走 typed card commands；
+3. 当前没有 V1 导入、兼容 adapter 或含糊历史 generic-event admission；
+4. 未来如果增加数据导入，必须先定义独立、可重复、fail-closed 的 V2 contract 和验证证据。
 
 ## Implementation and Verification Checklist
 
-实现、固定备份重放、逐账户审计和全套本地验证已完成。Exact-image staging 与下面列出的
-DB trust-boundary hardening 仍是 release/cutover gates；它们不影响本地 Option A 验证，
-但会阻止发布或切换。
+实现和全套本地验证已完成。Exact-image staging 仍是 release/cutover gate；它不影响本地
+Option A 验证，但会阻止发布或切换。
 
 ### Phase 1: Contract and balance semantics
 
@@ -269,21 +252,15 @@ DB trust-boundary hardening 仍是 release/cutover gates；它们不影响本地
 - [x] 持久化 typed intent；
 - [x] 确保 payment 不生成 expense reporting line。
 
-### Phase 3: Refund/reversal and migration proof
+### Phase 3: Refund/reversal and replay proof
 
 - [x] 测试 full reversal、partial refund、multiple refunds、over-refund rejection；
 - [x] 增加 typed original/refund relation 和投影；
-- [x] 修复 backfill rehearsal blockers，并在临时 PG17 上重放固定备份；
-- [x] 对 5 个 card accounts 做逐账户 raw/natural balance、posting parity 和 reversal audit；
-- [x] 跑 V2 backend、contract、CLI、replay、backfill 全套验证。
+- [x] 对 typed card event 做 projection、cold replay、hash chain 和 reversal audit；
+- [x] 跑 V2 backend、contract、CLI、replay 全套验证。
 
 ### Production-cutover hardening
 
-- [ ] 数据库拒绝任何未由 owner/migrator 预先封存精确 event ID + payload hash 的
-  generic credit-card posting；runtime 写入的 review artifact 只能作为确定性证据，不能
-  作为数据库授权；
-- [ ] typed card DB guard 对 card 与 counter account 都强制 `status=active`，覆盖直接
-  runtime/committer 绕过 application validator 的路径；
 - [ ] 从 clean committed source 完成 exact-image isolated staging，并生成独立验收证据。
 
 ### Deferred: statement product layer
@@ -299,5 +276,5 @@ DB trust-boundary hardening 仍是 release/cutover gates；它们不影响本地
 - `firefly-iii/firefly-iii@a0d70228bc1401a80e88e273461ec6af2d739374`
 - `Gnucash/gnucash@453a4fe8868d10414bcdbdca28054fbc432debf1`
 - `simonmichael/hledger@73d17f9552d4827dda2447641ed46d416eff06b4`
-- `docs/adr/0002-debit-credit-posting-model.md`
-- `docs/architecture/ledger-domain-optimization.md`
+- `backend/app/track_anywhere/domain/journal`
+- `backend/app/track_anywhere/application/credit_cards/record.py`

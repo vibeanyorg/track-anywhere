@@ -340,7 +340,6 @@ class ReportingLineRecord(V2Base):
     line_kind: Mapped[str] = mapped_column(String(32))
     dimension: Mapped[str] = mapped_column(String(32))
     dimension_id: Mapped[UUID | None] = mapped_column(nullable=True)
-    counterparty_id: Mapped[UUID | None] = mapped_column(nullable=True)
     description_ref: Mapped[UUID | None] = mapped_column(nullable=True)
     source_event_id: Mapped[UUID] = mapped_column()
 

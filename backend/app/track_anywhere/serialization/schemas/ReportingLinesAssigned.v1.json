@@ -23,19 +23,6 @@
           "title": "Catalog Id",
           "type": "string"
         },
-        "counterparty_id": {
-          "anyOf": [
-            {
-              "format": "uuid",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Counterparty Id"
-        },
         "description_ref": {
           "anyOf": [
             {

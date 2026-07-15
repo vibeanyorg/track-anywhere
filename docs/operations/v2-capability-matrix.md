@@ -30,7 +30,6 @@ it does not imply an invitation or membership-administration API.
 | Search | deferred | — | — | — | No V2 search index, privacy policy, or as-of query contract exists. |
 | CLI | implemented | V2 clients | [CLI V2 boundary tests](../../cli/tests/test_cli_v2_boundaries.py) | [V2 CLI composition](../../cli/track_anywhere_cli/click_app.py) | Only advertised V2 commands are implemented; unsupported V1 command groups fail before HTTP. |
 | Attachments | deferred | — | — | — | Event privacy forbids attachment content and no V2 object-storage, metadata, authorization, or retention contract exists. |
-| Imports and quarantine | implemented | V2 migration | [quarantine seal gate](../../backend/tests/v2/backfill/test_quarantine_gate.py) | [deterministic quarantine implementation](../../backend/tools/backfill_v1/quarantine.py) | Scope is the deterministic V1 snapshot backfill path; it is not a general-purpose online import API. |
 | Recurring rules | removed | — | — | — | V1 recurring schedulers and generated drafts are intentionally absent; any future rules engine needs a new event contract. |
 | Payment instruments and tools | removed | — | — | — | V1 payment-profile and payment-instrument helpers are not ledger primitives and have no V2 fallback. This does not remove the typed credit-card liability operations implemented under Journal. |
 | Backup and restore | deferred | — | — | — | The V1 client-side SQLite backup command is removed; PostgreSQL backup and restore require a separately validated operations runbook. |
@@ -40,8 +39,5 @@ it does not imply an invitation or membership-administration API.
 
 Only rows marked `implemented` may retain reachable V2 runtime code. Deferred
 and removed rows must have no hidden V1 route, adapter, SQLite fallback, or CLI
-network call. The exact file decision is frozen in
-[the retirement manifest](v2-retirement-manifest.md). The user-authorized
-greenfield deletion is complete; the remaining fixed-dump and exact-image gates
-in [local verification evidence](v2-pre-retirement-verification.md) block release
-and cutover, not source cleanup.
+network call. Current HEAD has no historical import implementation; adding one
+later requires a new reviewed capability row and executable contract.

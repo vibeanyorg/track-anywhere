@@ -67,6 +67,47 @@ def list_journal(
     cursor: str | None = None,
     as_of_book_position: int | None = None,
 ) -> JournalPage:
+    return _list_journal(
+        session,
+        book_id,
+        limit=limit,
+        cursor=cursor,
+        as_of_book_position=as_of_book_position,
+        transaction_id=None,
+    )
+
+
+def get_journal_transaction(
+    session: Session,
+    book_id: UUID,
+    transaction_id: UUID,
+    *,
+    as_of_book_position: int | None = None,
+) -> JournalItem:
+    if type(transaction_id) is not UUID:
+        raise ValueError("transaction_id must be a UUID")
+    page = _list_journal(
+        session,
+        book_id,
+        limit=1,
+        cursor=None,
+        as_of_book_position=as_of_book_position,
+        transaction_id=transaction_id,
+    )
+    if not page.items:
+        raise LookupError("Transaction not found")
+    return page.items[0]
+
+
+def _list_journal(
+    session: Session,
+    book_id: UUID,
+    *,
+    limit: int,
+    cursor: str | None,
+    as_of_book_position: int | None,
+    transaction_id: UUID | None,
+) -> JournalPage:
     if type(book_id) is not UUID:
         raise ValueError("book_id must be a UUID")
     if type(limit) is not int or not 1 <= limit <= 100:
@@ -131,6 +172,10 @@ def list_journal(
             JournalTransactionRecord.source_position <= as_of,
         )
     )
+    if transaction_id is not None:
+        statement = statement.where(
+            JournalTransactionRecord.transaction_id == transaction_id
+        )
     if cursor is not None:
         effective_at, position, transaction_id = _decode_cursor(cursor)
         statement = statement.where(
@@ -260,5 +305,6 @@ __all__ = [
     "JournalItem",
     "JournalPage",
     "JournalPosting",
+    "get_journal_transaction",
     "list_journal",
 ]

@@ -36,6 +36,19 @@ def _register_books(root: click.Group) -> None:
         )
         return run_api(args, state=state, command_path="book.create")
 
+    @book.command("list")
+    @output_options
+    @pass_state
+    def list_books(state, json_mode, no_color):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="book",
+            book_command="list",
+        )
+        return run_api(args, state=state, command_path="book.list")
+
     @book.command("balances")
     @click.argument("book_id")
     @click.option("--as-of-book-position", type=int)
@@ -80,7 +93,7 @@ def _register_books(root: click.Group) -> None:
 def _register_assets(root: click.Group) -> None:
     @root.group()
     def asset() -> None:
-        """Create V2 assets."""
+        """Create and query V2 assets."""
 
     @asset.command("create")
     @click.argument("book_id")
@@ -103,11 +116,26 @@ def _register_assets(root: click.Group) -> None:
         )
         return run_api(args, state=state, command_path="asset.create")
 
+    @asset.command("list")
+    @click.argument("book_id")
+    @output_options
+    @pass_state
+    def list_assets(state, json_mode, no_color, book_id):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="asset",
+            asset_command="list",
+            book_id=book_id,
+        )
+        return run_api(args, state=state, command_path="asset.list")
+
 
 def _register_accounts(root: click.Group) -> None:
     @root.group()
     def account() -> None:
-        """Create, close, and reopen V2 accounts."""
+        """Create, query, close, and reopen V2 accounts."""
 
     @account.command("create")
     @click.argument("book_id")
@@ -132,6 +160,74 @@ def _register_accounts(root: click.Group) -> None:
             **values,
         )
         return run_api(args, state=state, command_path="account.create")
+
+    @account.command("list")
+    @click.argument("book_id")
+    @click.option(
+        "--type",
+        "account_type",
+        type=click.Choice(
+            (
+                "asset",
+                "liability",
+                "equity",
+                "income",
+                "expense",
+                "fund",
+                "system",
+            )
+        ),
+    )
+    @click.option("--subtype", "account_subtype")
+    @click.option("--status", type=click.Choice(("active", "closed")))
+    @click.option("--asset-code")
+    @click.option("--name", help="Case-insensitive current-name substring.")
+    @output_options
+    @pass_state
+    def list_accounts(state, json_mode, no_color, **values):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="account",
+            account_command="list",
+            **values,
+        )
+        return run_api(args, state=state, command_path="account.list")
+
+    @account.command("show")
+    @click.argument("book_id")
+    @click.argument("account_id")
+    @output_options
+    @pass_state
+    def show_account(state, json_mode, no_color, book_id, account_id):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="account",
+            account_command="show",
+            book_id=book_id,
+            account_id=account_id,
+        )
+        return run_api(args, state=state, command_path="account.show")
+
+    @account.command("balance")
+    @click.argument("book_id")
+    @click.argument("account_id")
+    @output_options
+    @pass_state
+    def account_balance(state, json_mode, no_color, book_id, account_id):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="account",
+            account_command="balance",
+            book_id=book_id,
+            account_id=account_id,
+        )
+        return run_api(args, state=state, command_path="account.balance")
 
     @account.command("close")
     @click.argument("book_id")
@@ -171,7 +267,7 @@ def _register_accounts(root: click.Group) -> None:
 def _register_categories(root: click.Group) -> None:
     @root.group()
     def category() -> None:
-        """Create V2 reporting categories."""
+        """Create and query V2 reporting categories."""
 
     @category.command("create")
     @click.argument("book_id")
@@ -192,3 +288,18 @@ def _register_categories(root: click.Group) -> None:
             **values,
         )
         return run_api(args, state=state, command_path="category.create")
+
+    @category.command("list")
+    @click.argument("book_id")
+    @output_options
+    @pass_state
+    def list_categories(state, json_mode, no_color, book_id):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="category",
+            category_command="list",
+            book_id=book_id,
+        )
+        return run_api(args, state=state, command_path="category.list")

@@ -7,8 +7,8 @@ another process.
 
 The repository contains a V2-only FastAPI backend, a `ta` CLI, and a Next.js
 frontend. There is no legacy runtime, local database fallback, or compatibility
-API. Historical data enters V2 only through the deterministic offline backfill
-under `backend/tools/backfill_v1/`.
+API. Current HEAD contains no V1 data-import path; any future import must define
+and verify an explicit V2 contract before it is added.
 
 ## Requirements
 
@@ -66,12 +66,19 @@ Examples:
 
 ```bash
 uv run ta auth login --agent
+uv run ta book list --json
 uv run ta book create --help
+uv run ta asset list <book_id> --json
 uv run ta asset create --help
+uv run ta account list <book_id> --type liability --subtype credit_card --json
+uv run ta account show <book_id> <account_id> --json
+uv run ta account balance <book_id> <account_id> --json
 uv run ta account create --help
 uv run ta account reopen --help
+uv run ta category list <book_id> --json
 uv run ta tx record --help
 uv run ta tx list --help
+uv run ta tx show <book_id> <transaction_id> --json
 uv run ta book balances --help
 uv run ta card charge --help
 uv run ta card payment --help
@@ -95,7 +102,7 @@ Draft capture, recurring rules, payment-profile helpers, attachments,
 client-side backup/restore, and broad search are not compatibility-backed V2
 features. Unsupported command groups fail locally before making a network
 request. See the reviewed
-[capability matrix](docs/operations/v2-capability-matrix.md) for the exact
+[capability matrix](docs/operations/v2-client-capability-matrix.md) for the exact
 implemented, deferred, and removed boundary.
 
 ## Verification
@@ -110,10 +117,8 @@ bash scripts/verify-v2.sh
 ```
 
 The gate covers unit, PostgreSQL constraints, role separation, concurrency,
-replay, synthetic backfill, contracts, CLI, frontend lint/build, and Alembic
-head checks. The fixed production-derived dump is intentionally a separate,
-local-only manual release gate; it is never placed in CI or a Docker build
-context.
+deterministic replay, contracts, CLI, frontend lint/build, and Alembic head
+checks.
 
 For an isolated local container rehearsal, use:
 
@@ -123,8 +128,6 @@ bash scripts/e2e-docker-postgres.sh
 
 Operational details live in:
 
-- [V2 backfill runbook](docs/operations/v2-backfill-runbook.md)
-- [V2 retirement manifest](docs/operations/v2-retirement-manifest.md)
 - [V2 isolated staging checklist](docs/operations/v2-isolated-staging-checklist.md)
 
 ## Safety boundary

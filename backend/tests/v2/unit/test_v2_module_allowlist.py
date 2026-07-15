@@ -17,6 +17,7 @@ APPROVED_ROOT_ENTRIES = {
     "outbox/",
     "queries/",
     "serialization/",
+    "verification.py",
 }
 
 

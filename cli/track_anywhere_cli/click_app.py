@@ -12,10 +12,7 @@ from .click_common import ClickState, Requester, output_options, pass_state
 from .click_credit_card import register as register_credit_card
 from .click_investment import register as register_investment
 from .click_ledger import register as register_ledger
-from .click_payment import register as register_payment
-from .click_recurring import register as register_recurring
 from .click_system import register as register_system
-from .data_backup import create_data_backup
 from .exit_codes import EXIT_SUCCESS, EXIT_VALIDATION
 from .http import request_json
 from .protocol import capabilities_payload, schema_payload, version_payload
@@ -86,11 +83,6 @@ def cli(
         agent_mode=effective_agent,
         requester=requester,
     )
-
-
-@cli.group()
-def data():
-    """Local data commands."""
 
 
 @cli.group()
@@ -204,37 +196,6 @@ def release_bump(
                 },
             },
             exit_code=EXIT_VALIDATION,
-        )
-    emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
-    return outcome.exit_code
-
-
-@data.command("backup")
-@click.option("--database-url")
-@click.option("--output-dir")
-@click.option("--label")
-@click.option("--transaction-id")
-@output_options
-@pass_state
-def data_backup(
-    state: ClickState,
-    json_mode: bool,
-    no_color: bool,
-    database_url: str | None,
-    output_dir: str | None,
-    label: str | None,
-    transaction_id: str | None,
-) -> int:
-    output_json = state.json_mode or json_mode
-    output_no_color = state.no_color or no_color
-    try:
-        backup = create_data_backup(
-            database_url, output_dir, label, transaction_id=transaction_id
-        )
-        outcome = build_outcome("data.backup", 200, {"backup": backup})
-    except RuntimeError as exc:
-        outcome = build_outcome(
-            "data.backup", 400, {"detail": str(exc)}, exit_code=EXIT_VALIDATION
         )
     emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
     return outcome.exit_code
@@ -399,6 +360,4 @@ register_catalog(cli)
 register_credit_card(cli)
 register_investment(cli)
 register_ledger(cli)
-register_payment(cli)
-register_recurring(cli)
 register_system(cli)

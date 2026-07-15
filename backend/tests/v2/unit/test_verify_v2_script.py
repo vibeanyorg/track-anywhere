@@ -7,7 +7,6 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT = ROOT / "scripts/verify-v2.sh"
-EVIDENCE = ROOT / "docs/operations/v2-pre-retirement-verification.md"
 
 
 def test_verify_v2_is_an_executable_strict_local_gate() -> None:
@@ -49,7 +48,7 @@ def test_verify_v2_collects_each_required_v2_lane_without_legacy_tests() -> None
         "uv sync --locked --extra postgres",
         "pytest backend/tests/v2/unit -q",
         "pytest backend/tests/v2/postgres backend/tests/v2/concurrency -q",
-        "pytest backend/tests/v2/replay backend/tests/v2/backfill -m 'not frozen_dump' -q",
+        "pytest backend/tests/v2/replay -q",
         "pytest backend/tests/v2/contract cli/tests contract_tests -q",
         "npm --prefix frontend ci",
         "npm --prefix frontend run lint",
@@ -59,25 +58,5 @@ def test_verify_v2_collects_each_required_v2_lane_without_legacy_tests() -> None
         assert fragment in source
     assert "pytest backend/tests/test_" not in source
     assert "pytest backend/tests -q" not in source
-    assert "-m 'frozen_dump'" not in source
-
-
-def test_pre_retirement_record_has_all_required_evidence_fields() -> None:
-    source = EVIDENCE.read_text(encoding="utf-8")
-
-    required_fields = (
-        "Gate decision",
-        "Commit",
-        "PostgreSQL version",
-        "Runtime identity",
-        "Migrator identity",
-        "Alembic head",
-        "Terminal hashes",
-        "Projection hashes",
-        "Quarantine count",
-        "bash scripts/verify-v2.sh",
-        "bash scripts/e2e-docker-postgres.sh",
-    )
-    for field in required_fields:
-        assert field in source
-    assert "frozen dump was not executed" in source.lower()
+    assert "backend/tests/v2/backfill" not in source
+    assert "frozen_dump" not in source

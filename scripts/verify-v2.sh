@@ -14,7 +14,7 @@ uv sync --locked --extra postgres
 # Each lane is explicit so CI and release evidence can identify the failing gate.
 uv run --extra postgres pytest backend/tests/v2/unit -q
 uv run --extra postgres pytest backend/tests/v2/postgres backend/tests/v2/concurrency -q
-uv run --extra postgres pytest backend/tests/v2/replay backend/tests/v2/backfill -m 'not frozen_dump' -q
+uv run --extra postgres pytest backend/tests/v2/replay -q
 uv run --extra postgres pytest backend/tests/v2/contract cli/tests contract_tests -q
 
 npm --prefix frontend ci

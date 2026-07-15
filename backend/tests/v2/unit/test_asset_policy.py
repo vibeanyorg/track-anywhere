@@ -30,18 +30,6 @@ def test_usdt_online_scales_six_decimal_input_to_eight_digit_ledger_units() -> N
     )
 
 
-def test_usdt_backfill_accepts_eight_decimals_exactly() -> None:
-    assert USDT_POLICY.parse_backfill("0.12345678") == ScaledUnits(
-        units=12_345_678,
-        scale=8,
-    )
-
-
-def test_usdt_backfill_rejects_more_than_the_ledger_scale() -> None:
-    with pytest.raises(AmountScaleExceeded):
-        USDT_POLICY.parse_backfill("0.123456789")
-
-
 def test_usdt_policy_has_the_approved_scales() -> None:
     assert USDT_POLICY.input_scale == 6
     assert USDT_POLICY.ledger_scale == 8

@@ -215,7 +215,7 @@ def test_cluster_config_requires_exact_psycopg_driver(
 def test_libpq_url_uses_sqlalchemy_rendering_and_preserves_encoded_values() -> None:
     source = (
         "postgresql+psycopg://ledger:p%40ss%2Fword@127.0.0.1:15543/"
-        "db%2Fencoded?application_name=backfill%2Fv2&options=-c%20lock_timeout%3D5s"
+        "db%2Fencoded?application_name=worker%2Fv2&options=-c%20lock_timeout%3D5s"
     )
 
     rendered = render_libpq_url(source, host="postgres", port=5432)
@@ -229,12 +229,12 @@ def test_libpq_url_uses_sqlalchemy_rendering_and_preserves_encoded_values() -> N
         "db%2Fencoded",
     )
     assert dict(parsed.query) == {
-        "application_name": "backfill/v2",
+        "application_name": "worker/v2",
         "options": "-c lock_timeout=5s",
     }
     assert "p%40ss%2Fword" in rendered
     assert "db%2Fencoded" in rendered
-    assert "backfill%2Fv2" in rendered
+    assert "worker%2Fv2" in rendered
 
 
 @pytest.mark.parametrize(

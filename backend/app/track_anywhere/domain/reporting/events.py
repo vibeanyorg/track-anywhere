@@ -40,7 +40,6 @@ class ReportingLine(FrozenContract):
     line_kind: ReportingLineKind
     dimension: ReportingDimension
     dimension_id: UUID | None = None
-    counterparty_id: UUID | None = None
     description_ref: UUID | None = None
 
 

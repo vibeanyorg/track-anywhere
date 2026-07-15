@@ -16,11 +16,6 @@ from uuid import UUID
 import pytest
 from pydantic import AliasChoices, AliasPath, Field, StrictInt, StrictStr, create_model
 
-from track_anywhere.domain.backfill.events import (
-    HistoricalCategoryActivityImported,
-    HistoricalInvestmentActivityImported,
-    HistoricalReportingLineImported,
-)
 from track_anywhere.domain.investments.events import (
     InvestmentLotAcquired,
     InvestmentLotDisposed,
@@ -63,9 +58,6 @@ from track_anywhere.serialization.upcasters import (
 
 
 FIXTURE_PATH = Path(__file__).parents[1] / "fixtures" / "event_hash_vectors.json"
-HISTORICAL_FIXTURE_PATH = (
-    Path(__file__).parents[1] / "fixtures" / "historical_event_hash_vectors.json"
-)
 UUIDS = tuple(UUID(f"00000000-0000-4000-8000-{index:012x}") for index in range(1, 30))
 PRODUCTION_KEYS = {
     ("CreditCardTransactionRecorded", 1),
@@ -76,9 +68,6 @@ PRODUCTION_KEYS = {
     ("ReportingLinesCleared", 1),
     ("InvestmentLotAcquired", 1),
     ("InvestmentLotDisposed", 1),
-    ("HistoricalCategoryActivityImported", 1),
-    ("HistoricalInvestmentActivityImported", 1),
-    ("HistoricalReportingLineImported", 1),
 }
 PRODUCTION_MODELS = (
     CreditCardTransactionRecorded,
@@ -89,9 +78,6 @@ PRODUCTION_MODELS = (
     ReportingLinesCleared,
     InvestmentLotAcquired,
     InvestmentLotDisposed,
-    HistoricalCategoryActivityImported,
-    HistoricalInvestmentActivityImported,
-    HistoricalReportingLineImported,
 )
 
 
@@ -327,29 +313,7 @@ def test_golden_hash_vectors_freeze_canonical_bytes_and_final_sha256() -> None:
         assert event_hash(envelope, payload).hex() == vector["event_hash_hex"]
 
 
-def test_each_historical_import_contract_has_a_golden_hash_vector() -> None:
-    fixture = json.loads(HISTORICAL_FIXTURE_PATH.read_text())
-    expected_event_types = {
-        "HistoricalCategoryActivityImported",
-        "HistoricalInvestmentActivityImported",
-        "HistoricalReportingLineImported",
-    }
-
-    assert {
-        vector["envelope"]["event_type"] for vector in fixture["vectors"]
-    } == expected_event_types
-    for vector in fixture["vectors"]:
-        envelope = _fixture_envelope(vector["envelope"])
-        payload = vector["payload"]
-        PRODUCTION_EVENT_REGISTRY.validate_stored(
-            envelope.event_type,
-            envelope.event_schema_version,
-            payload,
-        )
-        assert event_hash(envelope, payload).hex() == vector["event_hash_hex"]
-
-
-def test_production_registry_contains_exactly_the_eleven_v2_contracts() -> None:
+def test_production_registry_contains_exactly_the_v2_contracts() -> None:
     assert set(PRODUCTION_EVENT_REGISTRY.keys()) == PRODUCTION_KEYS
     for model in PRODUCTION_MODELS:
         key = (model.event_type, model.schema_version)

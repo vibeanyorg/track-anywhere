@@ -525,7 +525,7 @@ def test_staging_harness_is_fail_closed_and_never_accepts_itself() -> None:
         "runtime_cannot_update_events",
         "runtime_cannot_disable_triggers",
         "projection_lag",
-        "verify_target",
+        "verify_v2_ledger",
         "LEGACY_API_PATH",
         "down -v --remove-orphans",
     ):
@@ -581,9 +581,8 @@ def test_run_contract_requires_unique_report_and_external_acceptance() -> None:
 
     assert "NOT RUN" in final
     assert "production untouched" in normalized_final
-    assert "authorized frozen dump" in normalized_final
-    assert "two-target backfill rehearsal" in normalized_final
-    assert "not been executed" in normalized_final
+    assert "current head contains no v1 import path" in normalized_final
+    assert "has not been executed" in normalized_final
 
 
 def test_docker_context_excludes_data_artifacts() -> None:
@@ -773,17 +772,16 @@ def test_existing_stack_executes_smoke_without_infrastructure_mutation_or_pull(
     assert not evidence["pull_violations"].exists()
 
 
-def test_final_verification_describes_the_completed_dump_rehearsal_truthfully() -> None:
+def test_final_verification_describes_only_the_current_v2_release_boundary() -> None:
     final = " ".join(
         _read("docs/operations/v2-final-verification.md").casefold().split()
     )
 
-    assert "authorized frozen dump was restored only into disposable local" in final
-    assert "two independent verifier pass results" in final
-    assert "zero quarantine" in final
-    assert "strict cleanup" in final
-    assert "not an exact-image staging or release attestation" in final
-    assert "was not executed, opened, copied, restored, or queried" not in final
+    assert "current head contains no v1 import path" in final
+    assert "exact-image isolated staging: **not run**" in final
+    assert "production deploy/cutover: **not performed**" in final
+    assert "backfill" not in final
+    assert "frozen dump" not in final
 
 
 def test_checklist_scopes_no_registry_to_the_harness_invocation() -> None:

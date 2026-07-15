@@ -13,7 +13,7 @@ from track_anywhere.domain.journal import (
     InvalidAccountCatalog,
     PostingSide,
 )
-from track_anywhere.queries.balances import _balance_item
+from track_anywhere.queries.balances import build_balance_item
 
 
 def test_account_type_is_the_closed_ledger_direction_set() -> None:
@@ -113,7 +113,7 @@ def test_natural_balance_uses_each_account_types_normal_side(
     raw_units: int,
     normal_side: PostingSide,
 ) -> None:
-    item = _balance_item(
+    item = build_balance_item(
         account_id=uuid4(),
         asset_code="USD",
         account_type=account_type,

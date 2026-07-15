@@ -19,7 +19,6 @@ from track_anywhere.application.journal.assign_reporting_lines import (
     ReportingAllocationExceeded,
     ReportingLineInput,
     UnsupportedReportingDimension,
-    UnsupportedReportingMetadata,
     execute_assign_reporting_lines,
 )
 from track_anywhere.application.journal.clear_reporting_lines import (
@@ -235,8 +234,6 @@ def test_reporting_query_reduces_assign_reclassify_and_clear_at_exact_positions(
     seed_journal_scenario(pg_engine, scenario)
     category_a_id, version_a_id = _seed_category(pg_engine, scenario)
     category_b_id, version_b_id = _seed_category(pg_engine, scenario)
-    counterparty_a_id = uuid4()
-    counterparty_b_id = uuid4()
     line_a_id = uuid4()
     line_a_version_id = uuid4()
     line_b_id = uuid4()
@@ -260,7 +257,6 @@ def test_reporting_query_reduces_assign_reclassify_and_clear_at_exact_positions(
                     line_kind=ReportingLineKind.EXPENSE,
                     dimension=ReportingDimension.CATEGORY,
                     dimension_id=category_a_id,
-                    counterparty_id=counterparty_a_id,
                 ),
             ),
         ),
@@ -283,7 +279,6 @@ def test_reporting_query_reduces_assign_reclassify_and_clear_at_exact_positions(
                     line_kind=ReportingLineKind.EXPENSE,
                     dimension=ReportingDimension.CATEGORY,
                     dimension_id=category_b_id,
-                    counterparty_id=counterparty_b_id,
                 ),
             ),
         ),
@@ -328,7 +323,6 @@ def test_reporting_query_reduces_assign_reclassify_and_clear_at_exact_positions(
             row.line_version_id,
             row.catalog_id,
             row.dimension_id,
-            row.counterparty_id,
         )
         for row in assigned
     ] == [
@@ -338,7 +332,6 @@ def test_reporting_query_reduces_assign_reclassify_and_clear_at_exact_positions(
             line_a_version_id,
             version_a_id,
             category_a_id,
-            counterparty_a_id,
         )
     ]
     assert [
@@ -348,7 +341,6 @@ def test_reporting_query_reduces_assign_reclassify_and_clear_at_exact_positions(
             row.line_version_id,
             row.catalog_id,
             row.dimension_id,
-            row.counterparty_id,
         )
         for row in reclassified
     ] == [
@@ -358,7 +350,6 @@ def test_reporting_query_reduces_assign_reclassify_and_clear_at_exact_positions(
             line_b_version_id,
             version_b_id,
             category_b_id,
-            counterparty_b_id,
         )
     ]
     assert cleared == ()
@@ -538,25 +529,6 @@ def test_unbacked_reporting_dimensions_fail_closed(pg_engine) -> None:
     )
 
     with pytest.raises(UnsupportedReportingDimension):
-        _assign(
-            pg_engine,
-            scenario,
-            expected_revision=0,
-            lines=(line,),
-        )
-
-
-def test_online_assignment_rejects_unbacked_counterparty_metadata(pg_engine) -> None:
-    scenario = JournalScenario.create()
-    seed_journal_scenario(pg_engine, scenario)
-    category_id, version_id = _seed_category(pg_engine, scenario)
-    _post_original(pg_engine, scenario)
-    line = replace(
-        _line(category_id, version_id),
-        counterparty_id=uuid4(),
-    )
-
-    with pytest.raises(UnsupportedReportingMetadata):
         _assign(
             pg_engine,
             scenario,

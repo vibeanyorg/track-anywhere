@@ -11,7 +11,6 @@ from sqlalchemy.orm import sessionmaker
 from backend.tests.v2.postgres.test_credit_card_transactions import (
     EFFECTIVE_AT,
     _append_bypassed_reversal,
-    _append_legacy_generic_card_transaction,
     _bypassed_reversal_pending,
     _charge,
     _execute,
@@ -72,24 +71,6 @@ def test_database_rejects_credit_card_reversal_before_its_source(pg_engine) -> N
         pg_engine,
         scenario,
         source_transaction_id=charge.transaction_id,
-        effective_at=EFFECTIVE_AT - timedelta(microseconds=1),
-    )
-
-    with pytest.raises(
-        IntegrityError, match="credit-card reversal precedes its source"
-    ):
-        _append_bypassed_reversal(pg_engine, scenario, pending)
-
-
-def test_database_rejects_legacy_generic_card_reversal_before_its_source(
-    pg_engine,
-) -> None:
-    scenario, _ = _seed_card_accounts(pg_engine)
-    transaction_id = _append_legacy_generic_card_transaction(pg_engine, scenario)
-    pending = _bypassed_reversal_pending(
-        pg_engine,
-        scenario,
-        source_transaction_id=transaction_id,
         effective_at=EFFECTIVE_AT - timedelta(microseconds=1),
     )
 

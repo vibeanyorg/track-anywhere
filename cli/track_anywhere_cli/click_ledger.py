@@ -28,6 +28,7 @@ def register(root: click.Group) -> None:
 
     _register_record(tx)
     _register_list(tx)
+    _register_show(tx)
     _register_reverse(tx)
     _register_correct(tx)
     _register_correct_reference(tx)
@@ -89,6 +90,25 @@ def _register_list(tx: click.Group) -> None:
             **values,
         )
         return run_api(args, state=state, command_path="tx.list")
+
+
+def _register_show(tx: click.Group) -> None:
+    @tx.command("show")
+    @click.argument("book_id")
+    @click.argument("transaction_id")
+    @click.option("--as-of-book-position", type=int)
+    @output_options
+    @pass_state
+    def show_transaction(state, json_mode, no_color, **values):
+        args = common_args(
+            state,
+            json_mode,
+            no_color,
+            command="tx",
+            tx_command="show",
+            **values,
+        )
+        return run_api(args, state=state, command_path="tx.show")
 
 
 def _register_reverse(tx: click.Group) -> None:

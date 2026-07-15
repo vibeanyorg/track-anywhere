@@ -23,12 +23,4 @@ class AssetPolicy:
             max_input_scale=self.input_scale,
         )
 
-    def parse_backfill(self, raw: str) -> ScaledUnits:
-        return ScaledUnits.parse(
-            raw,
-            scale=self.ledger_scale,
-            max_input_scale=self.ledger_scale,
-        )
-
-
 USDT_POLICY = AssetPolicy(input_scale=6, ledger_scale=8)

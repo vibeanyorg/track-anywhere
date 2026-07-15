@@ -4,7 +4,6 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from sqlalchemy.orm import Session
@@ -51,11 +50,6 @@ from ..unit_of_work import UnitOfWork
 
 
 _AMOUNT_LITERAL = re.compile(r"[0-9]+(?:\.[0-9]+)?", flags=re.ASCII)
-_TRUSTED_V1_BACKFILL_KEY = re.compile(
-    r"backfill:sha256:(?P<manifest>[0-9a-f]{64}):"
-    r"(?P<context>journal|reporting|classification):(?P<source>[^\s:]{1,160})",
-    flags=re.ASCII,
-)
 _POST_EVENT_NAMESPACE = uuid5(
     NAMESPACE_URL,
     "https://track-anywhere.dev/v2/events/journal.post",
@@ -80,11 +74,6 @@ class CreditCardSemanticWriteRequired(RuntimeError):
 
 class AssetUnavailable(ValueError):
     pass
-
-
-class _PostAccountMode(Enum):
-    ONLINE = "online"
-    TRUSTED_V1_BACKFILL = "trusted_v1_backfill"
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,47 +199,6 @@ Authorize = Callable[..., AuthorizationScope]
 UnitOfWorkFactory = Callable[[], UnitOfWork]
 
 
-def _assert_trusted_v1_backfill_invocation(
-    *,
-    raw_key: str,
-    actor: CommandActor,
-    expected_contexts: tuple[str, ...],
-    authorize: Authorize,
-    ledger_committer: LedgerCommitter | None,
-    max_attempts: int,
-) -> None:
-    """Fail closed when the private importer is called outside its protocol."""
-
-    if type(actor) is not CommandActor:
-        raise IdempotencyValidationError(
-            "trusted V1 backfill actor must be a CommandActor"
-        )
-    match = (
-        _TRUSTED_V1_BACKFILL_KEY.fullmatch(raw_key) if type(raw_key) is str else None
-    )
-    if match is None or match.group("context") not in expected_contexts:
-        raise IdempotencyValidationError(
-            "trusted V1 backfill key has an invalid snapshot or operation context"
-        )
-    expected_actor = f"backfill:{match.group('manifest')[:32]}"
-    if actor.subject_id != expected_actor:
-        raise IdempotencyValidationError(
-            "trusted V1 backfill actor does not match the frozen snapshot"
-        )
-    if authorize is not authorize_journal_write:
-        raise IdempotencyValidationError(
-            "trusted V1 backfill cannot override authorization"
-        )
-    if ledger_committer is not None:
-        raise IdempotencyValidationError(
-            "trusted V1 backfill cannot override the ledger committer"
-        )
-    if type(max_attempts) is not int or max_attempts != 1:
-        raise IdempotencyValidationError(
-            "trusted V1 backfill must execute exactly once in the loader transaction"
-        )
-
-
 def authorize_journal_write(
     session: Session,
     actor: CommandActor,
@@ -298,38 +246,6 @@ def execute_post_transaction(
         authorize=authorize,
         ledger_committer=ledger_committer,
         max_attempts=max_attempts,
-        account_mode=_PostAccountMode.ONLINE,
-    )
-
-
-def _execute_trusted_v1_backfill_post_transaction(
-    command: PostTransactionCommand,
-    *,
-    raw_key: str,
-    actor: CommandActor,
-    uow_factory: UnitOfWorkFactory,
-    authorize: Authorize = authorize_journal_write,
-    ledger_committer: LedgerCommitter | None = None,
-    max_attempts: int = 3,
-) -> CommandOutcome:
-    """Private deterministic V1 import entry; never wired to an online router."""
-    _assert_trusted_v1_backfill_invocation(
-        raw_key=raw_key,
-        actor=actor,
-        expected_contexts=("journal",),
-        authorize=authorize,
-        ledger_committer=ledger_committer,
-        max_attempts=max_attempts,
-    )
-    return _execute_post_transaction(
-        command,
-        raw_key=raw_key,
-        actor=actor,
-        uow_factory=uow_factory,
-        authorize=authorize,
-        ledger_committer=ledger_committer,
-        max_attempts=max_attempts,
-        account_mode=_PostAccountMode.TRUSTED_V1_BACKFILL,
     )
 
 
@@ -342,12 +258,9 @@ def _execute_post_transaction(
     authorize: Authorize,
     ledger_committer: LedgerCommitter | None,
     max_attempts: int,
-    account_mode: _PostAccountMode,
 ) -> CommandOutcome:
     if type(command) is not PostTransactionCommand:
         raise IdempotencyValidationError("command must be a PostTransactionCommand")
-    if type(account_mode) is not _PostAccountMode:
-        raise IdempotencyValidationError("post account mode is invalid")
     committer = ledger_committer or LedgerCommitter()
 
     def handler(
@@ -362,7 +275,6 @@ def _execute_post_transaction(
             uow,
             locked_head,
             actor=actor,
-            account_mode=account_mode,
         )
 
     return execute_financial(
@@ -383,11 +295,10 @@ def _build_plan(
     locked_head: LockedBookHead,
     *,
     actor: CommandActor,
-    account_mode: _PostAccountMode,
 ) -> LedgerWritePlan:
     if locked_head.book_id != command.book_id:
         raise IdempotencyValidationError("locked Book does not match command")
-    payload = _build_posted_payload(command, uow, account_mode=account_mode)
+    payload = _build_posted_payload(command, uow)
     pending = _build_posted_pending(command, payload, actor=actor)
     return LedgerWritePlan(
         expected_stream_versions={
@@ -408,11 +319,7 @@ def _build_plan(
 def _build_posted_payload(
     command: PostTransactionCommand,
     uow: UnitOfWork,
-    *,
-    account_mode: _PostAccountMode = _PostAccountMode.ONLINE,
 ) -> JournalTransactionPosted:
-    if type(account_mode) is not _PostAccountMode:
-        raise IdempotencyValidationError("post account mode is invalid")
     catalogs = CatalogRepository(uow.session)
 
     db_accounts = {}
@@ -431,8 +338,7 @@ def _build_posted_payload(
             # cross-Book lookup to disclose another Book's catalog.
             continue
 
-    if account_mode is _PostAccountMode.ONLINE:
-        _reject_credit_card_accounts(db_accounts.values())
+    _reject_credit_card_accounts(db_accounts.values())
 
     asset_policies: dict[str, AssetPolicy] = {}
     for asset_code in sorted({posting.asset_code for posting in command.postings}):
@@ -466,11 +372,7 @@ def _build_posted_payload(
             account_id=str(posting.account_id),
             asset_code=posting.asset_code,
             side=posting.side,
-            units=(
-                asset_policies[posting.asset_code].parse_backfill(posting.amount)
-                if account_mode is _PostAccountMode.TRUSTED_V1_BACKFILL
-                else asset_policies[posting.asset_code].parse_online(posting.amount)
-            ).units,
+            units=asset_policies[posting.asset_code].parse_online(posting.amount).units,
         )
         for position, posting in enumerate(command.postings)
     )

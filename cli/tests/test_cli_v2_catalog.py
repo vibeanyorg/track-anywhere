@@ -262,6 +262,73 @@ def test_v2_book_queries_preserve_as_of_position(capsys):
     ]
 
 
+def test_v2_catalog_read_commands_are_discoverable_and_book_scoped(capsys):
+    calls = []
+    request = _recorder(calls)
+    book_id = "11111111-1111-1111-1111-111111111111"
+    account_id = "22222222-2222-2222-2222-222222222222"
+
+    commands = (
+        ["--token", "token", "book", "list", "--json"],
+        ["--token", "token", "asset", "list", book_id, "--json"],
+        [
+            "--token",
+            "token",
+            "account",
+            "list",
+            book_id,
+            "--type",
+            "liability",
+            "--subtype",
+            "credit_card",
+            "--status",
+            "active",
+            "--asset-code",
+            "CNY",
+            "--name",
+            "交通 银行",
+            "--json",
+        ],
+        [
+            "--token",
+            "token",
+            "account",
+            "show",
+            book_id,
+            account_id,
+            "--json",
+        ],
+        [
+            "--token",
+            "token",
+            "account",
+            "balance",
+            book_id,
+            account_id,
+            "--json",
+        ],
+        ["--token", "token", "category", "list", book_id, "--json"],
+    )
+    for command in commands:
+        assert run(command, requester=request) == 0
+    capsys.readouterr()
+
+    assert [call["path"] for call in calls] == [
+        "/api/v2/books",
+        f"/api/v2/books/{book_id}/assets",
+        (
+            f"/api/v2/books/{book_id}/accounts?account_type=liability"
+            "&account_subtype=credit_card&status=active&asset_code=CNY"
+            "&name=%E4%BA%A4%E9%80%9A+%E9%93%B6%E8%A1%8C"
+        ),
+        f"/api/v2/books/{book_id}/accounts/{account_id}",
+        f"/api/v2/books/{book_id}/accounts/{account_id}/balance",
+        f"/api/v2/books/{book_id}/categories",
+    ]
+    assert all(call["method"] == "GET" for call in calls)
+    assert all(call["payload"] is None and call["key"] is None for call in calls)
+
+
 def test_book_balances_json_preserves_account_lifecycle_status(capsys):
     book_id = "11111111-1111-1111-1111-111111111111"
     account_id = "22222222-2222-2222-2222-222222222222"

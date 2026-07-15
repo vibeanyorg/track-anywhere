@@ -129,6 +129,39 @@ def test_journal_query_uses_v2_cursor_contract(capsys):
     ]
 
 
+def test_transaction_show_uses_the_transaction_scoped_query(capsys):
+    calls = []
+
+    assert (
+        run(
+            [
+                "--token",
+                "token",
+                "tx",
+                "show",
+                BOOK,
+                TX,
+                "--as-of-book-position",
+                "99",
+                "--json",
+            ],
+            requester=_recorder(calls),
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert calls == [
+        (
+            "GET",
+            f"/api/v2/books/{BOOK}/journal/transactions/{TX}"
+            "?as_of_book_position=99",
+            None,
+            None,
+        )
+    ]
+
+
 def test_reverse_and_classify_use_transaction_scoped_v2_routes(capsys):
     calls = []
     request = _recorder(calls)

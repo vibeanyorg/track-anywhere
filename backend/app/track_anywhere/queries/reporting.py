@@ -32,7 +32,6 @@ class ReportingLine:
     line_kind: str
     dimension: str
     dimension_id: UUID | None
-    counterparty_id: UUID | None = None
 
 
 def list_current_reporting_lines(
@@ -84,7 +83,6 @@ def list_current_reporting_lines(
                     line_kind=line.line_kind.value,
                     dimension=line.dimension.value,
                     dimension_id=line.dimension_id,
-                    counterparty_id=line.counterparty_id,
                 )
                 for line in payload.lines
             )

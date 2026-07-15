@@ -132,5 +132,5 @@ three report assertions. Never infer acceptance merely from directory presence.
 
 Record the source commit and run UUID in the evidence document, then stop. Do
 not tag, push images, change production DSNs, replace the stable runtime, or
-deploy. The fixed real frozen dump rehearsal remains a separate authorized
-local data gate; this isolated synthetic smoke is not a substitute for it.
+deploy. This checklist validates only a clean V2 database and exact committed
+images; current HEAD contains no historical import gate.
