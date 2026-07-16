@@ -145,6 +145,16 @@ def _archive_snapshot(plaintext: bytes) -> ImportArchiveManifestSnapshot:
     )
 
 
+def _mutate_archive_crypto(
+    manifest: ImportArchiveManifestSnapshot,
+    field: str,
+) -> None:
+    current = getattr(manifest.sidecar, field)
+    assert isinstance(current, bytes) and current
+    mutated = bytes([current[0] ^ 1]) + current[1:]
+    object.__setattr__(manifest.sidecar, field, mutated)
+
+
 def _get_session() -> Iterator[Session]:
     yield cast(Session, SESSION)
 
@@ -768,6 +778,55 @@ def test_archive_queries_verify_seal_and_canonical_export() -> None:
             cipher=_cipher(),
             repository=repository,
         )
+
+
+@pytest.mark.parametrize("field", ("ciphertext", "nonce"))
+def test_archive_metadata_query_authenticates_encrypted_payload(field: str) -> None:
+    from track_anywhere.queries.protected_content import list_import_archives
+
+    manifest = _archive_snapshot(b'{"private":"metadata-must-authenticate"}\n')
+    _mutate_archive_crypto(manifest, field)
+
+    class Repository:
+        def list_archive_manifests(self, *_args, **_kwargs):
+            return (manifest,)
+
+    with pytest.raises(
+        ProtectedContentUnavailable,
+        match="^protected content is unavailable$",
+    ) as unavailable:
+        list_import_archives(
+            cast(Session, SESSION),
+            BOOK_ID,
+            cipher=_cipher(),
+            repository=cast(ProtectedContentRepository, Repository()),
+        )
+    assert "metadata-must-authenticate" not in str(unavailable.value)
+
+
+@pytest.mark.parametrize("field", ("ciphertext", "nonce"))
+def test_archive_metadata_rest_fails_closed_for_crypto_mutation(
+    field: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from track_anywhere.queries import protected_content as query
+
+    manifest = _archive_snapshot(b'{"private":"metadata-must-authenticate"}\n')
+    _mutate_archive_crypto(manifest, field)
+
+    class Repository:
+        def list_archive_manifests(self, *_args, **_kwargs):
+            return (manifest,)
+
+    monkeypatch.setattr(query, "ProtectedContentRepository", Repository)
+
+    response = _client(cipher=_cipher()).get(
+        f"/api/v2/books/{BOOK_ID}/import-archives"
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Protected content is unavailable"}
+    assert "metadata-must-authenticate" not in response.text
 
 
 def test_archive_routes_hide_absence_and_enforce_owner_before_keyring(

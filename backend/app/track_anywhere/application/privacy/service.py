@@ -287,8 +287,6 @@ class ProtectedContentService:
             raise ProtectedContentConflict(
                 "protected content conflicts with existing data"
             )
-        if not include_content:
-            return None
         plaintext = self.decrypt_active(
             sidecar,
             expected_kind="import_archive",
@@ -298,6 +296,8 @@ class ProtectedContentService:
             raise ProtectedContentConflict(
                 "protected content conflicts with existing data"
             )
+        if not include_content:
+            return None
         return plaintext
 
     def _verify_exact(
