@@ -159,18 +159,22 @@ class ProtectedContentRepository:
         book_id: UUID,
         sidecar_id: UUID,
     ) -> ProtectedContentSnapshot:
-        session.execute(
+        erasure_result = session.execute(
             text(
                 "select public.v2_erase_protected_content(:book_id, :sidecar_id)"
             ),
             {"book_id": book_id, "sidecar_id": sidecar_id},
         ).scalar_one()
-        result = self.get(session, book_id=book_id, sidecar_id=sidecar_id)
-        if result is None:
+        if erasure_result is None:
             raise ProtectedContentNotFound(
                 "protected content was not found in the requested scope"
             )
-        return result
+        if type(erasure_result) is not bool:
+            raise RuntimeError("protected content erasure result is invalid")
+        snapshot = self.get(session, book_id=book_id, sidecar_id=sidecar_id)
+        if snapshot is None or snapshot.status != "erased":
+            raise RuntimeError("protected content persistence invariant failed")
+        return snapshot
 
     def get_archive_manifest(
         self,

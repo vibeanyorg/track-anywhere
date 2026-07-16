@@ -92,6 +92,8 @@ def test_migration_serializes_archive_insert_and_erasure_on_the_sidecar_row() ->
         "update public.protected_description_sidecars", manifest_check_position
     )
     assert lock_position < for_update_position < manifest_check_position < update_position
+    assert "return null;" in erasure
+    assert "p0002" not in erasure
 
 
 def _cipher() -> ProtectedContentCipher:
@@ -454,6 +456,30 @@ def test_erased_sidecar_cannot_be_recreated_and_controlled_erasure_is_idempotent
     assert erased.ciphertext is erased.nonce is None
     assert erased.key_ref is None
     assert erased.content_hash == replayed_erasure.content_hash
+
+
+def test_missing_erasure_is_a_safe_conflict_and_preserves_the_transaction(
+    pg_engine,
+) -> None:
+    _seed_book(pg_engine)
+    service = _service()
+    missing_sidecar_id = OTHER_ARCHIVE_ID
+
+    with Session(pg_engine) as session, session.begin():
+        with pytest.raises(
+            ProtectedContentConflict,
+            match="^protected content conflicts with existing data$",
+        ) as conflict:
+            service.erase(
+                session,
+                book_id=BOOK_ID,
+                sidecar_id=missing_sidecar_id,
+            )
+        assert session.scalar(text("select 1")) == 1
+
+    rendered = str(conflict.value)
+    assert str(missing_sidecar_id) not in rendered
+    assert "secret" not in rendered
 
 
 def test_sidecar_get_and_batch_are_strictly_book_scoped(pg_engine) -> None:

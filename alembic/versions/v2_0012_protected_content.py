@@ -237,8 +237,7 @@ def _create_archive_guards(runtime: str) -> None:
                and sidecar.sidecar_id = requested_sidecar_id
                for update;
             if not found then
-                raise exception using errcode = 'P0002',
-                    message = 'protected content was not found in the requested scope';
+                return null;
             end if;
             if locked_status = 'erased' then
                 return false;
