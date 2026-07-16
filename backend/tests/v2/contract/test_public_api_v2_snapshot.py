@@ -45,9 +45,33 @@ def test_public_v2_openapi_matches_reviewed_snapshot(
                 "ReportingLineResponse"
             ]
         }
+        protected_schema_names = (
+            "ImportArchiveExportResponse",
+            "ImportArchiveListResponse",
+            "ImportArchiveMetadataResponse",
+            "ImportArchiveRecordCountsResponse",
+            "JournalItemWithDescriptionResponse",
+            "JournalPageWithDescriptionsResponse",
+            "TransactionDescriptionResponse",
+        )
+        protected_schemas = {
+            name: {
+                "properties": sorted(
+                    openapi["components"]["schemas"][name]["properties"]
+                ),
+                "required": sorted(
+                    openapi["components"]["schemas"][name].get("required", [])
+                ),
+            }
+            for name in protected_schema_names
+        }
         expected = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
 
-        assert {"paths": paths, "schemas": schemas} == expected
+        assert {
+            "paths": paths,
+            "schemas": schemas,
+            "protected_schemas": protected_schemas,
+        } == expected
         assert paths
         assert all(path.startswith("/api/v2/") for path in paths)
         assert not any("/dev-" in path for path in paths)
@@ -66,5 +90,20 @@ def test_public_v2_openapi_matches_reviewed_snapshot(
         }
         assert password_signup["properties"]["password"]["minLength"] == 12
         assert password_signup["properties"]["password"]["maxLength"] == 128
+        assert "description" not in protected_schemas[
+            "JournalItemWithDescriptionResponse"
+        ]["required"]
+        assert protected_schemas["ImportArchiveMetadataResponse"]["properties"] == [
+            "archive_id",
+            "card_review_hash",
+            "content_commitment",
+            "contract_version",
+            "created_at",
+            "plan_hash",
+            "record_counts",
+            "seal",
+            "source_dump_hash",
+            "source_manifest_hash",
+        ]
     finally:
         engine.dispose()

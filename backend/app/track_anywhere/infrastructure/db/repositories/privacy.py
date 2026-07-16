@@ -152,6 +152,30 @@ class ProtectedContentRepository:
             if sidecar_id in by_id
         }
 
+    def get_batch(
+        self,
+        session: Session,
+        *,
+        book_id: UUID,
+        sidecar_ids: tuple[UUID, ...],
+    ) -> dict[UUID, ProtectedContentSnapshot]:
+        if not sidecar_ids:
+            return {}
+        records = session.execute(
+            select(ProtectedDescriptionSidecarRecord)
+            .where(
+                ProtectedDescriptionSidecarRecord.book_id == book_id,
+                ProtectedDescriptionSidecarRecord.sidecar_id.in_(sidecar_ids),
+            )
+            .execution_options(populate_existing=True)
+        ).scalars()
+        by_id = {record.sidecar_id: self._snapshot(record) for record in records}
+        return {
+            sidecar_id: by_id[sidecar_id]
+            for sidecar_id in sidecar_ids
+            if sidecar_id in by_id
+        }
+
     def erase(
         self,
         session: Session,

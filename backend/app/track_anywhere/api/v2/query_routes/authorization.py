@@ -16,6 +16,7 @@ from ..schemas import authenticate_request_actor
 
 BOOK_READ_SCOPE = "ledger:read"
 BookReadAuthorizer = Callable[[Session, Request, UUID], None]
+BookOwnerReadAuthorizer = Callable[[Session, Request, UUID], None]
 AuthorizedSessionDependency = Callable[..., Session]
 
 
@@ -24,6 +25,24 @@ def authorize_book_read(
     request: Request,
     book_id: UUID,
 ) -> None:
+    _authorized_membership(session, request, book_id)
+
+
+def authorize_book_owner_read(
+    session: Session,
+    request: Request,
+    book_id: UUID,
+) -> None:
+    membership = _authorized_membership(session, request, book_id)
+    if membership.role != "owner":
+        raise book_access_denied()
+
+
+def _authorized_membership(
+    session: Session,
+    request: Request,
+    book_id: UUID,
+):
     identity = authenticate_request_actor(session, request)
     if (
         identity.credential_book_id is not None
@@ -45,6 +64,7 @@ def authorize_book_read(
         or BOOK_READ_SCOPE not in membership.scopes
     ):
         raise book_access_denied()
+    return membership
 
 
 def create_authorized_session_dependency(
@@ -70,7 +90,9 @@ __all__ = [
     "BOOK_READ_SCOPE",
     "AuthorizedSessionDependency",
     "BookReadAuthorizer",
+    "BookOwnerReadAuthorizer",
     "authorize_book_read",
+    "authorize_book_owner_read",
     "book_access_denied",
     "create_authorized_session_dependency",
 ]

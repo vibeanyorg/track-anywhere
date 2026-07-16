@@ -2,16 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+import os
 
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..application.ledger_committer import LedgerCommitter
+from ..infrastructure.crypto import ProtectedContentCipher, ProtectedContentKeyring
 from ..infrastructure.db.engine import create_v2_engine
 from ..infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
 
 
 DATABASE_URL_ENV = "TRACK_ANYWHERE_DATABASE_URL"
+PROTECTED_CONTENT_KEYRING_FILE_ENV = (
+    "TRACK_ANYWHERE_PROTECTED_CONTENT_KEYRING_FILE"
+)
 
 SessionFactory = Callable[[], Session]
 SessionDependency = Callable[[], Iterator[Session]]
@@ -26,6 +31,7 @@ class RuntimeDependencies:
     get_session: SessionDependency
     uow_factory: UnitOfWorkFactory
     ledger_committer: LedgerCommitter
+    protected_content_cipher: ProtectedContentCipher | None
 
 
 def create_session_dependency(
@@ -46,13 +52,23 @@ def create_session_dependency(
 
 
 def build_runtime_dependencies(database_url: str) -> RuntimeDependencies:
-    return build_engine_dependencies(create_v2_engine(database_url))
+    return build_engine_dependencies(
+        create_v2_engine(database_url),
+        protected_content_cipher=_configured_protected_content_cipher(),
+    )
+
+
+def _configured_protected_content_cipher() -> ProtectedContentCipher | None:
+    if os.environ.get(PROTECTED_CONTENT_KEYRING_FILE_ENV) is None:
+        return None
+    return ProtectedContentCipher(ProtectedContentKeyring.from_environment())
 
 
 def build_engine_dependencies(
     engine: Engine,
     *,
     expected_runtime_role: str | None = None,
+    protected_content_cipher: ProtectedContentCipher | None = None,
 ) -> RuntimeDependencies:
     runtime_role = expected_runtime_role or engine.url.username
     if not runtime_role:
@@ -77,11 +93,13 @@ def build_engine_dependencies(
         get_session=get_session,
         uow_factory=create_unit_of_work,
         ledger_committer=LedgerCommitter(),
+        protected_content_cipher=protected_content_cipher,
     )
 
 
 __all__ = [
     "DATABASE_URL_ENV",
+    "PROTECTED_CONTENT_KEYRING_FILE_ENV",
     "RuntimeDependencies",
     "SessionDependency",
     "SessionFactory",

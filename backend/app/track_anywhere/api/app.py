@@ -9,6 +9,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from ..auth.resources import configured_public_base_url
+from ..infrastructure.crypto import ProtectedContentCipher
 from .dependencies import (
     DATABASE_URL_ENV,
     RuntimeDependencies,
@@ -34,8 +35,13 @@ def create_app(
     auth_router_factory: AuthRouterFactory | None = None,
     cookie_secure: bool | None = None,
     public_base_url: str | None = None,
+    protected_content_cipher: ProtectedContentCipher | None = None,
 ) -> FastAPI:
-    if dependencies is not None and (engine is not None or get_session is not None):
+    if dependencies is not None and (
+        engine is not None
+        or get_session is not None
+        or protected_content_cipher is not None
+    ):
         raise ValueError(
             "dependencies cannot be combined with engine or get_session overrides"
         )
@@ -44,6 +50,7 @@ def create_app(
         runtime = build_engine_dependencies(
             engine,
             expected_runtime_role=expected_runtime_role,
+            protected_content_cipher=protected_content_cipher,
         )
     if runtime is None and engine is None and get_session is None:
         database_url = os.environ.get(DATABASE_URL_ENV)
@@ -52,6 +59,11 @@ def create_app(
             # composition root without opening a socket during module import.
             runtime = build_runtime_dependencies(database_url)
     composed_engine = None if runtime is None else runtime.engine
+    composed_protected_content_cipher = (
+        protected_content_cipher
+        if runtime is None
+        else runtime.protected_content_cipher
+    )
     composed_role = (
         expected_runtime_role
         if expected_runtime_role is not None
@@ -110,6 +122,7 @@ def create_app(
             cookie_secure=secure_cookie,
             system_router_factory=system_router_factory,
             auth_router_factory=composed_auth_factory,
+            protected_content_cipher=composed_protected_content_cipher,
         )
     )
     install_error_handlers(application)

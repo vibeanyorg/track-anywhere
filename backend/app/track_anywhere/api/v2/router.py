@@ -5,6 +5,7 @@ from typing import Protocol
 from fastapi import APIRouter, FastAPI
 from sqlalchemy import Engine
 
+from ...infrastructure.crypto import ProtectedContentCipher
 from ..dependencies import SessionDependency, build_engine_dependencies
 from .auth import create_auth_router
 from .catalogs import create_catalog_router
@@ -42,6 +43,7 @@ def create_v2_router(
     cookie_secure: bool = False,
     system_router_factory: SystemRouterFactory | None = None,
     auth_router_factory: AuthRouterFactory | None = None,
+    protected_content_cipher: ProtectedContentCipher | None = None,
 ) -> APIRouter:
     system_factory = system_router_factory or create_system_router
     auth_factory = auth_router_factory or create_auth_router
@@ -96,7 +98,12 @@ def create_v2_router(
         )
     router.include_router(versioned_router)
     if engine is not None:
-        router.include_router(create_query_router(get_session))
+        router.include_router(
+            create_query_router(
+                get_session,
+                protected_content_cipher=protected_content_cipher,
+            )
+        )
     router.include_router(
         auth_factory(
             get_session,

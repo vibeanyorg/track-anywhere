@@ -113,6 +113,12 @@ def test_query_routes_are_owned_by_business_modules_without_path_drift() -> None
         (("GET",), "/api/v2/books/{book_id}/journal/transactions/{transaction_id}"): (
             "track_anywhere.api.v2.query_routes.journal"
         ),
+        (("GET",), "/api/v2/books/{book_id}/import-archives"): (
+            "track_anywhere.api.v2.query_routes.protected_content"
+        ),
+        (("GET",), "/api/v2/books/{book_id}/import-archives/{archive_id}/export"): (
+            "track_anywhere.api.v2.query_routes.protected_content"
+        ),
         (("GET",), "/api/v2/books/{book_id}/balances"): (
             "track_anywhere.api.v2.query_routes.reporting"
         ),

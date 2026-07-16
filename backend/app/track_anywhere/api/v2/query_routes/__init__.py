@@ -1,4 +1,10 @@
-from .authorization import BOOK_READ_SCOPE, BookReadAuthorizer, authorize_book_read
+from .authorization import (
+    BOOK_READ_SCOPE,
+    BookOwnerReadAuthorizer,
+    BookReadAuthorizer,
+    authorize_book_owner_read,
+    authorize_book_read,
+)
 from .catalog import (
     AccountListResponse,
     AccountResponse,
@@ -15,6 +21,15 @@ from .journal import (
     JournalItemResponse,
     JournalPageResponse,
     JournalPostingResponse,
+    JournalItemWithDescriptionResponse,
+    JournalPageWithDescriptionsResponse,
+    TransactionDescriptionResponse,
+)
+from .protected_content import (
+    ImportArchiveExportResponse,
+    ImportArchiveListResponse,
+    ImportArchiveMetadataResponse,
+    ImportArchiveRecordCountsResponse,
 )
 from .reporting import (
     BalanceSnapshotResponse,
@@ -33,16 +48,25 @@ __all__ = [
     "BalanceItemResponse",
     "BalanceSnapshotResponse",
     "BookListResponse",
+    "BookOwnerReadAuthorizer",
     "BookReadAuthorizer",
     "BookResponse",
     "CategoryListResponse",
     "CategoryResponse",
     "CreditCardRelationResponse",
     "JournalItemResponse",
+    "JournalItemWithDescriptionResponse",
     "JournalPageResponse",
+    "JournalPageWithDescriptionsResponse",
     "JournalPostingResponse",
     "ReportingLineResponse",
     "ReportingLinesResponse",
+    "TransactionDescriptionResponse",
+    "ImportArchiveExportResponse",
+    "ImportArchiveListResponse",
+    "ImportArchiveMetadataResponse",
+    "ImportArchiveRecordCountsResponse",
+    "authorize_book_owner_read",
     "authorize_book_read",
     "create_query_router",
 ]

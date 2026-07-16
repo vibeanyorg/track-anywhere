@@ -50,6 +50,7 @@ class JournalItem:
     reversed_by_transaction_id: UUID | None
     reverses_transaction_id: UUID | None
     credit_card_relation: CreditCardRelation | None = None
+    description_ref: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +254,7 @@ def _list_journal(
             reversed_by_transaction_id=reversed_by,
             reverses_transaction_id=reverses,
             credit_card_relation=card_relations.get(transaction.transaction_id),
+            description_ref=transaction.description_ref,
         )
         for transaction, reversed_by, reverses in page_rows
     )

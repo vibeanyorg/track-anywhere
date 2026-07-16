@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 
 from ...domain.privacy import FrozenContract
 from ...infrastructure.crypto import (
+    PROTECTED_CONTENT_ALGORITHM,
     ProtectedContentCipher,
     ProtectedContentDecryptionError,
+    ProtectedContentError,
     SealedProtectedContent,
 )
 from ...infrastructure.db.repositories.privacy import (
@@ -125,6 +127,41 @@ class ProtectedContentService:
                 "protected content conflicts with existing data"
             ) from None
 
+    def decrypt_active(
+        self,
+        content: ProtectedContentSnapshot,
+        *,
+        expected_kind: ProtectedContentKind,
+    ) -> bytes:
+        if (
+            type(content) is not ProtectedContentSnapshot
+            or content.status != "active"
+            or content.kind != expected_kind
+            or content.ciphertext is None
+            or content.key_ref is None
+            or content.nonce is None
+        ):
+            raise ProtectedContentConflict(
+                "protected content conflicts with existing data"
+            )
+        try:
+            return self._cipher.decrypt(
+                book_id=content.book_id,
+                sidecar_id=content.sidecar_id,
+                kind=expected_kind,
+                sealed=SealedProtectedContent(
+                    key_ref=content.key_ref,
+                    algorithm=content.algorithm,
+                    content_hash=content.content_hash,
+                    ciphertext=content.ciphertext,
+                    nonce=content.nonce,
+                ),
+            )
+        except ProtectedContentDecryptionError:
+            raise ProtectedContentConflict(
+                "protected content conflicts with existing data"
+            ) from None
+
     def create_or_exact_verify_archive(
         self,
         session: Session,
@@ -187,6 +224,82 @@ class ProtectedContentService:
             )
         return existing
 
+    def verify_archive_manifest(
+        self,
+        manifest: ImportArchiveManifestSnapshot,
+        *,
+        include_content: bool,
+    ) -> bytes | None:
+        if type(manifest) is not ImportArchiveManifestSnapshot:
+            raise ProtectedContentConflict(
+                "protected content conflicts with existing data"
+            )
+        sidecar = manifest.sidecar
+        if (
+            sidecar.book_id != manifest.book_id
+            or sidecar.sidecar_id != manifest.archive_id
+            or sidecar.status != "active"
+            or sidecar.kind != "import_archive"
+            or type(sidecar.ciphertext) is not bytes
+            or len(sidecar.ciphertext) < 16
+            or sidecar.key_ref is None
+            or type(sidecar.nonce) is not bytes
+            or len(sidecar.nonce) != 12
+            or sidecar.algorithm != PROTECTED_CONTENT_ALGORITHM
+            or not _is_digest(sidecar.content_hash)
+            or any(
+                not _is_digest(value)
+                for value in (
+                    manifest.source_dump_hash,
+                    manifest.source_manifest_hash,
+                    manifest.card_review_hash,
+                    manifest.plan_hash,
+                    manifest.archive_content_commitment,
+                    manifest.seal,
+                )
+            )
+            or not hmac.compare_digest(
+                manifest.archive_content_commitment,
+                sidecar.content_hash,
+            )
+        ):
+            raise ProtectedContentConflict(
+                "protected content conflicts with existing data"
+            )
+        try:
+            expected_seal = self._cipher.commit_archive_seal(
+                book_id=manifest.book_id,
+                archive_id=manifest.archive_id,
+                key_ref=sidecar.key_ref,
+                contract_version=manifest.contract_version,
+                source_dump_hash=manifest.source_dump_hash,
+                source_manifest_hash=manifest.source_manifest_hash,
+                card_review_hash=manifest.card_review_hash,
+                plan_hash=manifest.plan_hash,
+                archive_content_commitment=manifest.archive_content_commitment,
+                record_counts=dict(manifest.record_counts),
+            )
+        except ProtectedContentError:
+            raise ProtectedContentConflict(
+                "protected content conflicts with existing data"
+            ) from None
+        if not hmac.compare_digest(expected_seal, manifest.seal):
+            raise ProtectedContentConflict(
+                "protected content conflicts with existing data"
+            )
+        if not include_content:
+            return None
+        plaintext = self.decrypt_active(
+            sidecar,
+            expected_kind="import_archive",
+        )
+        canonical = _canonicalize_ndjson(plaintext)
+        if not hmac.compare_digest(canonical, plaintext):
+            raise ProtectedContentConflict(
+                "protected content conflicts with existing data"
+            )
+        return plaintext
+
     def _verify_exact(
         self,
         existing: ProtectedContentSnapshot,
@@ -194,31 +307,7 @@ class ProtectedContentService:
         kind: ProtectedContentKind,
         canonical_plaintext: bytes,
     ) -> ProtectedContentSnapshot:
-        if (
-            existing.status != "active"
-            or existing.kind != kind
-            or existing.ciphertext is None
-            or existing.key_ref is None
-            or existing.nonce is None
-        ):
-            raise ProtectedContentConflict("protected content conflicts with existing data")
-        try:
-            decrypted = self._cipher.decrypt(
-                book_id=existing.book_id,
-                sidecar_id=existing.sidecar_id,
-                kind=kind,
-                sealed=SealedProtectedContent(
-                    key_ref=existing.key_ref,
-                    algorithm=existing.algorithm,
-                    content_hash=existing.content_hash,
-                    ciphertext=existing.ciphertext,
-                    nonce=existing.nonce,
-                ),
-            )
-        except ProtectedContentDecryptionError:
-            raise ProtectedContentConflict(
-                "protected content conflicts with existing data"
-            ) from None
+        decrypted = self.decrypt_active(existing, expected_kind=kind)
         if type(canonical_plaintext) is not bytes or not hmac.compare_digest(
             decrypted, canonical_plaintext
         ):
@@ -281,6 +370,10 @@ def _canonicalize_ndjson(value: bytes) -> bytes:
         return b"\n".join(canonical_lines) + b"\n"
     except (TypeError, UnicodeError, ValueError, json.JSONDecodeError):
         raise ProtectedContentConflict("import archive content is invalid") from None
+
+
+def _is_digest(value: object) -> bool:
+    return type(value) is bytes and len(value) == 32
 
 
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

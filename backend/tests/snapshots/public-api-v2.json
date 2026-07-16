@@ -64,6 +64,12 @@
     "/api/v2/books/{book_id}/credit-cards/refunds": [
       "post"
     ],
+    "/api/v2/books/{book_id}/import-archives": [
+      "get"
+    ],
+    "/api/v2/books/{book_id}/import-archives/{archive_id}/export": [
+      "get"
+    ],
     "/api/v2/books/{book_id}/investments/lots/acquire": [
       "post"
     ],
@@ -128,6 +134,127 @@
     "/api/v2/ready": [
       "get"
     ]
+  },
+  "protected_schemas": {
+    "ImportArchiveExportResponse": {
+      "properties": [
+        "archive_id",
+        "content_commitment",
+        "content_type",
+        "ndjson",
+        "seal"
+      ],
+      "required": [
+        "archive_id",
+        "content_commitment",
+        "content_type",
+        "ndjson",
+        "seal"
+      ]
+    },
+    "ImportArchiveListResponse": {
+      "properties": [
+        "items"
+      ],
+      "required": [
+        "items"
+      ]
+    },
+    "ImportArchiveMetadataResponse": {
+      "properties": [
+        "archive_id",
+        "card_review_hash",
+        "content_commitment",
+        "contract_version",
+        "created_at",
+        "plan_hash",
+        "record_counts",
+        "seal",
+        "source_dump_hash",
+        "source_manifest_hash"
+      ],
+      "required": [
+        "archive_id",
+        "card_review_hash",
+        "content_commitment",
+        "contract_version",
+        "created_at",
+        "plan_hash",
+        "record_counts",
+        "seal",
+        "source_dump_hash",
+        "source_manifest_hash"
+      ]
+    },
+    "ImportArchiveRecordCountsResponse": {
+      "properties": [
+        "classification_audit_records",
+        "counterparty_records",
+        "institution_metadata_records",
+        "investment_activities",
+        "investment_valuations",
+        "omission_records",
+        "uncategorized_fx_reporting_facts"
+      ],
+      "required": [
+        "classification_audit_records",
+        "counterparty_records",
+        "institution_metadata_records",
+        "investment_activities",
+        "investment_valuations",
+        "omission_records",
+        "uncategorized_fx_reporting_facts"
+      ]
+    },
+    "JournalItemWithDescriptionResponse": {
+      "properties": [
+        "book_position",
+        "credit_card_relation",
+        "description",
+        "effective_at",
+        "is_reversed",
+        "postings",
+        "reversed_by_transaction_id",
+        "reverses_transaction_id",
+        "transaction_id",
+        "transaction_kind"
+      ],
+      "required": [
+        "book_position",
+        "credit_card_relation",
+        "effective_at",
+        "is_reversed",
+        "postings",
+        "reversed_by_transaction_id",
+        "reverses_transaction_id",
+        "transaction_id",
+        "transaction_kind"
+      ]
+    },
+    "JournalPageWithDescriptionsResponse": {
+      "properties": [
+        "as_of_book_position",
+        "items",
+        "next_cursor"
+      ],
+      "required": [
+        "as_of_book_position",
+        "items",
+        "next_cursor"
+      ]
+    },
+    "TransactionDescriptionResponse": {
+      "properties": [
+        "line_memos",
+        "purpose",
+        "transaction_memo"
+      ],
+      "required": [
+        "line_memos",
+        "purpose",
+        "transaction_memo"
+      ]
+    }
   },
   "schemas": {
     "PasswordSessionCommand": {
