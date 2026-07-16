@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 
 from track_anywhere_cli.click_app import run
+from track_anywhere_cli.commands import dispatch_api_command
+from track_anywhere_cli.config import CliConfig
 
 
 BOOK = "11111111-1111-1111-1111-111111111111"
@@ -227,6 +230,82 @@ def test_transaction_show_explicitly_requests_owner_only_description(capsys):
             "GET",
             f"/api/v2/books/{BOOK}/journal/transactions/{TX}"
             "?as_of_book_position=99&include_description=true",
+            None,
+            None,
+        )
+    ]
+
+
+def test_direct_dispatch_explicitly_requests_list_and_show_descriptions():
+    calls = []
+    requester = _recorder(calls)
+    config = CliConfig(base_url="http://testserver", token="token")
+
+    assert dispatch_api_command(
+        Namespace(
+            command="tx",
+            tx_command="list",
+            book_id=BOOK,
+            limit=5,
+            cursor="opaque+/=",
+            as_of_book_position=99,
+            include_description=True,
+        ),
+        config,
+        requester,
+    ) == (200, {"ok": True})
+    assert dispatch_api_command(
+        Namespace(
+            command="tx",
+            tx_command="show",
+            book_id=BOOK,
+            transaction_id=TX,
+            as_of_book_position=99,
+            include_description=True,
+        ),
+        config,
+        requester,
+    ) == (200, {"ok": True})
+
+    assert calls == [
+        (
+            "GET",
+            f"/api/v2/books/{BOOK}/journal?limit=5&cursor=opaque%2B%2F%3D"
+            "&as_of_book_position=99&include_description=true",
+            None,
+            None,
+        ),
+        (
+            "GET",
+            f"/api/v2/books/{BOOK}/journal/transactions/{TX}"
+            "?as_of_book_position=99&include_description=true",
+            None,
+            None,
+        ),
+    ]
+
+
+def test_direct_dispatch_omits_description_query_when_flag_is_false():
+    calls = []
+
+    assert dispatch_api_command(
+        Namespace(
+            command="tx",
+            tx_command="list",
+            book_id=BOOK,
+            limit=50,
+            cursor=None,
+            as_of_book_position=None,
+            include_description=False,
+        ),
+        CliConfig(base_url="http://testserver", token="token"),
+        _recorder(calls),
+    ) == (200, {"ok": True})
+
+    assert calls == [
+        (
+            "GET",
+            f"/api/v2/books/{BOOK}/journal?limit=50",
             None,
             None,
         )

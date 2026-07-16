@@ -76,7 +76,7 @@ def test_archive_click_commands_use_explicit_owner_only_read_routes(capsys):
     ]
 
 
-def test_archive_dispatch_and_command_policy_share_the_public_registry():
+def test_archive_direct_dispatch_uses_exact_owner_only_read_routes():
     calls = []
     requester = _recorder(calls)
     config = CliConfig(base_url="http://testserver", token="token")
@@ -101,7 +101,26 @@ def test_archive_dispatch_and_command_policy_share_the_public_registry():
         requester,
     ) == (200, {"ok": True})
 
+    assert calls == [
+        (
+            "GET",
+            "/api/v2/books/book%20%2F%3F/import-archives",
+            None,
+            None,
+        ),
+        (
+            "GET",
+            "/api/v2/books/book%20%2F%3F/import-archives/"
+            "archive%20%2F%3F/export",
+            None,
+            None,
+        ),
+    ]
+
+
+def test_archive_command_policy_comes_from_the_public_registry():
     definitions = command_definitions()
+
     for command_path in ("archive.list", "archive.export"):
         definition = definitions[command_path]
         assert definition.requires_auth is True
