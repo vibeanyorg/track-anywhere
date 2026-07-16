@@ -7,6 +7,7 @@ from track_anywhere.observability.metrics import LedgerMetrics
 def test_sensitive_fields_are_redacted_recursively() -> None:
     raw = {
         "api_key": "ta_super_secret",
+        "setup_key": "ta_private_setup_secret",
         "credential": "bearer secret",
         "memo": "a full private merchant memo",
         "attachment_content": "raw attachment bytes",
@@ -18,6 +19,7 @@ def test_sensitive_fields_are_redacted_recursively() -> None:
     rendered = repr(safe)
 
     assert "ta_super_secret" not in rendered
+    assert "ta_private_setup_secret" not in rendered
     assert "bearer secret" not in rendered
     assert "full private merchant memo" not in rendered
     assert "raw attachment bytes" not in rendered
@@ -32,8 +34,16 @@ def test_audit_signal_and_metrics_expose_only_bounded_fields() -> None:
         fields={"memo": "private", "expected_hash": "do-not-log"},
     )
     metrics = LedgerMetrics()
-    metrics.increment("integrity.p0", labels={"book_id": "book-1", "api_key": "secret"})
+    metrics.increment(
+        "integrity.p0",
+        labels={
+            "book_id": "book-1",
+            "api_key": "secret",
+            "setup_key": "setup-secret",
+        },
+    )
 
     assert signal.severity == "P0"
     assert signal.fields == {"memo": "[REDACTED]", "expected_hash": "[REDACTED]"}
     assert "secret" not in repr(metrics.snapshot())
+    assert "setup-secret" not in repr(metrics.snapshot())

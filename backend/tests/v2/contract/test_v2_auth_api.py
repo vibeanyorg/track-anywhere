@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import base64
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from threading import Barrier, Lock
 from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ from track_anywhere.infrastructure.db.models.auth import (
     OAuthAuthorizationGrantRecord,
     OAuthClientRecord,
     OAuthDeviceGrantRecord,
+    PasswordAccountRecord,
     UserRecord,
 )
 
@@ -31,7 +33,12 @@ def _unused_session() -> Iterator[Session]:
     yield
 
 
-def _seed_api_key(pg_engine, raw_api_key: str):
+def _seed_api_key(
+    pg_engine,
+    raw_api_key: str,
+    *,
+    scopes: list[str] | None = None,
+):
     issued_at = datetime.now(UTC)
     factory = sessionmaker(pg_engine, expire_on_commit=False)
     with factory.begin() as session:
@@ -52,7 +59,7 @@ def _seed_api_key(pg_engine, raw_api_key: str):
                 actor_type="human",
                 auth_kind="api_key",
                 book_id=None,
-                scopes=["book:read", "ledger:read"],
+                scopes=scopes or ["book:read", "ledger:read"],
                 issued_at=issued_at,
                 expires_at=issued_at + timedelta(hours=1),
                 revoked_at=None,
@@ -113,6 +120,7 @@ def test_api_key_login_persists_binary_hashed_browser_session(pg_engine) -> None
     )
 
     assert login.status_code == 200
+    assert login.headers["cache-control"] == "no-store"
     assert login.json()["authenticated"] is True
     csrf_token = login.json()["csrf_token"]
     raw_session = login.cookies["ta_session"]
@@ -153,6 +161,480 @@ def test_api_key_login_persists_binary_hashed_browser_session(pg_engine) -> None
     )
     assert logout.status_code == 200
     assert second_client.get("/api/v2/auth/session").json()["authenticated"] is False
+
+
+def test_first_password_signup_claims_existing_owner_and_issues_session(
+    pg_engine,
+) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+    from track_anywhere.auth.security import verify_password_hash
+
+    factory, get_session = _seed_api_key(
+        pg_engine,
+        "ta_existing_owner",
+        scopes=["book:read", "book:write", "ledger:read", "ledger:write"],
+    )
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+    client = TestClient(app)
+
+    signup = client.post(
+        "/api/v2/auth/signup",
+        headers={"Origin": "http://testserver"},
+        json={
+            "display_name": "Alice Owner",
+            "email": "  Alice@Example.Test ",
+            "password": "correct horse battery staple",
+            "setup_key": "ta_existing_owner",
+        },
+    )
+
+    assert signup.status_code == 201
+    assert signup.headers["cache-control"] == "no-store"
+    assert signup.json()["authenticated"] is True
+    assert signup.json()["identity"] == {
+        "user_id": "human:test",
+        "display_name": "Alice Owner",
+        "subject_type": "human",
+        "auth_kind": "browser_session",
+        "book_id": None,
+        "scopes": ["book:read", "book:write", "ledger:read", "ledger:write"],
+    }
+    assert signup.cookies["ta_session"]
+    assert signup.cookies["ta_csrf"]
+    assert "correct horse battery staple" not in signup.text
+    assert "ta_existing_owner" not in signup.text
+
+    with factory() as session:
+        users = list(session.scalars(select(UserRecord)))
+        password_account = session.scalar(select(PasswordAccountRecord))
+        assert [user.user_id for user in users] == ["human:test"]
+        assert users[0].current_display_name == "Alice Owner"
+        assert password_account is not None
+        assert password_account.user_id == "human:test"
+        assert password_account.normalized_email == "alice@example.test"
+        assert password_account.password_hash != "correct horse battery staple"
+        assert verify_password_hash(
+            "correct horse battery staple",
+            password_account.password_hash,
+        )
+
+
+def test_password_signup_is_same_origin_and_first_account_only(pg_engine) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    factory, get_session = _seed_api_key(
+        pg_engine,
+        "ta_private_setup",
+        scopes=["book:read", "book:write", "ledger:read", "ledger:write"],
+    )
+
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+    client = TestClient(app)
+    payload = {
+        "display_name": "First Owner",
+        "email": "owner@example.test",
+        "password": "a long private password",
+        "setup_key": "ta_private_setup",
+    }
+
+    cross_origin = client.post(
+        "/api/v2/auth/signup",
+        headers={"Origin": "https://attacker.example"},
+        json=payload,
+    )
+    assert cross_origin.status_code == 403
+
+    invalid_key = client.post(
+        "/api/v2/auth/signup",
+        headers={"Origin": "http://testserver"},
+        json={**payload, "setup_key": "ta_wrong_setup_key"},
+    )
+    assert invalid_key.status_code == 401
+    assert invalid_key.json() == {"detail": "Setup key is invalid or expired"}
+
+    with factory() as session:
+        assert session.scalar(select(PasswordAccountRecord)) is None
+
+    first = client.post(
+        "/api/v2/auth/signup",
+        headers={"Origin": "http://testserver"},
+        json=payload,
+    )
+    assert first.status_code == 201
+
+    second = TestClient(app).post(
+        "/api/v2/auth/signup",
+        headers={"Origin": "http://testserver"},
+        json={**payload, "email": "other@example.test"},
+    )
+    assert second.status_code == 409
+    assert second.json() == {"detail": "Account setup is already complete"}
+
+    with factory() as session:
+        assert len(list(session.scalars(select(PasswordAccountRecord)))) == 1
+        assert len(list(session.scalars(select(UserRecord)))) == 1
+
+
+def test_concurrent_first_password_signups_create_exactly_one_account(
+    pg_engine,
+) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    factory, _ = _seed_api_key(
+        pg_engine,
+        "ta_concurrent_setup",
+        scopes=["book:read", "book:write", "ledger:read", "ledger:write"],
+    )
+    sessions_ready = Barrier(2)
+    session_ids: set[int] = set()
+    session_ids_lock = Lock()
+
+    def get_concurrent_session() -> Iterator[Session]:
+        with factory() as session, session.begin():
+            with session_ids_lock:
+                session_ids.add(id(session))
+            sessions_ready.wait(timeout=10)
+            yield session
+
+    first_app = FastAPI()
+    first_app.include_router(create_auth_router(get_concurrent_session))
+    second_app = FastAPI()
+    second_app.include_router(create_auth_router(get_concurrent_session))
+    payload = {
+        "display_name": "Concurrent Owner",
+        "password": "a sufficiently long password",
+        "setup_key": "ta_concurrent_setup",
+    }
+
+    def submit(client: TestClient, email: str):
+        return client.post(
+            "/api/v2/auth/signup",
+            headers={"Origin": "http://testserver"},
+            json={**payload, "email": email},
+        )
+
+    with TestClient(first_app) as first_client, TestClient(second_app) as second_client:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = [
+                future.result(timeout=20)
+                for future in (
+                    pool.submit(submit, first_client, "first@example.test"),
+                    pool.submit(submit, second_client, "second@example.test"),
+                )
+            ]
+
+    assert len(session_ids) == 2
+    assert sorted(response.status_code for response in responses) == [201, 409]
+    assert [
+        response.json()
+        for response in responses
+        if response.status_code == 409
+    ] == [{"detail": "Account setup is already complete"}]
+    with factory() as session:
+        password_accounts = list(session.scalars(select(PasswordAccountRecord)))
+        assert len(password_accounts) == 1
+        assert password_accounts[0].normalized_email in {
+            "first@example.test",
+            "second@example.test",
+        }
+
+
+def test_password_signup_requires_an_unscoped_owner_setup_key(pg_engine) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    factory, get_session = _seed_api_key(
+        pg_engine,
+        "ta_read_only_setup",
+        scopes=["book:read", "ledger:read"],
+    )
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+
+    response = TestClient(app).post(
+        "/api/v2/auth/signup",
+        headers={"Origin": "http://testserver"},
+        json={
+            "display_name": "Owner",
+            "email": "owner@example.test",
+            "password": "a sufficiently long password",
+            "setup_key": "ta_read_only_setup",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Setup key is invalid or expired"}
+    with factory() as session:
+        assert session.scalar(select(PasswordAccountRecord)) is None
+
+
+def test_password_auth_rejects_malformed_email_and_weak_password(pg_engine) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    factory, get_session = _seed_api_key(
+        pg_engine,
+        "ta_validation_setup",
+        scopes=["book:read", "book:write", "ledger:read", "ledger:write"],
+    )
+
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+    client = TestClient(app)
+
+    invalid_email = client.post(
+        "/api/v2/auth/signup",
+        headers={"Origin": "http://testserver"},
+        json={
+            "display_name": "Owner",
+            "email": "not-an-email",
+            "password": "a sufficiently long password",
+            "setup_key": "ta_validation_setup",
+        },
+    )
+    weak_password = client.post(
+        "/api/v2/auth/signup",
+        headers={"Origin": "http://testserver"},
+        json={
+            "display_name": "Owner",
+            "email": "owner@example.test",
+            "password": "too-short",
+            "setup_key": "ta_validation_setup",
+        },
+    )
+
+    assert invalid_email.status_code == 422
+    assert weak_password.status_code == 422
+
+    with factory() as session:
+        assert session.scalar(select(PasswordAccountRecord)) is None
+
+
+def test_password_login_is_generic_and_persists_before_follow_up(pg_engine) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    factory, get_session = _seed_api_key(
+        pg_engine,
+        "ta_password_setup",
+        scopes=["book:read", "book:write", "ledger:read", "ledger:write"],
+    )
+
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+    client = TestClient(app)
+    signup = client.post(
+        "/api/v2/auth/signup",
+        headers={"Origin": "http://testserver"},
+        json={
+            "display_name": "Password Owner",
+            "email": "owner@example.test",
+            "password": "correct horse battery staple",
+            "setup_key": "ta_password_setup",
+        },
+    )
+    assert signup.status_code == 201
+    logout = client.post(
+        "/api/v2/auth/logout",
+        headers={
+            "Origin": "http://testserver",
+            "X-CSRF-Token": signup.json()["csrf_token"],
+        },
+    )
+    assert logout.status_code == 200
+
+    wrong_password = client.post(
+        "/api/v2/auth/session/password",
+        headers={"Origin": "http://testserver"},
+        json={
+            "email": "owner@example.test",
+            "password": "this password is incorrect",
+        },
+    )
+    unknown_email = client.post(
+        "/api/v2/auth/session/password",
+        headers={"Origin": "http://testserver"},
+        json={
+            "email": "unknown@example.test",
+            "password": "this password is incorrect",
+        },
+    )
+    assert wrong_password.status_code == unknown_email.status_code == 401
+    assert wrong_password.json() == unknown_email.json() == {
+        "detail": "Email or password is invalid"
+    }
+
+    login = client.post(
+        "/api/v2/auth/session/password",
+        headers={"Origin": "http://testserver"},
+        json={
+            "email": " OWNER@example.test ",
+            "password": "correct horse battery staple",
+        },
+    )
+    assert login.status_code == 200
+    assert login.json()["authenticated"] is True
+    assert client.get("/api/v2/auth/session").json()["authenticated"] is True
+
+
+def test_auth_dependencies_finalize_before_the_response_body() -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    events: list[str] = []
+
+    def get_session() -> Iterator[object]:
+        try:
+            yield object()
+        finally:
+            events.append("dependency-finalized")
+
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+
+    class ResponseProbe:
+        def __init__(self, application: object) -> None:
+            self.application = application
+
+        async def __call__(self, scope, receive, send) -> None:
+            async def tracked_send(message) -> None:
+                if (
+                    message["type"] == "http.response.body"
+                    and not message.get("more_body", False)
+                ):
+                    events.append("response-body")
+                await send(message)
+
+            await self.application(scope, receive, tracked_send)
+
+    response = TestClient(ResponseProbe(app)).get("/api/v2/auth/session")
+
+    assert response.status_code == 200
+    assert events == ["dependency-finalized", "response-body"]
+
+
+def test_password_login_returns_retry_after_before_password_work() -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    class RejectingThrottle:
+        def check(self, client: str, subject: str) -> int | None:
+            assert client == "testclient"
+            assert subject == "login:owner@example.test"
+            return 17
+
+        def reset(self, subject: str) -> None:
+            raise AssertionError(f"blocked login unexpectedly reset {subject}")
+
+    def get_session() -> Iterator[object]:
+        yield object()
+
+    app = FastAPI()
+    app.include_router(
+        create_auth_router(
+            get_session,
+            password_throttle=RejectingThrottle(),
+        )
+    )
+    response = TestClient(app).post(
+        "/api/v2/auth/session/password",
+        headers={"Origin": "http://testserver"},
+        json={
+            "email": " OWNER@example.test ",
+            "password": "a sufficiently long password",
+        },
+    )
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "17"
+    assert response.json() == {"detail": "Too many authentication attempts"}
+
+
+def test_default_password_login_throttle_is_wired_to_the_route(
+    pg_engine,
+    monkeypatch,
+) -> None:
+    import track_anywhere.api.v2.auth as auth_api
+    from track_anywhere.auth.throttle import InMemoryAuthThrottle
+
+    monkeypatch.setattr(
+        auth_api,
+        "_PASSWORD_AUTH_THROTTLE",
+        InMemoryAuthThrottle(client_capacity=100),
+    )
+
+    _, get_session = _seed_api_key(pg_engine, "ta_throttle_wiring_seed")
+    app = FastAPI()
+    app.include_router(auth_api.create_auth_router(get_session))
+    client = TestClient(app)
+    payload = {
+        "email": "route-throttle@example.test",
+        "password": "a deliberately incorrect password",
+    }
+
+    responses = [
+        client.post(
+            "/api/v2/auth/session/password",
+            headers={"Origin": "http://testserver"},
+            json=payload,
+        )
+        for _ in range(9)
+    ]
+
+    assert [response.status_code for response in responses[:8]] == [401] * 8
+    blocked = responses[8]
+    assert blocked.status_code == 429
+    assert int(blocked.headers["retry-after"]) >= 1
+    assert blocked.json() == {"detail": "Too many authentication attempts"}
+
+
+def test_rotating_login_subjects_do_not_block_an_unrelated_client(pg_engine) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+    from track_anywhere.auth.throttle import InMemoryAuthThrottle
+
+    _, get_session = _seed_api_key(pg_engine, "ta_client_throttle_seed")
+    app = FastAPI()
+    app.include_router(
+        create_auth_router(
+            get_session,
+            password_throttle=InMemoryAuthThrottle(
+                client_capacity=2,
+                client_refill_per_second=0.1,
+                subject_capacity=100,
+                subject_refill_per_second=1,
+            ),
+        )
+    )
+    attacker = TestClient(app, client=("198.51.100.10", 50000))
+    unrelated = TestClient(app, client=("203.0.113.20", 50000))
+
+    for index in range(2):
+        response = attacker.post(
+            "/api/v2/auth/session/password",
+            headers={"Origin": "http://testserver"},
+            json={
+                "email": f"attacker-{index}@example.test",
+                "password": "a deliberately incorrect password",
+            },
+        )
+        assert response.status_code == 401
+
+    blocked = attacker.post(
+        "/api/v2/auth/session/password",
+        headers={"Origin": "http://testserver"},
+        json={
+            "email": "attacker-2@example.test",
+            "password": "a deliberately incorrect password",
+        },
+    )
+    still_available = unrelated.post(
+        "/api/v2/auth/session/password",
+        headers={"Origin": "http://testserver"},
+        json={
+            "email": "owner@example.test",
+            "password": "a deliberately incorrect password",
+        },
+    )
+
+    assert blocked.status_code == 429
+    assert still_available.status_code == 401
 
 
 def test_browser_auth_uses_configured_public_origin_behind_proxy(pg_engine) -> None:

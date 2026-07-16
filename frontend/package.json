@@ -10,7 +10,7 @@
     "build": "next build",
     "lint": "tsc --noEmit",
     "test": "npm run test:static && npm run test:oauth",
-    "test:static": "node --test tests/static-export.test.mjs tests/public-origin.test.mjs",
+    "test:static": "node --test tests/static-export.test.mjs tests/public-origin.test.mjs tests/auth-surface.test.mjs",
     "test:oauth": "node --test tests/oauth-consent.test.mjs"
   },
   "dependencies": {

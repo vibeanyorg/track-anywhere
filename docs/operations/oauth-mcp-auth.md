@@ -86,9 +86,33 @@ resource metadata, dynamically registers a public client, and requests
 `ledger:read`. Every exposed MCP tool is read-only, idempotent, and mirrors its
 OAuth security scheme in both the top-level descriptor and `_meta`.
 
-The existing browser sign-in uses a personal API key once to create an
-HttpOnly, CSRF-protected browser session. That bootstrap credential remains on
-the Track Anywhere origin; it is never returned to or presented by ChatGPT.
+The browser supports a private-instance owner account. `POST /api/v2/auth/signup`
+requires the existing human owner's personal API key as a high-entropy setup
+key and is available only until the first password account is created. Setup
+binds the password to the credential's exact user, so its CLI/API-key identity
+and browser identity do not diverge. Origin/Referer checks are defense in depth,
+not proof of ownership. Later attempts return `409`, and normal sign-in uses
+`POST /api/v2/auth/session/password`. Passwords use the schema-pinned
+PBKDF2-SHA256 format and are never returned.
+
+An existing personal API key can still be exchanged for an HttpOnly,
+CSRF-protected browser session as a recovery-compatible login option. Neither
+passwords nor that bootstrap credential are returned to or presented by
+ChatGPT. Complete first-owner setup from a trusted browser immediately after a
+new private deployment; the UI does not provide password reset or additional
+public account registration. Treat the setup key as a secret and never put it
+in a URL, log, or chat message.
+
+The single-process application applies bounded token-bucket throttles before
+password hashing: one budget per trusted client address and one per normalized
+email subject, with `429` and `Retry-After` on exhaustion. There is no shared
+process-wide denial bucket, so one client rotating email addresses cannot spend
+the login budget of unrelated clients. This protects the supported one-replica
+personal deployment from online guessing and PBKDF2 CPU saturation. A
+multi-replica topology requires a shared limiter. Configure Uvicorn's
+`FORWARDED_ALLOW_IPS` to the exact Dokploy/Traefik network CIDR so the client
+budget uses the verified forwarded address, and enforce an independent
+client-IP rate limit at the public reverse proxy.
 
 ## Local and production composition
 

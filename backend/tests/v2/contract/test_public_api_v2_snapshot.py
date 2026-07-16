@@ -35,6 +35,12 @@ def test_public_v2_openapi_matches_reviewed_snapshot(
             for path, operations in sorted(openapi["paths"].items())
         }
         schemas = {
+            "PasswordSessionCommand": openapi["components"]["schemas"][
+                "PasswordSessionCommand"
+            ],
+            "PasswordSignupCommand": openapi["components"]["schemas"][
+                "PasswordSignupCommand"
+            ],
             "ReportingLineResponse": openapi["components"]["schemas"][
                 "ReportingLineResponse"
             ]
@@ -44,6 +50,21 @@ def test_public_v2_openapi_matches_reviewed_snapshot(
         assert {"paths": paths, "schemas": schemas} == expected
         assert paths
         assert all(path.startswith("/api/v2/") for path in paths)
-        assert not any("/dev-" in path or "/password" in path for path in paths)
+        assert not any("/dev-" in path for path in paths)
+        assert paths["/api/v2/auth/signup"] == ["post"]
+        assert paths["/api/v2/auth/session/password"] == ["post"]
+        password_session = schemas["PasswordSessionCommand"]
+        assert set(password_session["required"]) == {"email", "password"}
+        assert password_session["properties"]["password"]["minLength"] == 12
+        assert password_session["properties"]["password"]["maxLength"] == 128
+        password_signup = schemas["PasswordSignupCommand"]
+        assert set(password_signup["required"]) == {
+            "display_name",
+            "email",
+            "password",
+            "setup_key",
+        }
+        assert password_signup["properties"]["password"]["minLength"] == 12
+        assert password_signup["properties"]["password"]["maxLength"] == 128
     finally:
         engine.dispose()

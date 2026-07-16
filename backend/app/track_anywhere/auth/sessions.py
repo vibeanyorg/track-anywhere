@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from ..infrastructure.db.repositories.auth import (
     CredentialUnavailable,
     UserSnapshot,
 )
+from .contracts import OWNER_SCOPES
 from .errors import AuthPolicyDenied
 from .security import new_secret, secret_digest
 
@@ -106,7 +107,40 @@ class PersistentSessionService:
         ttl: timedelta = timedelta(hours=8),
     ) -> IssuedBrowserSession:
         now = datetime.now(UTC)
-        expires_at = min(now + ttl, credential.expires_at)
+        return self._persist_browser_session(
+            user=user,
+            book_id=credential.book_id,
+            scopes=credential.scopes,
+            issued_at=now,
+            expires_at=min(now + ttl, credential.expires_at),
+        )
+
+    def issue_password_session(
+        self,
+        *,
+        user: UserSnapshot,
+        ttl: timedelta = timedelta(hours=8),
+    ) -> IssuedBrowserSession:
+        if user.subject_type != "human" or user.status != "active":
+            raise AuthPolicyDenied("password account subject is unavailable")
+        now = datetime.now(UTC)
+        return self._persist_browser_session(
+            user=user,
+            book_id=None,
+            scopes=tuple(sorted(OWNER_SCOPES)),
+            issued_at=now,
+            expires_at=now + ttl,
+        )
+
+    def _persist_browser_session(
+        self,
+        *,
+        user: UserSnapshot,
+        book_id: UUID | None,
+        scopes: tuple[str, ...],
+        issued_at: datetime,
+        expires_at: datetime,
+    ) -> IssuedBrowserSession:
         browser_credential_hash = secret_digest(new_secret("ta"))
         session_token = new_secret("sess")
         csrf_token = new_secret("csrf")
@@ -117,15 +151,15 @@ class PersistentSessionService:
             actor_subject_id=user.user_id,
             actor_type=user.subject_type,
             auth_kind="browser_session",
-            book_id=credential.book_id,
+            book_id=book_id,
             oauth_client_id=None,
             resource=None,
             refresh_family_id=None,
-            scopes=list(credential.scopes),
-            issued_at=now,
+            scopes=list(scopes),
+            issued_at=issued_at,
             expires_at=expires_at,
             revoked_at=None,
-            last_used_at=now,
+            last_used_at=issued_at,
         )
         self._session.add(browser_credential)
         self._session.flush([browser_credential])
@@ -135,10 +169,10 @@ class PersistentSessionService:
                 csrf_token_hash=secret_digest(csrf_token),
                 credential_hash=browser_credential_hash,
                 user_id=user.user_id,
-                issued_at=now,
+                issued_at=issued_at,
                 expires_at=expires_at,
                 revoked_at=None,
-                last_seen_at=now,
+                last_seen_at=issued_at,
             )
         )
         self._session.flush()
@@ -150,8 +184,8 @@ class PersistentSessionService:
                 display_name=user.current_display_name,
                 subject_type=user.subject_type,
                 auth_kind="browser_session",
-                book_id=None if credential.book_id is None else str(credential.book_id),
-                scopes=credential.scopes,
+                book_id=None if book_id is None else str(book_id),
+                scopes=scopes,
             ),
         )
 

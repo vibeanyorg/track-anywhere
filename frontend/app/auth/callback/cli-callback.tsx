@@ -184,7 +184,7 @@ export function CliCallback() {
         ) : (
           <div className="auth-form-switch">
             <Link className="text-button text-button-strong" href={loginNext}>
-              Sign in with an API key
+              Sign in to continue
             </Link>
           </div>
         )}

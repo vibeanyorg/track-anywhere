@@ -126,6 +126,22 @@ curl --fail https://ledger.example.com/api/v2/ready
 curl --fail https://ledger.example.com/.well-known/oauth-authorization-server
 ```
 
+For a new private instance, open `/auth/signup` from the canonical HTTPS origin
+and complete the one-time owner setup using the human owner's personal API key
+as the setup key. Never pass that key in a URL or log. Confirm sign-out and
+email/password sign-in at `/auth/login`; subsequent signup attempts must return
+`409`. Existing personal API-key login remains available as a secondary
+recovery path.
+
+Keep the Application at one replica unless the in-process authentication
+throttle is replaced by a shared limiter. Add a Traefik client-IP rate-limit
+middleware for the password-login and signup paths as an independent edge
+layer. Set `FORWARDED_ALLOW_IPS` to the exact CIDR of the private Docker network
+used by Dokploy/Traefik; do not use `*` when the application can also be reached
+without that proxy. This lets Uvicorn replace the peer address only for trusted
+proxy connections. Do not rely on `Origin` as a client identity or ownership
+proof.
+
 The supported entry point is `track_anywhere.server:app`; it starts the
 projection supervisor in the FastAPI lifespan. A rolling overlap is safe, but
 one Application replica is sufficient for a personal deployment. Never replace

@@ -17,6 +17,7 @@ _SENSITIVE_LABEL_PARTS = (
     "memo",
     "password",
     "secret",
+    "setup_key",
     "token",
 )
 

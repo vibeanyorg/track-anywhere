@@ -521,6 +521,29 @@ h1 {
   gap: 10px;
 }
 
+.auth-field-help {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.api-key-login {
+  border-top: 1px solid color-mix(in oklch, var(--ink), transparent 80%);
+  padding-top: 16px;
+}
+
+.api-key-login summary {
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.api-key-login[open] {
+  display: grid;
+  gap: 14px;
+}
+
 .cli-auth-page {
   align-content: center;
   justify-content: center;

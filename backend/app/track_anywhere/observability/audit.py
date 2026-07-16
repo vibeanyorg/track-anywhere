@@ -36,6 +36,7 @@ _SENSITIVE_PARTS = (
     "password",
     "payload",
     "secret",
+    "setup_key",
     "token",
 )
 

@@ -12,6 +12,12 @@
     "/api/v2/auth/session/api-key": [
       "post"
     ],
+    "/api/v2/auth/session/password": [
+      "post"
+    ],
+    "/api/v2/auth/signup": [
+      "post"
+    ],
     "/api/v2/auth/token-status": [
       "get"
     ],
@@ -124,6 +130,66 @@
     ]
   },
   "schemas": {
+    "PasswordSessionCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "email": {
+          "maxLength": 254,
+          "minLength": 3,
+          "title": "Email",
+          "type": "string"
+        },
+        "password": {
+          "maxLength": 128,
+          "minLength": 12,
+          "title": "Password",
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "password"
+      ],
+      "title": "PasswordSessionCommand",
+      "type": "object"
+    },
+    "PasswordSignupCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "display_name": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "email": {
+          "maxLength": 254,
+          "minLength": 3,
+          "title": "Email",
+          "type": "string"
+        },
+        "password": {
+          "maxLength": 128,
+          "minLength": 12,
+          "title": "Password",
+          "type": "string"
+        },
+        "setup_key": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Setup Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "email",
+        "password",
+        "display_name",
+        "setup_key"
+      ],
+      "title": "PasswordSignupCommand",
+      "type": "object"
+    },
     "ReportingLineResponse": {
       "properties": {
         "asset_code": {

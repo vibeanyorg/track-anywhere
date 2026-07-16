@@ -30,6 +30,7 @@ ROLE_SCOPES = {
 DEFAULT_PLATFORM_SCOPE = "book:read ledger:read"
 DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 PKCE_PATTERN = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
+PASSWORD_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+$")
 
 
 class AuthCommand(BaseModel):
@@ -44,6 +45,35 @@ class OAuthProtocolCommand(BaseModel):
 
 class ApiKeySessionCommand(AuthCommand):
     api_key: str = Field(min_length=1, max_length=512)
+
+
+class PasswordSessionCommand(AuthCommand):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=12, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if (
+            len(normalized) > 254
+            or not PASSWORD_EMAIL_PATTERN.fullmatch(normalized)
+        ):
+            raise ValueError("email must be a valid address")
+        return normalized
+
+
+class PasswordSignupCommand(PasswordSessionCommand):
+    display_name: str = Field(min_length=1, max_length=120)
+    setup_key: str = Field(min_length=1, max_length=512)
+
+    @field_validator("display_name")
+    @classmethod
+    def normalize_display_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("display_name must be nonblank")
+        return normalized
 
 
 class OAuthRegisterCommand(OAuthProtocolCommand):
@@ -147,6 +177,8 @@ __all__ = [
     "OAuthRegisterCommand",
     "OAuthRevokeCommand",
     "OWNER_SCOPES",
+    "PasswordSessionCommand",
+    "PasswordSignupCommand",
     "ROLE_SCOPES",
     "VIEWER_SCOPES",
 ]

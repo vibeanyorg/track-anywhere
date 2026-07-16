@@ -32,5 +32,10 @@ The browser uses same-origin endpoints including sessions, OAuth, discovery,
 REST under `/api/v2`, and MCP at `/mcp`. The CLI authorization callback is
 `/auth/callback`; device authorization uses `/auth/device`.
 
+On a private instance, `/auth/signup` requires the existing owner's personal
+API key as a one-time setup proof, binds the password to that exact user, and
+then closes. Returning users sign in with email and password at `/auth/login`;
+the personal API key remains available there as a secondary login method.
+
 `npm run dev` remains useful for presentation-only UI iteration. Run a static
 build through FastAPI before testing authentication or protocol behavior.

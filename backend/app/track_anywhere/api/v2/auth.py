@@ -19,6 +19,8 @@ from ...auth.contracts import (
     OAuthRefreshTokenCommand,
     OAuthRegisterCommand,
     OAuthRevokeCommand,
+    PasswordSessionCommand,
+    PasswordSignupCommand,
 )
 from ...auth.device import PersistentDeviceService
 from ...auth.errors import AuthPolicyDenied, AuthSecurityError, OAuthFlowError
@@ -28,6 +30,7 @@ from ...auth.http import (
     set_browser_session_cookies,
 )
 from ...auth.oauth import OAUTH_ACCESS_KINDS, PersistentOAuthService
+from ...auth.passwords import AccountSetupComplete, PersistentPasswordService
 from ...auth.resources import api_resource, canonical_public_base_url
 from ...auth.security import (
     authorization_server_metadata,
@@ -35,7 +38,12 @@ from ...auth.security import (
     protected_resource_metadata_url,
     require_same_origin,
 )
-from ...auth.sessions import ActiveBrowserSession, PersistentSessionService
+from ...auth.sessions import (
+    ActiveBrowserSession,
+    IssuedBrowserSession,
+    PersistentSessionService,
+)
+from ...auth.throttle import AuthThrottle, InMemoryAuthThrottle
 
 
 SessionDependency = Callable[[], Iterator[Session]]
@@ -46,6 +54,7 @@ _TOKEN_ADAPTER = TypeAdapter(
     | OAuthRefreshTokenCommand
 )
 _INVALID_REQUEST_DESCRIPTION = "OAuth request parameters are invalid"
+_PASSWORD_AUTH_THROTTLE = InMemoryAuthThrottle()
 
 
 class _OAuthRequestParsingError(AuthSecurityError):
@@ -57,8 +66,10 @@ def create_auth_router(
     *,
     cookie_secure: bool = False,
     public_base_url: str | None = None,
+    password_throttle: AuthThrottle | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v2")
+    active_password_throttle = password_throttle or _PASSWORD_AUTH_THROTTLE
 
     @router.get("/oauth/authorization-server", tags=["oauth"])
     def oauth_authorization_server(request: Request) -> dict[str, object]:
@@ -72,7 +83,7 @@ def create_auth_router(
     @router.post("/oauth/register", tags=["oauth"])
     async def register_oauth_client(
         request: Request,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> JSONResponse:
         try:
             payload = await _command_from_request(request, OAuthRegisterCommand)
@@ -92,7 +103,7 @@ def create_auth_router(
     @router.get("/oauth/authorize", tags=["oauth"], response_model=None)
     def begin_oauth_authorization(
         request: Request,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> RedirectResponse | JSONResponse:
         try:
             payload = _command_from_query(request, OAuthAuthorizeCommand)
@@ -111,7 +122,7 @@ def create_auth_router(
     @router.post("/oauth/authorize", tags=["oauth"], response_model=None)
     async def authorize_oauth_client(
         request: Request,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> JSONResponse | RedirectResponse:
         try:
             payload = await _command_from_request(request, OAuthAuthorizeCommand)
@@ -139,7 +150,7 @@ def create_auth_router(
     @router.post("/oauth/device/authorize", tags=["oauth"])
     async def create_device_authorization(
         request: Request,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> JSONResponse:
         try:
             payload = await _command_from_request(
@@ -160,7 +171,7 @@ def create_auth_router(
     @router.post("/oauth/token", tags=["oauth"])
     async def exchange_oauth_token(
         request: Request,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> JSONResponse:
         try:
             raw_payload = await _protocol_payload(request)
@@ -189,7 +200,7 @@ def create_auth_router(
     @router.post("/oauth/revoke", tags=["oauth"])
     async def revoke_oauth_token(
         request: Request,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> JSONResponse:
         try:
             payload = await _command_from_request(request, OAuthRevokeCommand)
@@ -204,7 +215,7 @@ def create_auth_router(
     @router.post("/auth/session/api-key", tags=["auth"])
     def create_api_key_session(
         payload: ApiKeySessionCommand,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> JSONResponse:
         try:
             issued = PersistentSessionService(session).issue_from_api_key(
@@ -214,25 +225,69 @@ def create_auth_router(
             raise HTTPException(
                 status_code=401, detail="API key is invalid or expired"
             ) from error
-        response = JSONResponse(
-            {
-                "authenticated": True,
-                "csrf_token": issued.csrf_token,
-                "identity": issued.identity.public_dict(),
-            }
+        return _browser_session_response(issued, secure=cookie_secure)
+
+    @router.post("/auth/signup", tags=["auth"], status_code=201)
+    def signup_with_password(
+        payload: PasswordSignupCommand,
+        request: Request,
+        session: Session = Depends(get_session, scope="function"),
+    ) -> JSONResponse:
+        _require_same_origin_request(request, public_base_url)
+        throttle_client = _throttle_client(request)
+        throttle_subject = f"setup:{throttle_client}"
+        _require_auth_throttle(
+            active_password_throttle,
+            throttle_client,
+            throttle_subject,
         )
-        set_browser_session_cookies(
-            response,
-            session_token=issued.session_token,
-            csrf_token=issued.csrf_token,
+        try:
+            issued = PersistentPasswordService(session).signup(payload)
+        except AccountSetupComplete as error:
+            raise HTTPException(
+                status_code=409,
+                detail="Account setup is already complete",
+            ) from error
+        except AuthPolicyDenied as error:
+            raise HTTPException(
+                status_code=401,
+                detail="Setup key is invalid or expired",
+            ) from error
+        active_password_throttle.reset(throttle_subject)
+        return _browser_session_response(
+            issued,
             secure=cookie_secure,
+            status_code=201,
         )
-        return response
+
+    @router.post("/auth/session/password", tags=["auth"])
+    def create_password_session(
+        payload: PasswordSessionCommand,
+        request: Request,
+        session: Session = Depends(get_session, scope="function"),
+    ) -> JSONResponse:
+        _require_same_origin_request(request, public_base_url)
+        throttle_client = _throttle_client(request)
+        throttle_subject = f"login:{payload.email}"
+        _require_auth_throttle(
+            active_password_throttle,
+            throttle_client,
+            throttle_subject,
+        )
+        try:
+            issued = PersistentPasswordService(session).login(payload)
+        except AuthPolicyDenied as error:
+            raise HTTPException(
+                status_code=401,
+                detail="Email or password is invalid",
+            ) from error
+        active_password_throttle.reset(throttle_subject)
+        return _browser_session_response(issued, secure=cookie_secure)
 
     @router.get("/auth/session", tags=["auth"])
     def current_session(
         request: Request,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> dict[str, object]:
         active = PersistentSessionService(session).current(
             request.cookies.get(SESSION_COOKIE)
@@ -245,7 +300,7 @@ def create_auth_router(
     def approve_device_authorization(
         payload: DeviceApprovalCommand,
         request: Request,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> dict[str, object]:
         active = _require_browser_request(
             request,
@@ -265,7 +320,7 @@ def create_auth_router(
     @router.get("/auth/token-status", tags=["auth"])
     def token_status(
         request: Request,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> JSONResponse:
         authorization = request.headers.get("Authorization")
         api_key = request.headers.get("X-API-Key")
@@ -293,7 +348,7 @@ def create_auth_router(
     @router.post("/auth/logout", tags=["auth"])
     def logout(
         request: Request,
-        session: Session = Depends(get_session),
+        session: Session = Depends(get_session, scope="function"),
     ) -> JSONResponse:
         service = PersistentSessionService(session)
         active = _require_browser_request(request, service, public_base_url)
@@ -304,6 +359,30 @@ def create_auth_router(
         return response
 
     return router
+
+
+def _browser_session_response(
+    issued: IssuedBrowserSession,
+    *,
+    secure: bool,
+    status_code: int = 200,
+) -> JSONResponse:
+    response = JSONResponse(
+        {
+            "authenticated": True,
+            "csrf_token": issued.csrf_token,
+            "identity": issued.identity.public_dict(),
+        },
+        status_code=status_code,
+    )
+    set_browser_session_cookies(
+        response,
+        session_token=issued.session_token,
+        csrf_token=issued.csrf_token,
+        secure=secure,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _issuer_for(request: Request) -> str:
@@ -358,6 +437,43 @@ def _require_browser_request(
     except AuthSecurityError as error:
         raise HTTPException(status_code=403, detail=str(error)) from error
     return active
+
+
+def _require_same_origin_request(
+    request: Request,
+    configured_public_base_url: str | None,
+) -> None:
+    try:
+        require_same_origin(
+            origin=request.headers.get("origin"),
+            referer=request.headers.get("referer"),
+            allowed_origin=_public_base_for(request, configured_public_base_url),
+        )
+    except AuthSecurityError as error:
+        raise HTTPException(
+            status_code=403,
+            detail="request is not authorized",
+        ) from error
+
+
+def _require_auth_throttle(
+    throttle: AuthThrottle,
+    client: str,
+    subject: str,
+) -> None:
+    retry_after = throttle.check(client, subject)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many authentication attempts",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+def _throttle_client(request: Request) -> str:
+    if request.client is None or not request.client.host:
+        return "unknown"
+    return request.client.host[:64]
 
 
 async def _protocol_payload(request: Request) -> dict[str, object]:

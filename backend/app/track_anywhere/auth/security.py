@@ -55,6 +55,22 @@ def verify_password_hash(password: str, encoded: str) -> bool:
     return hmac.compare_digest(candidate, digest)
 
 
+def hash_password(password: str) -> str:
+    if type(password) is not str or not password:
+        raise ValueError("password must be a non-empty string")
+    salt = secrets.token_urlsafe(18)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        PASSWORD_HASH_ITERATIONS,
+    ).hex()
+    return (
+        f"{PASSWORD_HASH_ALGORITHM}${PASSWORD_HASH_ITERATIONS}"
+        f"${salt}${digest}"
+    )
+
+
 def new_secret(prefix: str) -> str:
     if type(prefix) is not str or not prefix:
         raise ValueError("secret prefix must be non-empty")
@@ -207,6 +223,7 @@ def protected_resource_metadata_url(resource: str) -> str:
 
 __all__ = [
     "authorization_server_metadata",
+    "hash_password",
     "new_secret",
     "new_user_code",
     "normalize_user_code",
@@ -220,4 +237,5 @@ __all__ = [
     "require_same_origin",
     "secret_digest",
     "validate_redirect_uri",
+    "verify_password_hash",
 ]

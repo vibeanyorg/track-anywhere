@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useAuth } from "./auth-provider";
 import { readJson, responseError } from "../lib/http";
+import { accountUrl } from "./auth-links";
 
 export function AuthHeader() {
   const { session, loading, offline, notifyChanged } = useAuth();
-  const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -14,34 +15,6 @@ export function AuthHeader() {
     const identity = session.identity;
     return identity?.display_name || "You";
   }, [session]);
-
-  async function signInWithKey() {
-    const key = apiKey.trim();
-    if (!key) {
-      setError("Paste your key first.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      const response = await fetch("/api/v2/auth/session/api-key", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key: key })
-      });
-      const payload = await readJson<{ detail?: string }>(response);
-      if (!response.ok) {
-        throw new Error(responseError(payload, "That key didn't work."));
-      }
-      setApiKey("");
-      notifyChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "That key didn't work.");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function signOut() {
     setBusy(true);
@@ -86,25 +59,12 @@ export function AuthHeader() {
           <span className="auth-state">Loading…</span>
         ) : (
           <>
-            <input
-              className="auth-input"
-              aria-label="API key"
-              autoComplete="off"
-              id="header-api-key"
-              name="header_api_key"
-              placeholder="or paste an API key"
-              type="password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  void signInWithKey();
-                }
-              }}
-            />
-            <button className="text-button" type="button" onClick={signInWithKey} disabled={busy}>
-              Use key
-            </button>
+            <Link className="text-button" href={accountUrl("login")}>
+              Sign in
+            </Link>
+            <Link className="text-button text-button-strong" href={accountUrl("signup")}>
+              Create account
+            </Link>
           </>
         )}
       </div>

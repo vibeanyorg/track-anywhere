@@ -1,5 +1,6 @@
 import { AuthHeader } from "./components/auth-header";
 import { AuthConsole } from "./components/auth-console";
+import { accountUrl } from "./components/auth-links";
 
 const operatingLines = [
   "Edit anything until you confirm it.",
@@ -61,7 +62,7 @@ export default function Page() {
             <a className="primary-action" href="#workflow">
               How it works
             </a>
-            <a className="secondary-action" href="#auth">
+            <a className="secondary-action" href={accountUrl("login")}>
               Sign in
             </a>
           </div>
