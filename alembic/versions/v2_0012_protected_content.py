@@ -180,21 +180,27 @@ def _create_archive_guards(runtime: str) -> None:
     op.execute(
         """
         create function public.v2_guard_import_archive_manifest()
-        returns trigger language plpgsql security invoker
+        returns trigger language plpgsql security definer
         set search_path = pg_catalog, public as $function$
+        declare
+            locked_kind varchar(32);
+            locked_status varchar(16);
+            locked_content_hash bytea;
         begin
             if tg_op <> 'INSERT' then
                 raise exception using errcode = '23514',
                     message = 'import archive manifests are append-only';
             end if;
-            perform 1
+            select sidecar.kind, sidecar.status, sidecar.content_hash
+              into locked_kind, locked_status, locked_content_hash
               from public.protected_description_sidecars sidecar
              where sidecar.book_id = new.book_id
                and sidecar.sidecar_id = new.archive_id
-               and sidecar.kind = 'import_archive'
-               and sidecar.status = 'active'
-               and sidecar.content_hash = new.archive_content_commitment;
-            if not found then
+               for update;
+            if not found
+               or locked_kind <> 'import_archive'
+               or locked_status <> 'active'
+               or locked_content_hash <> new.archive_content_commitment then
                 raise exception using errcode = '23514',
                     message = 'import archive manifest sidecar is invalid';
             end if;
@@ -221,7 +227,26 @@ def _create_archive_guards(runtime: str) -> None:
         ) returns boolean
         language plpgsql security definer
         set search_path = pg_catalog, public as $function$
+        declare
+            locked_status varchar(16);
         begin
+            select sidecar.status
+              into locked_status
+              from public.protected_description_sidecars sidecar
+             where sidecar.book_id = requested_book_id
+               and sidecar.sidecar_id = requested_sidecar_id
+               for update;
+            if not found then
+                raise exception using errcode = 'P0002',
+                    message = 'protected content was not found in the requested scope';
+            end if;
+            if locked_status = 'erased' then
+                return false;
+            end if;
+            if locked_status <> 'active' then
+                raise exception using errcode = '23514',
+                    message = 'protected content state is invalid';
+            end if;
             if exists (
                 select 1
                   from public.import_archive_manifests manifest
@@ -240,20 +265,7 @@ def _create_archive_guards(runtime: str) -> None:
              where book_id = requested_book_id
                and sidecar_id = requested_sidecar_id
                and status = 'active';
-            if found then
-                return true;
-            end if;
-            if exists (
-                select 1
-                  from public.protected_description_sidecars sidecar
-                 where sidecar.book_id = requested_book_id
-                   and sidecar.sidecar_id = requested_sidecar_id
-                   and sidecar.status = 'erased'
-            ) then
-                return false;
-            end if;
-            raise exception using errcode = 'P0002',
-                message = 'protected content was not found in the requested scope';
+            return true;
         end;
         $function$
         """

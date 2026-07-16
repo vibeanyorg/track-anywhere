@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
+from queue import Queue
+from threading import Barrier, Event
+from time import monotonic
 from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from track_anywhere.application.privacy import (
@@ -47,6 +53,45 @@ RECORD_COUNTS = {
     "counterparty_records": 5,
     "omission_records": 6,
 }
+_LOCK_POLL = Event()
+_MANIFEST_INSERT = """
+    insert into import_archive_manifests (
+        book_id, archive_id, contract_version, source_dump_hash,
+        source_manifest_hash, card_review_hash, plan_hash,
+        archive_content_commitment, seal, record_counts
+    ) values (
+        :book_id, :archive_id, 1, :source_dump_hash,
+        :source_manifest_hash, :card_review_hash, :plan_hash,
+        :archive_content_commitment, :seal, '{}'::jsonb
+    )
+"""
+
+
+def test_migration_serializes_archive_insert_and_erasure_on_the_sidecar_row() -> None:
+    migration = (
+        Path(__file__).resolve().parents[4]
+        / "alembic/versions/v2_0012_protected_content.py"
+    ).read_text(encoding="utf-8").lower()
+    manifest_definition = migration.split(
+        "create function public.v2_guard_import_archive_manifest()", 1
+    )[1]
+    manifest_header, manifest_guard = manifest_definition.split("$function$", 2)[:2]
+    erasure = migration.split(
+        "create function public.v2_erase_protected_content(", 1
+    )[1].split("$function$", 2)[1]
+
+    assert "from public.protected_description_sidecars sidecar" in manifest_guard
+    assert "for update" in manifest_guard
+    assert "security definer" in manifest_header
+    lock_position = erasure.index("from public.protected_description_sidecars")
+    for_update_position = erasure.index("for update", lock_position)
+    manifest_check_position = erasure.index(
+        "from public.import_archive_manifests", for_update_position
+    )
+    update_position = erasure.index(
+        "update public.protected_description_sidecars", manifest_check_position
+    )
+    assert lock_position < for_update_position < manifest_check_position < update_position
 
 
 def _cipher() -> ProtectedContentCipher:
@@ -90,6 +135,86 @@ def _seed_book(pg_engine, book_id: UUID = BOOK_ID) -> None:
             ),
             {"book_id": book_id},
         )
+
+
+def _seed_archive_sidecar(pg_engine) -> None:
+    _seed_book(pg_engine)
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                insert into protected_description_sidecars (
+                    book_id, sidecar_id, kind, ciphertext, key_ref, nonce,
+                    algorithm, content_hash, status, erased_at
+                ) values (
+                    :book_id, :sidecar_id, 'import_archive', :ciphertext,
+                    'v1', :nonce, 'AES-256-GCM+HKDF-SHA256',
+                    :content_hash, 'active', null
+                )
+                """
+            ),
+            {
+                "book_id": BOOK_ID,
+                "sidecar_id": ARCHIVE_ID,
+                "ciphertext": b"c" * 16,
+                "nonce": b"n" * 12,
+                "content_hash": HASHES["archive_content_commitment"],
+            },
+        )
+
+
+def _manifest_parameters() -> dict[str, object]:
+    return {
+        "book_id": BOOK_ID,
+        "archive_id": ARCHIVE_ID,
+        "source_dump_hash": HASHES["source_dump_hash"],
+        "source_manifest_hash": HASHES["source_manifest_hash"],
+        "card_review_hash": HASHES["card_review_hash"],
+        "plan_hash": HASHES["plan_hash"],
+        "archive_content_commitment": HASHES["archive_content_commitment"],
+        "seal": b"s" * 32,
+    }
+
+
+def _run_losing_statement(
+    pg_engine,
+    barrier: Barrier,
+    backend_pids: Queue[int],
+    statement: str,
+    parameters: dict[str, object],
+) -> str:
+    with Session(pg_engine) as session:
+        session.execute(text("set local statement_timeout = '5s'"))
+        backend_pids.put(int(session.scalar(text("select pg_backend_pid()"))))
+        barrier.wait(timeout=10)
+        try:
+            session.execute(text(statement), parameters)
+            session.commit()
+        except DBAPIError as error:
+            session.rollback()
+            return str(getattr(error.orig, "sqlstate", ""))
+    return "committed"
+
+
+def _assert_waiting_on_database_lock(
+    pg_engine,
+    *,
+    backend_pid: int,
+    future: Future[str],
+) -> None:
+    deadline = monotonic() + 5
+    while monotonic() < deadline:
+        with pg_engine.connect() as observer:
+            blockers = observer.execute(
+                text("select pg_blocking_pids(:backend_pid)"),
+                {"backend_pid": backend_pid},
+            ).scalar_one()
+        if blockers:
+            return
+        if future.done():
+            pytest.fail("racing protected-content statement did not take the row lock")
+        _LOCK_POLL.wait(timeout=0.01)
+    pytest.fail("racing protected-content statement did not reach a row lock")
 
 
 def _service(
@@ -384,6 +509,99 @@ def test_archive_create_and_exact_replay_canonicalize_once_and_seal_manifest(
     assert first.contract_version == 1
     assert first.archive_content_commitment == first.sidecar.content_hash
     assert len(first.seal) == 32
+
+
+def test_manifest_commit_wins_race_and_prevents_crypto_erasure(pg_engine) -> None:
+    _seed_archive_sidecar(pg_engine)
+    winner = Session(pg_engine)
+    barrier = Barrier(2)
+    backend_pids: Queue[int] = Queue()
+    try:
+        winner.execute(text("set local statement_timeout = '5s'"))
+        winner.execute(text(_MANIFEST_INSERT), _manifest_parameters())
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _run_losing_statement,
+                pg_engine,
+                barrier,
+                backend_pids,
+                "select public.v2_erase_protected_content(:book_id, :sidecar_id)",
+                {"book_id": BOOK_ID, "sidecar_id": ARCHIVE_ID},
+            )
+            backend_pid = backend_pids.get(timeout=10)
+            barrier.wait(timeout=10)
+            _assert_waiting_on_database_lock(
+                pg_engine,
+                backend_pid=backend_pid,
+                future=future,
+            )
+            winner.commit()
+            assert future.result(timeout=10) == "23514"
+    finally:
+        winner.rollback()
+        winner.close()
+
+    with Session(pg_engine) as session:
+        sidecar = session.get(
+            ProtectedDescriptionSidecarRecord,
+            (BOOK_ID, ARCHIVE_ID),
+        )
+        manifest = session.get(
+            ImportArchiveManifestRecord,
+            (BOOK_ID, ARCHIVE_ID),
+        )
+    assert sidecar is not None and sidecar.status == "active"
+    assert manifest is not None
+
+
+def test_crypto_erasure_commit_wins_race_and_prevents_manifest_insert(
+    pg_engine,
+) -> None:
+    _seed_archive_sidecar(pg_engine)
+    winner = Session(pg_engine)
+    barrier = Barrier(2)
+    backend_pids: Queue[int] = Queue()
+    try:
+        winner.execute(text("set local statement_timeout = '5s'"))
+        assert winner.execute(
+            text(
+                "select public.v2_erase_protected_content(:book_id, :sidecar_id)"
+            ),
+            {"book_id": BOOK_ID, "sidecar_id": ARCHIVE_ID},
+        ).scalar_one() is True
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                _run_losing_statement,
+                pg_engine,
+                barrier,
+                backend_pids,
+                _MANIFEST_INSERT,
+                _manifest_parameters(),
+            )
+            backend_pid = backend_pids.get(timeout=10)
+            barrier.wait(timeout=10)
+            _assert_waiting_on_database_lock(
+                pg_engine,
+                backend_pid=backend_pid,
+                future=future,
+            )
+            winner.commit()
+            assert future.result(timeout=10) == "23514"
+    finally:
+        winner.rollback()
+        winner.close()
+
+    with Session(pg_engine) as session:
+        sidecar = session.get(
+            ProtectedDescriptionSidecarRecord,
+            (BOOK_ID, ARCHIVE_ID),
+        )
+        manifest = session.get(
+            ImportArchiveManifestRecord,
+            (BOOK_ID, ARCHIVE_ID),
+        )
+    assert sidecar is not None and sidecar.status == "erased"
+    assert manifest is None
 
 
 @pytest.mark.parametrize(

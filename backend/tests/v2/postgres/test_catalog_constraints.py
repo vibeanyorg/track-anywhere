@@ -1055,6 +1055,7 @@ def test_catalog_foreign_keys_never_cascade_and_trigger_functions_are_hardened(
                     f"""
                 select relation.relname as table_name,
                        function_record.proname as function_name,
+                       function_owner.rolname as owner_name,
                        function_record.prosecdef,
                        function_record.proconfig,
                        pg_catalog.pg_get_functiondef(function_record.oid) as definition,
@@ -1081,6 +1082,8 @@ def test_catalog_foreign_keys_never_cascade_and_trigger_functions_are_hardened(
                     on relation.oid = trigger_record.tgrelid
                   join pg_catalog.pg_proc function_record
                     on function_record.oid = trigger_record.tgfoid
+                  join pg_catalog.pg_roles function_owner
+                    on function_owner.oid = function_record.proowner
                  where not trigger_record.tgisinternal
                    and relation.relname in ({table_list})
                  order by relation.relname, function_record.proname
@@ -1106,7 +1109,12 @@ def test_catalog_foreign_keys_never_cascade_and_trigger_functions_are_hardened(
         "protected_description_sidecars",
     }
     for row in trigger_rows:
-        assert row["prosecdef"] is False
+        is_archive_lock_guard = (
+            row["function_name"] == "v2_guard_import_archive_manifest"
+        )
+        assert row["prosecdef"] is is_archive_lock_guard
+        if is_archive_lock_guard:
+            assert row["owner_name"] == migrated_postgres_database.owner_role
         assert row["proconfig"] is not None
         assert any(
             setting.replace(" ", "") == "search_path=pg_catalog,public"
