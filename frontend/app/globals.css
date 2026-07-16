@@ -728,6 +728,228 @@ h1 {
   font-size: 13px;
 }
 
+.chatgpt-band {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.86fr) minmax(360px, 1.14fr);
+  gap: clamp(34px, 7vw, 104px);
+  padding: clamp(56px, 8vw, 108px) clamp(18px, 5vw, 72px);
+  border-top: 1px solid color-mix(in oklch, var(--ink), transparent 76%);
+  border-bottom: 1px solid color-mix(in oklch, var(--ink), transparent 76%);
+  background:
+    linear-gradient(90deg, color-mix(in oklch, var(--paper-deep), transparent 16%) 0 1px, transparent 1px 100%),
+    linear-gradient(180deg, var(--paper) 0%, color-mix(in oklch, var(--paper-deep), white 30%) 100%);
+  background-size: 48px 100%, 100% 100%;
+}
+
+.chatgpt-band::after {
+  content: "MCP";
+  position: absolute;
+  right: -0.04em;
+  bottom: -0.25em;
+  color: color-mix(in oklch, var(--moss), transparent 93%);
+  font-size: clamp(180px, 31vw, 520px);
+  font-weight: 700;
+  line-height: 0.72;
+  pointer-events: none;
+}
+
+.chatgpt-intro,
+.chatgpt-guide {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.chatgpt-intro h2 {
+  max-width: 10ch;
+  font-size: clamp(42px, 6vw, 78px);
+  line-height: 0.92;
+}
+
+.chatgpt-lede {
+  margin-top: 24px;
+  max-width: 610px;
+  color: var(--ink-soft);
+  font-size: clamp(18px, 2vw, 23px);
+  line-height: 1.35;
+}
+
+.chatgpt-account-note {
+  margin-top: 18px;
+  max-width: 580px;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.chatgpt-account-note a {
+  color: var(--moss-deep);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+.chatgpt-address {
+  display: grid;
+  gap: 10px;
+  margin-top: clamp(28px, 5vw, 52px);
+  padding: 18px 0;
+  border-top: 1px solid color-mix(in oklch, var(--ink), transparent 64%);
+  border-bottom: 1px solid color-mix(in oklch, var(--ink), transparent 64%);
+}
+
+.chatgpt-address > span,
+.chatgpt-prompts > p,
+.chatgpt-access dt {
+  color: var(--moss-deep);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chatgpt-address code {
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: clamp(14px, 1.8vw, 21px);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.chatgpt-address a {
+  width: fit-content;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--moss-deep);
+  font-size: 14px;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+
+.chatgpt-warning {
+  margin-top: 18px;
+  color: color-mix(in oklch, var(--warm), var(--ink) 44%);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.chatgpt-steps {
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid color-mix(in oklch, var(--ink), transparent 64%);
+  list-style: none;
+}
+
+.chatgpt-steps li {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 16px;
+  padding: clamp(18px, 3vw, 26px) 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--ink), transparent 76%);
+}
+
+.chatgpt-step-number {
+  color: var(--moss-deep);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.chatgpt-steps h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(21px, 2.2vw, 29px);
+  line-height: 1.1;
+}
+
+.chatgpt-steps p {
+  margin-top: 8px;
+  color: var(--ink-soft);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.chatgpt-steps strong {
+  color: var(--ink);
+}
+
+.chatgpt-steps code,
+.chatgpt-access code {
+  color: var(--moss-deep);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.chatgpt-access {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 24px 0 0;
+  border-top: 1px solid color-mix(in oklch, var(--ink), transparent 64%);
+  border-bottom: 1px solid color-mix(in oklch, var(--ink), transparent 64%);
+}
+
+.chatgpt-access > div {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  padding: 15px;
+  border-right: 1px solid color-mix(in oklch, var(--ink), transparent 76%);
+}
+
+.chatgpt-access > div:first-child {
+  padding-left: 0;
+}
+
+.chatgpt-access > div:last-child {
+  border-right: 0;
+}
+
+.chatgpt-access dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.chatgpt-prompts {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 26px;
+  align-items: start;
+}
+
+.chatgpt-prompts > p {
+  padding-top: 4px;
+}
+
+.chatgpt-prompts ul {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid color-mix(in oklch, var(--ink), transparent 76%);
+  list-style: none;
+}
+
+.chatgpt-prompts li {
+  padding: 11px 0;
+  border-bottom: 1px solid color-mix(in oklch, var(--ink), transparent 82%);
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.chatgpt-account-note a:focus-visible,
+.chatgpt-address a:focus-visible {
+  outline: 3px solid color-mix(in oklch, var(--lake), transparent 38%);
+  outline-offset: 3px;
+}
+
 .workflow-band,
 .principles-band {
   padding: clamp(42px, 7vw, 88px) clamp(18px, 5vw, 72px);
@@ -852,12 +1074,17 @@ h1 {
   }
 
   .workflow-band,
+  .chatgpt-band,
   .auth-console-shell,
   .auth-access-grid,
   .auth-console-layout,
   .workflow-grid,
   .principles-list {
     grid-template-columns: 1fr;
+  }
+
+  .chatgpt-intro h2 {
+    max-width: 13ch;
   }
 
   .principles-list p {
@@ -894,8 +1121,30 @@ h1 {
   }
 
   .oauth-consent-details > div,
-  .oauth-consent-actions {
+  .oauth-consent-actions,
+  .chatgpt-access,
+  .chatgpt-prompts {
     grid-template-columns: 1fr;
+  }
+
+  .chatgpt-access > div,
+  .chatgpt-access > div:first-child {
+    padding: 13px 0;
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in oklch, var(--ink), transparent 82%);
+  }
+
+  .chatgpt-access > div:last-child {
+    border-bottom: 0;
+  }
+
+  .chatgpt-prompts {
+    gap: 10px;
+  }
+
+  .chatgpt-steps li {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 10px;
   }
 
   h1 {

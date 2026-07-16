@@ -18,6 +18,29 @@ test("signed-out home offers account links without asking for an API key", () =>
   assert.match(home, /accountUrl\("login"\)/);
 });
 
+test("home explains how to connect the read-only ChatGPT app", () => {
+  const home = source("../app/page.tsx");
+
+  assert.match(home, /https:\/\/ledger\.ttsseed\.com\/mcp/);
+  assert.match(home, /Security and login/);
+  assert.match(home, /Developer mode/);
+  assert.match(home, /Settings → Plugins/);
+  assert.match(home, /https:\/\/chatgpt\.com\/plugins/);
+  assert.match(home, /OAuth/);
+  assert.match(home, /ledger:read/);
+  assert.match(home, /read-only/);
+  assert.match(home, /Never paste a setup key or API key into ChatGPT/);
+});
+
+test("ChatGPT step numbers use an accessible foreground color", () => {
+  const styles = source("../app/globals.css");
+
+  assert.match(
+    styles,
+    /\.chatgpt-step-number\s*{[^}]*color:\s*var\(--moss-deep\)/s
+  );
+});
+
 test("account pages expose password signup and login contracts", () => {
   const form = source("../app/auth/auth-form.tsx");
 
