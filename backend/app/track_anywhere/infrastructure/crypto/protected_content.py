@@ -31,6 +31,7 @@ _KEYRING_FILE_FIELDS = frozenset({"version", "active_key_ref", "keys"})
 _MAX_KEYRING_FILE_BYTES = 64 * 1024
 _MASTER_KEY_BYTES = 32
 _NONCE_BYTES = 12
+_CONTENT_COMMITMENT_VERSION = 1
 _KEY_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", flags=re.ASCII)
 _PROTECTED_CONTENT_KINDS = frozenset({"transaction_description", "import_archive"})
 _HKDF_SALT = b"track-anywhere:v2:protected-content:hkdf-sha256:v1"
@@ -56,7 +57,7 @@ class ProtectedContentDecryptionError(ProtectedContentError):
 class SealedProtectedContent:
     key_ref: str
     algorithm: str
-    content_hash: bytes
+    content_hash: bytes = field(repr=False)
     ciphertext: bytes = field(repr=False)
     nonce: bytes = field(repr=False)
 
@@ -202,8 +203,14 @@ class ProtectedContentCipher:
             _validate_coordinates(book_id=book_id, sidecar_id=sidecar_id, kind=kind)
             if type(plaintext) is not bytes:
                 raise TypeError
-            content_hash = hashlib.sha256(plaintext).digest()
             key_ref = self._keyring.active_key_ref
+            book_key = _derive_book_key(self._keyring._active_key(), book_id)
+            content_hash = _content_commitment(
+                book_key=book_key,
+                sidecar_id=sidecar_id,
+                kind=kind,
+                plaintext=plaintext,
+            )
             try:
                 nonce = self._nonce_source(_NONCE_BYTES)
             except Exception:
@@ -214,9 +221,7 @@ class ProtectedContentCipher:
                 raise ProtectedContentConfigurationError(
                     "protected content nonce source is invalid"
                 )
-            ciphertext = AESGCM(
-                _derive_book_key(self._keyring._active_key(), book_id)
-            ).encrypt(
+            ciphertext = AESGCM(book_key).encrypt(
                 nonce,
                 plaintext,
                 _aad(
@@ -263,9 +268,10 @@ class ProtectedContentCipher:
                 raise ValueError
             if type(sealed.ciphertext) is not bytes or len(sealed.ciphertext) < 16:
                 raise ValueError
-            plaintext = AESGCM(
-                _derive_book_key(self._keyring._key_for(sealed.key_ref), book_id)
-            ).decrypt(
+            book_key = _derive_book_key(
+                self._keyring._key_for(sealed.key_ref), book_id
+            )
+            plaintext = AESGCM(book_key).decrypt(
                 sealed.nonce,
                 sealed.ciphertext,
                 _aad(
@@ -277,7 +283,13 @@ class ProtectedContentCipher:
                 ),
             )
             if not hmac.compare_digest(
-                hashlib.sha256(plaintext).digest(), sealed.content_hash
+                _content_commitment(
+                    book_key=book_key,
+                    sidecar_id=sidecar_id,
+                    kind=kind,
+                    plaintext=plaintext,
+                ),
+                sealed.content_hash,
             ):
                 raise ValueError
             return plaintext
@@ -301,8 +313,11 @@ def _read_secure_keyring_file(path: str | os.PathLike[str]) -> bytes:
             raise OSError
         if stat.S_ISLNK(os.lstat(path_value).st_mode):
             raise OSError
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
-            os, "O_NOFOLLOW", 0
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
         )
         descriptor = os.open(path_value, flags)
         state = os.fstat(descriptor)
@@ -389,6 +404,25 @@ def _aad(
             "sidecar_id": str(sidecar_id),
         }
     )
+
+
+def _content_commitment(
+    *,
+    book_key: bytes,
+    sidecar_id: UUID,
+    kind: ProtectedContentKind,
+    plaintext: bytes,
+) -> bytes:
+    message = canonical_json_bytes(
+        {
+            "context": "protected-content-commitment",
+            "kind": kind,
+            "plaintext_sha256": hashlib.sha256(plaintext).hexdigest(),
+            "sidecar_id": str(sidecar_id),
+            "version": _CONTENT_COMMITMENT_VERSION,
+        }
+    )
+    return hmac.new(book_key, message, hashlib.sha256).digest()
 
 
 __all__ = [

@@ -139,9 +139,13 @@ do not exist.
   environment variable.
 - Parse exact base64-encoded 32-byte master keys and a versioned active `key_ref`.
 - Derive a Book-specific 32-byte key with HKDF-SHA256.
+- Store `content_hash` as a domain-separated HMAC-SHA256 commitment keyed by
+  the Book-derived key and bound to the sidecar ID, kind, protocol version, and
+  an internal plaintext SHA-256. Never store or expose that raw plaintext hash.
 - Encrypt with AES-256-GCM and a random 96-bit nonce.
 - Use canonical JSON AAD containing `book_id`, `sidecar_id`, `kind`, `key_ref`,
-  and hexadecimal plaintext `content_hash`.
+  and the hexadecimal keyed commitment in the legacy-named `content_hash`
+  field.
 - Make decryption fail closed with a stable non-sensitive exception.
 - Extend sensitive-field guards with at least `description`, `purpose`,
   `plaintext`, `line_memo`, `ciphertext`, and `nonce`.
@@ -189,11 +193,12 @@ git commit -m "feat: add protected content encryption"
 Test real PostgreSQL behavior for:
 
 - `create_or_exact_verify()` inserts once and replays without re-encrypting;
-- same ID plus different `kind` or `content_hash` is a conflict;
+- same ID plus different `kind` or keyed `content_hash` commitment is a
+  conflict;
 - erased content is never recreated in place;
 - active sidecars require a 12-byte nonce, the approved algorithm, and shaped
   `key_ref`;
-- active ciphertext/key/nonce/content hash cannot be updated or deleted;
+- active ciphertext/key/nonce/content commitment cannot be updated or deleted;
 - only one-way `active -> erased` crypto erasure is legal;
 - archive manifests are append-only and reference an active
   `kind='import_archive'` sidecar in the same Book;
@@ -857,7 +862,7 @@ prove it detects independent mutations to:
 - reporting line/category/version;
 - card natural balance and retired alias state;
 - an eight-decimal USDT posting;
-- description plaintext hash and archive seal;
+- authorized, ephemeral decrypted-description aggregate SHA and archive seal;
 - async checkpoint or projection digest.
 
 Cold replay must copy stored events into a fresh target through the supported
@@ -1212,8 +1217,10 @@ verify.
 
 Both targets must meet the canonical outcome table. A/B must have identical
 source/manifest/review/plan hashes, deterministic IDs, event order/payloads,
-terminal hash, balance/projection digests, decrypted-description aggregate hash,
-archive content hash, and zero quarantine. Only nonce/ciphertext may differ.
+terminal hash, balance/projection digests, the authorized ephemeral
+decrypted-description aggregate SHA, archive content seal, and zero quarantine.
+Only nonce/ciphertext may differ. Never persist or report per-description
+plaintext hashes.
 
 Re-run the same receipt on each target and require zero inserted events/rows and
 unchanged Book head/terminal hash.
@@ -1234,7 +1241,8 @@ counts, receipt state, hashes, quarantine count, and cleanup state.
 **Step 4: Stop before production**
 
 Report the exact branch SHA, remote image ID/revision, test totals, canonical
-plan/terminal/projection/content hashes, A/B parity, and cleanup proof. Do not
-push the image, change Dokploy, create the production backup, or run the
-production importer. Ask for the separate production-apply authorization.
-
+plan/terminal/projection hashes, authorized decrypted-description aggregate
+SHA, archive content seal, A/B parity, and cleanup proof. Do not report
+per-description plaintext hashes. Do not push the image, change Dokploy, create
+the production backup, or run the production importer. Ask for the separate
+production-apply authorization.

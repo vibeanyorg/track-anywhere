@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import subprocess
+import sys
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from uuid import UUID
@@ -29,12 +32,12 @@ SIDECAR_ID = UUID("11111111-2222-5333-8444-555555555555")
 OTHER_SIDECAR_ID = UUID("21111111-2222-5333-8444-555555555555")
 MASTER_KEY = bytes(range(32))
 PLAINTEXT = b'{"purpose":"coffee"}'
-PLAINTEXT_HASH_HEX = (
-    "84f0033adb4c622e9a36f4a0485f18303fca5794d88bd10e05e6c1dc07f5e549"
+CONTENT_COMMITMENT_HEX = (
+    "342031d3ae0feb0cd52f1c82ce23a8a0733268e1ef9f434411039ae24a45e7d1"
 )
 FIXED_CIPHERTEXT_HEX = (
-    "df1f33d285b0e22cf52a7db89dfb6042b63630a6cdbcc095d8f397b618dcf019"
-    "124887d9"
+    "df1f33d285b0e22cf52a7db89dfb6042b63630a6f523e244000844642e704859"
+    "e01cc524"
 )
 KEYRING_ENVIRONMENT_VARIABLE = "TRACK_ANYWHERE_PROTECTED_CONTENT_KEYRING_FILE"
 
@@ -128,7 +131,7 @@ def test_fixed_vector_round_trip_is_protocol_stable() -> None:
     assert sealed.algorithm == "AES-256-GCM+HKDF-SHA256"
     assert sealed.key_ref == "v1"
     assert sealed.nonce == b"n" * 12
-    assert sealed.content_hash.hex() == PLAINTEXT_HASH_HEX
+    assert sealed.content_hash.hex() == CONTENT_COMMITMENT_HEX
     assert sealed.ciphertext.hex() == FIXED_CIPHERTEXT_HEX
     assert (
         cipher.decrypt(
@@ -141,7 +144,7 @@ def test_fixed_vector_round_trip_is_protocol_stable() -> None:
     )
 
 
-def test_default_nonce_source_changes_ciphertext_without_changing_content_hash() -> None:
+def test_default_nonce_source_changes_ciphertext_without_changing_commitment() -> None:
     cipher = ProtectedContentCipher(_keyring())
 
     first = cipher.encrypt(
@@ -172,6 +175,58 @@ def test_default_nonce_source_changes_ciphertext_without_changing_content_hash()
         kind="transaction_description",
         sealed=second,
     ) == PLAINTEXT
+
+
+def test_content_commitment_is_stable_but_scoped_to_book_sidecar_and_key() -> None:
+    cipher = _fixed_cipher()
+    sealed = _fixed_sealed()
+    exact_replay = _fixed_cipher(nonce=b"o" * 12).encrypt(
+        book_id=BOOK_ID,
+        sidecar_id=SIDECAR_ID,
+        kind="transaction_description",
+        plaintext=PLAINTEXT,
+    )
+    other_sidecar = cipher.encrypt(
+        book_id=BOOK_ID,
+        sidecar_id=OTHER_SIDECAR_ID,
+        kind="transaction_description",
+        plaintext=PLAINTEXT,
+    )
+    other_book = cipher.encrypt(
+        book_id=OTHER_BOOK_ID,
+        sidecar_id=SIDECAR_ID,
+        kind="transaction_description",
+        plaintext=PLAINTEXT,
+    )
+    other_kind = cipher.encrypt(
+        book_id=BOOK_ID,
+        sidecar_id=SIDECAR_ID,
+        kind="import_archive",
+        plaintext=PLAINTEXT,
+    )
+    other_key = _fixed_cipher(
+        keyring=ProtectedContentKeyring.from_mapping(
+            active_key_ref="v1",
+            keys={"v1": bytes(reversed(range(32)))},
+        )
+    ).encrypt(
+        book_id=BOOK_ID,
+        sidecar_id=SIDECAR_ID,
+        kind="transaction_description",
+        plaintext=PLAINTEXT,
+    )
+
+    assert sealed.content_hash == exact_replay.content_hash
+    assert sealed.content_hash != hashlib.sha256(PLAINTEXT).digest()
+    assert len(
+        {
+            sealed.content_hash,
+            other_sidecar.content_hash,
+            other_book.content_hash,
+            other_kind.content_hash,
+            other_key.content_hash,
+        }
+    ) == 5
 
 
 @pytest.mark.parametrize(
@@ -390,6 +445,47 @@ def test_nonregular_and_symlink_keyring_paths_are_rejected(tmp_path: Path) -> No
             ProtectedContentKeyring.from_file(path)
 
 
+def test_fifo_keyring_path_is_rejected_without_blocking(tmp_path: Path) -> None:
+    fifo = tmp_path / "keyring.fifo"
+    os.mkfifo(fifo, 0o400)
+    repository_root = Path(__file__).parents[4]
+    environment = os.environ.copy()
+    python_path = os.fspath(repository_root / "backend" / "app")
+    if environment.get("PYTHONPATH"):
+        python_path += os.pathsep + environment["PYTHONPATH"]
+    environment["PYTHONPATH"] = python_path
+    program = """
+import sys
+
+from track_anywhere.infrastructure.crypto import (
+    ProtectedContentConfigurationError,
+    ProtectedContentKeyring,
+)
+
+try:
+    ProtectedContentKeyring.from_file(sys.argv[1])
+except ProtectedContentConfigurationError as failure:
+    if str(failure) == "protected content keyring file is invalid":
+        raise SystemExit(0)
+raise SystemExit(3)
+"""
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", program, os.fspath(fifo)],
+            cwd=repository_root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("FIFO keyring validation blocked before rejecting the path")
+
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+
 def test_invalid_mapping_and_nonce_source_fail_without_secret_material() -> None:
     with pytest.raises(
         ProtectedContentConfigurationError,
@@ -448,6 +544,8 @@ def test_sealed_repr_and_decryption_errors_do_not_leak_protected_material() -> N
     assert repr(sealed.ciphertext) not in rendered_sealed
     assert sealed.nonce.hex() not in rendered_sealed
     assert repr(sealed.nonce) not in rendered_sealed
+    assert sealed.content_hash.hex() not in rendered_sealed
+    assert repr(sealed.content_hash) not in rendered_sealed
 
     with pytest.raises(ProtectedContentDecryptionError) as failure:
         cipher.decrypt(

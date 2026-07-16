@@ -29,6 +29,7 @@ _SENSITIVE_PARTS = (
     "authorization",
     "credential",
     "ciphertext",
+    "content_hash",
     "csrf",
     "description",
     "dsn",

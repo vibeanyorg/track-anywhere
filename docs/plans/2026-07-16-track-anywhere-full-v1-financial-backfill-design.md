@@ -185,14 +185,20 @@ sidecar UUID in `description_ref`.
 Sidecars use AES-256-GCM with a random 96-bit nonce. A versioned master key is
 provided to the one-shot process and application through a mounted Dokploy
 secret file. A Book-specific encryption key is derived with HKDF. AAD binds the
-Book ID, sidecar ID, kind, key version, and plaintext content hash. The database
-stores only ciphertext, nonce, `key_ref`, algorithm, content hash, lifecycle
-status, and timestamps.
+Book ID, sidecar ID, kind, key version, and a domain-separated HMAC-SHA256
+commitment. The commitment is keyed by the Book-derived key and binds the
+sidecar ID, kind, protocol version, and an internal plaintext SHA-256. The
+database keeps the legacy field name `content_hash`, but stores only this keyed
+commitment alongside ciphertext, nonce, `key_ref`, algorithm, lifecycle status,
+and timestamps. It never stores the raw plaintext hash.
 
 Random ciphertext is intentionally excluded from deterministic comparison.
-Rehearsals compare deterministic sidecar IDs, key references, plaintext hashes,
-and successfully decrypted canonical content. Replay finds the exact existing
-content hash and does not re-encrypt it.
+Rehearsals compare deterministic sidecar IDs, key references, keyed
+commitments, and successfully decrypted canonical content. An authorized
+verifier may compute an ephemeral aggregate SHA over decrypted descriptions for
+A/B semantic comparison, but it must not persist or report per-description
+plaintext hashes. Replay finds the exact existing commitment and does not
+re-encrypt it.
 
 Authenticated REST and CLI reads may return decrypted descriptions only for a
 Book-scoped actor with `ledger:read` and an explicit include-description flag.
@@ -299,7 +305,8 @@ Acceptance also requires:
 - exact reviewed natural balances for all five card accounts;
 - the retired card alias closed at zero;
 - every historical 8-decimal USDT posting preserved exactly;
-- all 138 transaction descriptions decrypting to their expected content hash;
+- all 138 transaction descriptions decrypting to their expected canonical
+  content and keyed commitment;
 - archive decrypt/export matching its row counts and content seal;
 - Book hash chain, stream heads, synchronous applied markers, command receipt,
   and projection hashes passing independent verification;

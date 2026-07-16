@@ -15,6 +15,7 @@ def test_sensitive_fields_are_redacted_recursively() -> None:
         "line_memo": "private line memo",
         "ciphertext": "encrypted bytes",
         "nonce": "private nonce bytes",
+        "content_hash": "private keyed commitment",
         "memo": "a full private merchant memo",
         "attachment_content": "raw attachment bytes",
         "book_id": "book-safe",
@@ -33,6 +34,7 @@ def test_sensitive_fields_are_redacted_recursively() -> None:
     assert "private line memo" not in rendered
     assert "encrypted bytes" not in rendered
     assert "private nonce bytes" not in rendered
+    assert "private keyed commitment" not in rendered
     assert "full private merchant memo" not in rendered
     assert "raw attachment bytes" not in rendered
     assert safe["book_id"] == "book-safe"
@@ -43,7 +45,11 @@ def test_audit_signal_and_metrics_expose_only_bounded_fields() -> None:
     signal = AuditSignal.p0(
         code="terminal_hash_mismatch",
         book_id="book-1",
-        fields={"memo": "private", "expected_hash": "do-not-log"},
+        fields={
+            "memo": "private",
+            "expected_hash": "do-not-log",
+            "content_hash": "private-content-commitment",
+        },
     )
     metrics = LedgerMetrics()
     metrics.increment(
@@ -58,11 +64,16 @@ def test_audit_signal_and_metrics_expose_only_bounded_fields() -> None:
             "line_memo": "private-line-memo",
             "ciphertext": "private-ciphertext",
             "nonce": "private-nonce",
+            "content_hash": "private-content-commitment",
         },
     )
 
     assert signal.severity == "P0"
-    assert signal.fields == {"memo": "[REDACTED]", "expected_hash": "[REDACTED]"}
+    assert signal.fields == {
+        "memo": "[REDACTED]",
+        "expected_hash": "[REDACTED]",
+        "content_hash": "[REDACTED]",
+    }
     assert "secret" not in repr(metrics.snapshot())
     assert "setup-secret" not in repr(metrics.snapshot())
     assert "private-description" not in repr(metrics.snapshot())
@@ -71,3 +82,4 @@ def test_audit_signal_and_metrics_expose_only_bounded_fields() -> None:
     assert "private-line-memo" not in repr(metrics.snapshot())
     assert "private-ciphertext" not in repr(metrics.snapshot())
     assert "private-nonce" not in repr(metrics.snapshot())
+    assert "private-content-commitment" not in repr(metrics.snapshot())
