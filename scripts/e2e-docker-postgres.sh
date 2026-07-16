@@ -281,7 +281,7 @@ curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
 assert_json_expr "$WORK_DIR/oauth-authorization-server.json" \
   "data['issuer'] == '$PUBLIC_URL/' and data['authorization_endpoint'] == '$PUBLIC_URL/api/v2/oauth/authorize' and data['code_challenge_methods_supported'] == ['S256']"
 assert_json_expr "$WORK_DIR/oauth-protected-resource-mcp.json" \
-  "data['resource'] == '$PUBLIC_URL/mcp' and data['authorization_servers'] == ['$PUBLIC_URL/'] and data['scopes_supported'] == ['ledger:read', 'ledger:write']"
+  "data['resource'] == '$PUBLIC_URL/mcp' and data['authorization_servers'] == ['$PUBLIC_URL/'] and data['scopes_supported'] == ['book:read', 'book:write', 'ledger:read', 'ledger:write']"
 
 MCP_STATUS="$(curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -sS \
   -D "$WORK_DIR/mcp-headers.txt" -o "$WORK_DIR/mcp-response.json" \
@@ -622,7 +622,7 @@ printf 'Exercising public OAuth PKCE and authenticated MCP through the applicati
 curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
   -X POST "$PUBLIC_URL/api/v2/oauth/register" \
   -H 'Content-Type: application/json' \
-  --data '{"client_name":"E2E MCP client","redirect_uris":["http://127.0.0.1/callback"],"scope":"ledger:read","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none"}' \
+  --data '{"client_name":"E2E MCP client","redirect_uris":["http://127.0.0.1/callback"],"scope":"book:read ledger:read","grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none"}' \
   >"$WORK_DIR/mcp-register.json"
 MCP_CLIENT_ID="$("${PY[@]}" - "$WORK_DIR/mcp-register.json" <<'PY'
 import json
@@ -661,7 +661,7 @@ curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
   -H 'Content-Type: application/json' \
   -H "Origin: $PUBLIC_URL" \
   -H "X-CSRF-Token: $CSRF_TOKEN" \
-  --data "{\"response_type\":\"code\",\"client_id\":\"$MCP_CLIENT_ID\",\"redirect_uri\":\"http://127.0.0.1/callback\",\"scope\":\"ledger:read\",\"state\":\"e2e-state\",\"code_challenge\":\"$CODE_CHALLENGE\",\"code_challenge_method\":\"S256\",\"resource\":\"$PUBLIC_URL/mcp\",\"action\":\"approve\"}" \
+  --data "{\"response_type\":\"code\",\"client_id\":\"$MCP_CLIENT_ID\",\"redirect_uri\":\"http://127.0.0.1/callback\",\"scope\":\"book:read ledger:read\",\"state\":\"e2e-state\",\"code_challenge\":\"$CODE_CHALLENGE\",\"code_challenge_method\":\"S256\",\"resource\":\"$PUBLIC_URL/mcp\",\"action\":\"approve\"}" \
   >"$WORK_DIR/mcp-authorization.json"
 AUTHORIZATION_CODE="$("${PY[@]}" - "$WORK_DIR/mcp-authorization.json" <<'PY'
 import json
@@ -687,7 +687,7 @@ import json
 import sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
 assert payload["token_type"] == "Bearer"
-assert payload["scope"] == "ledger:read"
+assert payload["scope"] == "book:read ledger:read"
 assert payload["refresh_token"].startswith("rt_")
 print(payload["access_token"])
 PY
@@ -723,8 +723,49 @@ curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
   >"$WORK_DIR/mcp-books.json"
 assert_json_expr "$WORK_DIR/mcp-initialize.json" \
   "data['result']['protocolVersion'] == '2025-11-25'"
-assert_json_expr "$WORK_DIR/mcp-tools.json" \
-  "len(data['result']['tools']) == 12 and len([tool for tool in data['result']['tools'] if tool['annotations']['readOnlyHint']]) == 8 and all(tool['securitySchemes'] == tool['_meta']['securitySchemes'] == ([{'type': 'oauth2', 'scopes': ['ledger:read']}] if tool['annotations']['readOnlyHint'] else [{'type': 'oauth2', 'scopes': ['ledger:read', 'ledger:write']}]) for tool in data['result']['tools'])"
+"${PY[@]}" - "$WORK_DIR/mcp-tools.json" <<'PY'
+import json
+import sys
+
+tools = json.load(open(sys.argv[1], encoding="utf-8"))["result"]["tools"]
+tools_by_name = {tool["name"]: tool for tool in tools}
+read_tools = {
+    "ledger_get_account",
+    "ledger_get_balances",
+    "ledger_get_transaction",
+    "ledger_list_accounts",
+    "ledger_list_assets",
+    "ledger_list_books",
+    "ledger_list_categories",
+    "ledger_list_transactions",
+}
+ledger_write_tools = {
+    "ledger_record_credit_card_charge",
+    "ledger_record_credit_card_payment",
+    "ledger_record_expense",
+    "ledger_record_transfer",
+}
+catalog_write_tools = {
+    "ledger_create_account",
+    "ledger_create_asset",
+    "ledger_create_book",
+}
+assert set(tools_by_name) == read_tools | ledger_write_tools | catalog_write_tools
+for name, tool in tools_by_name.items():
+    if name in ledger_write_tools:
+        scopes = ["ledger:read", "ledger:write"]
+    elif name in catalog_write_tools:
+        scopes = ["book:read", "book:write", "ledger:read"]
+    elif name == "ledger_list_books":
+        scopes = ["book:read", "ledger:read"]
+    else:
+        scopes = ["ledger:read"]
+    expected_security = [{"type": "oauth2", "scopes": scopes}]
+    assert tool["securitySchemes"] == tool["_meta"]["securitySchemes"]
+    assert tool["securitySchemes"] == expected_security
+    assert tool["annotations"]["readOnlyHint"] is (name in read_tools)
+print("mcp_tool_descriptors=PASS")
+PY
 assert_json_expr "$WORK_DIR/mcp-books.json" \
   "data['result']['structuredContent']['items'] == [{'book_id': '$BOOK_ID', 'current_name': 'Local E2E Book', 'base_asset_code': None, 'write_state': 'active'}]"
 
