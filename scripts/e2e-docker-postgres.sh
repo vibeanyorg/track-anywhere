@@ -281,7 +281,7 @@ curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
 assert_json_expr "$WORK_DIR/oauth-authorization-server.json" \
   "data['issuer'] == '$PUBLIC_URL/' and data['authorization_endpoint'] == '$PUBLIC_URL/api/v2/oauth/authorize' and data['code_challenge_methods_supported'] == ['S256']"
 assert_json_expr "$WORK_DIR/oauth-protected-resource-mcp.json" \
-  "data['resource'] == '$PUBLIC_URL/mcp' and data['authorization_servers'] == ['$PUBLIC_URL/'] and data['scopes_supported'] == ['ledger:read']"
+  "data['resource'] == '$PUBLIC_URL/mcp' and data['authorization_servers'] == ['$PUBLIC_URL/'] and data['scopes_supported'] == ['ledger:read', 'ledger:write']"
 
 MCP_STATUS="$(curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -sS \
   -D "$WORK_DIR/mcp-headers.txt" -o "$WORK_DIR/mcp-response.json" \
@@ -724,7 +724,7 @@ curl --connect-timeout 3 --max-time "$HTTP_TIMEOUT_SECONDS" -fsS \
 assert_json_expr "$WORK_DIR/mcp-initialize.json" \
   "data['result']['protocolVersion'] == '2025-11-25'"
 assert_json_expr "$WORK_DIR/mcp-tools.json" \
-  "len(data['result']['tools']) == 8 and all(tool['annotations']['readOnlyHint'] and tool['securitySchemes'] == tool['_meta']['securitySchemes'] == [{'type': 'oauth2', 'scopes': ['ledger:read']}] for tool in data['result']['tools'])"
+  "len(data['result']['tools']) == 12 and len([tool for tool in data['result']['tools'] if tool['annotations']['readOnlyHint']]) == 8 and all(tool['securitySchemes'] == tool['_meta']['securitySchemes'] == ([{'type': 'oauth2', 'scopes': ['ledger:read']}] if tool['annotations']['readOnlyHint'] else [{'type': 'oauth2', 'scopes': ['ledger:read', 'ledger:write']}]) for tool in data['result']['tools'])"
 assert_json_expr "$WORK_DIR/mcp-books.json" \
   "data['result']['structuredContent']['items'] == [{'book_id': '$BOOK_ID', 'current_name': 'Local E2E Book', 'base_asset_code': None, 'write_state': 'active'}]"
 
