@@ -6,6 +6,7 @@ from pathlib import Path
 
 import click
 
+from .click_archive import register as register_archive
 from .click_auth import register as register_auth
 from .click_catalog import register as register_catalog
 from .click_common import ClickState, Requester, output_options, pass_state
@@ -396,6 +397,7 @@ def _click_error_code(exc: click.ClickException) -> str:
 
 
 register_auth(cli)
+register_archive(cli)
 register_catalog(cli)
 register_credit_card(cli)
 register_investment(cli)

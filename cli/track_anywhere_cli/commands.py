@@ -3,6 +3,7 @@ from __future__ import annotations
 from argparse import Namespace
 from typing import Any
 
+from .command_archive import ARCHIVE_COMMAND_DEFINITIONS
 from .command_catalog import CATALOG_COMMAND_DEFINITIONS
 from .command_credit_card import CREDIT_CARD_COMMAND_DEFINITIONS
 from .command_definition import CommandDefinition, index_definitions, local_command
@@ -33,6 +34,7 @@ LOCAL_COMMAND_DEFINITIONS: tuple[CommandDefinition, ...] = (
 )
 API_COMMAND_DEFINITIONS: tuple[CommandDefinition, ...] = (
     *SYSTEM_COMMAND_DEFINITIONS,
+    *ARCHIVE_COMMAND_DEFINITIONS,
     *CATALOG_COMMAND_DEFINITIONS,
     *CREDIT_CARD_COMMAND_DEFINITIONS,
     *INVESTMENT_COMMAND_DEFINITIONS,

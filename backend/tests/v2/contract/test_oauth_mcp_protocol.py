@@ -12,6 +12,33 @@ from track_anywhere.mcp.server import create_mcp_runtime
 from track_anywhere.server import create_server
 
 
+_PROTECTED_OUTPUT_FIELDS = {
+    "description",
+    "description_ref",
+    "purpose",
+    "transaction_memo",
+    "line_memos",
+    "ndjson",
+    "ciphertext",
+    "nonce",
+    "key_ref",
+}
+
+
+def _schema_property_names(value: object) -> set[str]:
+    if isinstance(value, dict):
+        names = set(value.get("properties", {}))
+        for child in value.values():
+            names.update(_schema_property_names(child))
+        return names
+    if isinstance(value, list):
+        names: set[str] = set()
+        for child in value:
+            names.update(_schema_property_names(child))
+        return names
+    return set()
+
+
 def test_standard_well_known_metadata_uses_fixed_resources(monkeypatch) -> None:
     monkeypatch.delenv("TRACK_ANYWHERE_DATABASE_URL", raising=False)
     application = create_server(public_base_url="http://testserver")
@@ -83,6 +110,28 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
             assert "request_id" in tool.inputSchema["required"]
     account_tool = next(tool for tool in tools if tool.name == "ledger_create_account")
     assert "system_role" not in account_tool.inputSchema["properties"]
+
+
+def test_mcp_transaction_reads_cannot_request_or_return_protected_content() -> None:
+    runtime = create_mcp_runtime(
+        SimpleNamespace(session_factory=lambda: None),
+        "http://testserver",
+    )
+    tools = asyncio.run(runtime.server.list_tools())
+    tools_by_name = {tool.name: tool for tool in tools}
+
+    for tool_name in ("ledger_list_transactions", "ledger_get_transaction"):
+        tool = tools_by_name[tool_name]
+        assert "include_description" not in tool.inputSchema["properties"]
+        assert _schema_property_names(tool.outputSchema).isdisjoint(
+            _PROTECTED_OUTPUT_FIELDS
+        )
+
+    assert not any(
+        fragment in tool.name
+        for tool in tools
+        for fragment in ("archive", "import", "protected")
+    )
 
 
 def test_mcp_requires_oauth_and_advertises_resource_metadata() -> None:

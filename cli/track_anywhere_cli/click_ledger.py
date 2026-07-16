@@ -83,6 +83,11 @@ def _register_list(tx: click.Group) -> None:
     @click.option("--limit", type=click.IntRange(1, 100), default=50)
     @click.option("--cursor")
     @click.option("--as-of-book-position", type=int)
+    @click.option(
+        "--include-description",
+        is_flag=True,
+        help="Explicitly decrypt protected descriptions; book owner only.",
+    )
     @output_options
     @pass_state
     def list_transactions(state, json_mode, no_color, **values):
@@ -106,6 +111,11 @@ def _register_show(tx: click.Group) -> None:
     @click.argument("book_id")
     @click.argument("transaction_id")
     @click.option("--as-of-book-position", type=int)
+    @click.option(
+        "--include-description",
+        is_flag=True,
+        help="Explicitly decrypt the protected description; book owner only.",
+    )
     @output_options
     @pass_state
     def show_transaction(state, json_mode, no_color, **values):

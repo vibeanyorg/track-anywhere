@@ -126,6 +126,7 @@ def test_cli_v2_catalog_post_and_query_contract(
             limit=10,
             cursor=None,
             as_of_book_position=1,
+            include_description=False,
         ),
     )
     assert status == 200

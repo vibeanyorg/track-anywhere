@@ -57,6 +57,7 @@ def request_list_transactions(
             "limit": args.limit,
             "cursor": args.cursor,
             "as_of_book_position": args.as_of_book_position,
+            "include_description": True if args.include_description else None,
         },
     )
     return requester(config, "GET", path, None, None)
@@ -73,7 +74,10 @@ def request_show_transaction(
             f"/api/v2/books/{_path(args.book_id)}/journal/transactions/"
             f"{_path(args.transaction_id)}"
         ),
-        {"as_of_book_position": args.as_of_book_position},
+        {
+            "as_of_book_position": args.as_of_book_position,
+            "include_description": True if args.include_description else None,
+        },
     )
     return requester(config, "GET", path, None, None)
 

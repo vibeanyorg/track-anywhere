@@ -10,7 +10,7 @@ from track_anywhere_cli.click_app import cli, run
 from track_anywhere_cli import commands as cli_commands
 from track_anywhere_cli.commands import command_paths, command_spec
 from track_anywhere_cli.config import CliConfig
-from track_anywhere_cli.http import request_json
+from track_anywhere_cli.http import request_json, with_query
 from track_anywhere_cli.protocol import command_schema
 
 
@@ -41,6 +41,7 @@ def test_root_help_exposes_only_current_v2_groups(capsys):
     assert "\n  payment " not in help_text
     assert "\n  recurring " not in help_text
     assert "\n  data " not in help_text
+    assert "\n  archive " in help_text
 
 
 def test_capabilities_advertise_only_v2_implemented_commands(capsys):
@@ -52,7 +53,7 @@ def test_capabilities_advertise_only_v2_implemented_commands(capsys):
     assert all(command["registered"] for command in payload["data"]["commands"])
     assert not any(path.startswith(("payment.", "recurring.")) for path in advertised)
     assert payload["data"]["api_version"] == "v2"
-    assert payload["data"]["schema_version"] == "2026-07-15"
+    assert payload["data"]["schema_version"] == "2026-07-16"
 
 
 def test_command_definitions_are_the_single_source_for_paths_and_policy():
@@ -107,6 +108,21 @@ def test_v2_schema_describes_exact_string_amount_transport():
     assert posting["multiple"] is True
 
 
+def test_protected_description_flags_are_explicit_owner_only_decrypts():
+    for command_path in ("tx.list", "tx.show"):
+        schema = command_schema(cli, command_path)
+        flag = next(
+            value
+            for value in schema["flags"]
+            if value["name"] == "include_description"
+        )
+
+        assert flag["is_flag"] is True
+        assert flag["default"] is False
+        assert "owner" in flag["help"].lower()
+        assert "decrypt" in flag["help"].lower()
+
+
 def test_cli_runtime_contains_no_v1_or_legacy_posting_adapter():
     runtime = Path("cli/track_anywhere_cli")
     sources = "\n".join(
@@ -131,6 +147,13 @@ def test_http_transport_rejects_non_v2_routes_before_network(monkeypatch):
 
     assert status == 400
     assert payload["error"]["code"] == "unsupported_api_route"
+
+
+def test_query_transport_uses_lowercase_boolean_values_and_omits_none():
+    assert with_query(
+        "/x",
+        {"enabled": True, "disabled": False, "none": None},
+    ) == "/x?enabled=true&disabled=false"
 
 
 def test_system_checks_use_public_v2_routes_without_token(capsys):

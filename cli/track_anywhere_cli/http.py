@@ -173,7 +173,17 @@ def request_json(
 
 def with_query(path: str, params: dict[str, Any]) -> str:
     query = urllib.parse.urlencode(
-        {key: value for key, value in params.items() if value not in (None, "")}
+        {
+            key: (
+                "true"
+                if value is True
+                else "false"
+                if value is False
+                else value
+            )
+            for key, value in params.items()
+            if value not in (None, "")
+        }
     )
     return f"{path}?{query}" if query else path
 

@@ -129,6 +129,43 @@ def test_journal_query_uses_v2_cursor_contract(capsys):
     ]
 
 
+def test_journal_query_explicitly_requests_owner_only_descriptions(capsys):
+    calls = []
+
+    assert (
+        run(
+            [
+                "--token",
+                "token",
+                "tx",
+                "list",
+                BOOK,
+                "--limit",
+                "5",
+                "--cursor",
+                "opaque+/=",
+                "--as-of-book-position",
+                "99",
+                "--include-description",
+                "--json",
+            ],
+            requester=_recorder(calls),
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert calls == [
+        (
+            "GET",
+            f"/api/v2/books/{BOOK}/journal?limit=5&cursor=opaque%2B%2F%3D"
+            "&as_of_book_position=99&include_description=true",
+            None,
+            None,
+        )
+    ]
+
+
 def test_transaction_show_uses_the_transaction_scoped_query(capsys):
     calls = []
 
@@ -156,6 +193,40 @@ def test_transaction_show_uses_the_transaction_scoped_query(capsys):
             "GET",
             f"/api/v2/books/{BOOK}/journal/transactions/{TX}"
             "?as_of_book_position=99",
+            None,
+            None,
+        )
+    ]
+
+
+def test_transaction_show_explicitly_requests_owner_only_description(capsys):
+    calls = []
+
+    assert (
+        run(
+            [
+                "--token",
+                "token",
+                "tx",
+                "show",
+                BOOK,
+                TX,
+                "--as-of-book-position",
+                "99",
+                "--include-description",
+                "--json",
+            ],
+            requester=_recorder(calls),
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert calls == [
+        (
+            "GET",
+            f"/api/v2/books/{BOOK}/journal/transactions/{TX}"
+            "?as_of_book_position=99&include_description=true",
             None,
             None,
         )
