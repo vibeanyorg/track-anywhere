@@ -14,6 +14,7 @@ CATALOG_TABLES = (
     "books",
     "categories",
     "category_versions",
+    "import_archive_manifests",
     "protected_description_sidecars",
 )
 
@@ -118,6 +119,7 @@ def test_catalog_tables_and_model_metadata_are_complete(pg_engine) -> None:
                            ('accounts', 'account_id'),
                            ('categories', 'category_id'),
                            ('category_versions', 'category_version_id'),
+                           ('import_archive_manifests', 'archive_id'),
                            ('protected_description_sidecars', 'sidecar_id')
                        )
                     """
@@ -132,6 +134,7 @@ def test_catalog_tables_and_model_metadata_are_complete(pg_engine) -> None:
         ("books", "book_id", "uuid", None),
         ("categories", "category_id", "uuid", None),
         ("category_versions", "category_version_id", "uuid", None),
+        ("import_archive_manifests", "archive_id", "uuid", None),
         ("protected_description_sidecars", "sidecar_id", "uuid", None),
     }
 
@@ -556,7 +559,10 @@ def test_category_versions_are_append_only_even_for_the_schema_owner(
         owner_engine.dispose()
 
 
-def test_protected_description_sidecars_support_only_crypto_erasure(pg_engine) -> None:
+def test_protected_description_sidecars_support_only_crypto_erasure(
+    pg_engine,
+    migrated_postgres_database,
+) -> None:
     first_book, second_book = _seed_books(pg_engine)
     sidecar_id = uuid4()
     digest = b"h" * 32
@@ -567,18 +573,50 @@ def test_protected_description_sidecars_support_only_crypto_erasure(pg_engine) -
             book_id, sidecar_id, kind, ciphertext, key_ref, nonce,
             algorithm, content_hash, status, erased_at
         ) values (
-            :book_id, :sidecar_id, 'transaction_memo', :ciphertext, 'book-key-1',
-            :nonce, 'AES-256-GCM', :content_hash, 'active', null
+            :book_id, :sidecar_id, 'transaction_description', :ciphertext,
+            'book-key-1', :nonce, 'AES-256-GCM+HKDF-SHA256', :content_hash,
+            'active', null
         )
         """,
         {
             "book_id": first_book,
             "sidecar_id": sidecar_id,
-            "ciphertext": b"ciphertext",
+            "ciphertext": b"c" * 16,
             "nonce": b"n" * 12,
             "content_hash": digest,
         },
     )
+
+    owner_engine = create_engine(migrated_postgres_database.migrator_url)
+    try:
+        for assignment, value in (
+            ("kind = :value", "import_archive"),
+            ("ciphertext = :value", b"x" * 16),
+            ("key_ref = :value", "other-key"),
+            ("nonce = :value", b"o" * 12),
+            ("algorithm = :value", "other"),
+            ("content_hash = :value", b"x" * 32),
+            ("created_at = :value", datetime.now(UTC)),
+        ):
+            with pytest.raises(DBAPIError):
+                with owner_engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f'SET ROLE "{migrated_postgres_database.owner_role}"'
+                    )
+                    connection.execute(
+                        text(
+                            "update protected_description_sidecars "
+                            f"set {assignment} "
+                            "where book_id = :book_id and sidecar_id = :sidecar_id"
+                        ),
+                        {
+                            "book_id": first_book,
+                            "sidecar_id": sidecar_id,
+                            "value": value,
+                        },
+                    )
+    finally:
+        owner_engine.dispose()
 
     for statement, parameters in (
         (
@@ -587,8 +625,8 @@ def test_protected_description_sidecars_support_only_crypto_erasure(pg_engine) -
                 book_id, sidecar_id, kind, ciphertext, key_ref, nonce,
                 algorithm, content_hash, status, erased_at
             ) values (
-                :book_id, :sidecar_id, 'transaction_memo', null, null, null,
-                'AES-256-GCM', :content_hash, 'active', null
+                :book_id, :sidecar_id, 'transaction_description', null, null,
+                null, 'AES-256-GCM+HKDF-SHA256', :content_hash, 'active', null
             )
             """,
             {
@@ -603,8 +641,9 @@ def test_protected_description_sidecars_support_only_crypto_erasure(pg_engine) -
                 book_id, sidecar_id, kind, ciphertext, key_ref, nonce,
                 algorithm, content_hash, status, erased_at
             ) values (
-                :book_id, :sidecar_id, 'transaction_memo', :ciphertext, 'key',
-                :nonce, 'AES-256-GCM', :content_hash, 'erased', :erased_at
+                :book_id, :sidecar_id, 'transaction_description', :ciphertext,
+                'key', :nonce, 'AES-256-GCM+HKDF-SHA256', :content_hash,
+                'erased', :erased_at
             )
             """,
             {
@@ -622,8 +661,8 @@ def test_protected_description_sidecars_support_only_crypto_erasure(pg_engine) -
                 book_id, sidecar_id, kind, ciphertext, key_ref, nonce,
                 algorithm, content_hash, status, erased_at
             ) values (
-                :book_id, :sidecar_id, 'transaction_memo', null, null, null,
-                'AES-256-GCM', :content_hash, 'erased', null
+                :book_id, :sidecar_id, 'transaction_description', null, null,
+                null, 'AES-256-GCM+HKDF-SHA256', :content_hash, 'erased', null
             )
             """,
             {
@@ -642,16 +681,44 @@ def test_protected_description_sidecars_support_only_crypto_erasure(pg_engine) -
                 book_id, sidecar_id, kind, ciphertext, key_ref, nonce,
                 algorithm, content_hash, status, erased_at
             ) values (
-                :book_id, :sidecar_id, 'transaction_memo', :ciphertext, 'key',
-                :nonce, 'AES-256-GCM', :content_hash, 'active', null
+                :book_id, :sidecar_id, 'transaction_description', :ciphertext,
+                'key', :nonce, 'AES-256-GCM+HKDF-SHA256', :content_hash,
+                'active', null
             )
             """,
             {
                 "book_id": first_book,
                 "sidecar_id": uuid4(),
-                "ciphertext": b"ciphertext",
+                "ciphertext": b"c" * 16,
                 "nonce": b"n" * 12,
                 "content_hash": bad_hash,
+            },
+        )
+    for ciphertext, key_ref, nonce, algorithm in (
+        (b"c" * 15, "key", b"n" * 12, "AES-256-GCM+HKDF-SHA256"),
+        (b"c" * 16, "invalid key", b"n" * 12, "AES-256-GCM+HKDF-SHA256"),
+        (b"c" * 16, "key", b"n" * 11, "AES-256-GCM+HKDF-SHA256"),
+        (b"c" * 16, "key", b"n" * 12, "AES-256-GCM"),
+    ):
+        _rejects_integrity(
+            pg_engine,
+            """
+            insert into protected_description_sidecars (
+                book_id, sidecar_id, kind, ciphertext, key_ref, nonce,
+                algorithm, content_hash, status, erased_at
+            ) values (
+                :book_id, :sidecar_id, 'transaction_description', :ciphertext,
+                :key_ref, :nonce, :algorithm, :content_hash, 'active', null
+            )
+            """,
+            {
+                "book_id": first_book,
+                "sidecar_id": uuid4(),
+                "ciphertext": ciphertext,
+                "key_ref": key_ref,
+                "nonce": nonce,
+                "algorithm": algorithm,
+                "content_hash": digest,
             },
         )
 
@@ -679,7 +746,7 @@ def test_protected_description_sidecars_support_only_crypto_erasure(pg_engine) -
             "replacement": uuid4(),
         },
     )
-    _execute(
+    _rejects_database_operation(
         pg_engine,
         """
         update protected_description_sidecars
@@ -692,6 +759,11 @@ def test_protected_description_sidecars_support_only_crypto_erasure(pg_engine) -
             "sidecar_id": sidecar_id,
             "erased_at": datetime.now(UTC),
         },
+    )
+    _execute(
+        pg_engine,
+        "select public.v2_erase_protected_content(:book_id, :sidecar_id)",
+        {"book_id": first_book, "sidecar_id": sidecar_id},
     )
     _rejects_database_operation(
         pg_engine,
@@ -727,6 +799,124 @@ def test_protected_description_sidecars_support_only_crypto_erasure(pg_engine) -
             ).scalars()
         )
     assert forbidden_columns == set()
+
+
+def test_import_archive_manifests_bind_active_archive_content_and_are_append_only(
+    pg_engine,
+    migrated_postgres_database,
+) -> None:
+    book_id, _other_book = _seed_books(pg_engine)
+    valid_archive_id = uuid4()
+    wrong_kind_id = uuid4()
+    wrong_commitment_id = uuid4()
+    digest = b"a" * 32
+
+    for sidecar_id, kind, commitment in (
+        (valid_archive_id, "import_archive", digest),
+        (wrong_kind_id, "transaction_description", digest),
+        (wrong_commitment_id, "import_archive", b"b" * 32),
+    ):
+        _execute(
+            pg_engine,
+            """
+            insert into protected_description_sidecars (
+                book_id, sidecar_id, kind, ciphertext, key_ref, nonce,
+                algorithm, content_hash, status, erased_at
+            ) values (
+                :book_id, :sidecar_id, :kind, :ciphertext, 'v1', :nonce,
+                'AES-256-GCM+HKDF-SHA256', :content_hash, 'active', null
+            )
+            """,
+            {
+                "book_id": book_id,
+                "sidecar_id": sidecar_id,
+                "kind": kind,
+                "ciphertext": b"c" * 16,
+                "nonce": b"n" * 12,
+                "content_hash": commitment,
+            },
+        )
+
+    manifest_sql = """
+        insert into import_archive_manifests (
+            book_id, archive_id, contract_version, source_dump_hash,
+            source_manifest_hash, card_review_hash, plan_hash,
+            archive_content_commitment, seal, record_counts
+        ) values (
+            :book_id, :archive_id, 1, :source_dump_hash,
+            :source_manifest_hash, :card_review_hash, :plan_hash,
+            :archive_content_commitment, :seal, '{}'::jsonb
+        )
+    """
+
+    def manifest_parameters(archive_id: UUID, commitment: bytes) -> dict[str, object]:
+        return {
+            "book_id": book_id,
+            "archive_id": archive_id,
+            "source_dump_hash": b"d" * 32,
+            "source_manifest_hash": b"m" * 32,
+            "card_review_hash": b"c" * 32,
+            "plan_hash": b"p" * 32,
+            "archive_content_commitment": commitment,
+            "seal": b"s" * 32,
+        }
+
+    _execute(
+        pg_engine,
+        manifest_sql,
+        manifest_parameters(valid_archive_id, digest),
+    )
+    for archive_id in (wrong_kind_id, wrong_commitment_id):
+        _rejects_database_operation(
+            pg_engine,
+            manifest_sql,
+            manifest_parameters(archive_id, digest),
+        )
+    _rejects_database_operation(
+        pg_engine,
+        "select public.v2_erase_protected_content(:book_id, :sidecar_id)",
+        {"book_id": book_id, "sidecar_id": valid_archive_id},
+    )
+
+    for statement in (
+        "update import_archive_manifests set plan_hash = :changed "
+        "where book_id = :book_id and archive_id = :archive_id",
+        "delete from import_archive_manifests "
+        "where book_id = :book_id and archive_id = :archive_id",
+    ):
+        _rejects_database_operation(
+            pg_engine,
+            statement,
+            {
+                "book_id": book_id,
+                "archive_id": valid_archive_id,
+                "changed": b"x" * 32,
+            },
+        )
+
+    owner_engine = create_engine(migrated_postgres_database.migrator_url)
+    try:
+        for statement in (
+            "update import_archive_manifests set plan_hash = :changed "
+            "where book_id = :book_id and archive_id = :archive_id",
+            "delete from import_archive_manifests "
+            "where book_id = :book_id and archive_id = :archive_id",
+        ):
+            with pytest.raises(DBAPIError):
+                with owner_engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f'SET ROLE "{migrated_postgres_database.owner_role}"'
+                    )
+                    connection.execute(
+                        text(statement),
+                        {
+                            "book_id": book_id,
+                            "archive_id": valid_archive_id,
+                            "changed": b"x" * 32,
+                        },
+                    )
+    finally:
+        owner_engine.dispose()
 
 
 def test_catalog_acl_is_exact_and_runtime_cannot_delete_or_manage_triggers(
@@ -771,7 +961,12 @@ def test_catalog_acl_is_exact_and_runtime_cannot_delete_or_manage_triggers(
         for table_name in CATALOG_TABLES
         for privilege in (
             ("SELECT", "INSERT")
-            if table_name == "category_versions"
+            if table_name
+            in {
+                "category_versions",
+                "import_archive_manifests",
+                "protected_description_sidecars",
+            }
             else ("SELECT", "INSERT", "UPDATE")
         )
     }
@@ -786,6 +981,47 @@ def test_catalog_acl_is_exact_and_runtime_cannot_delete_or_manage_triggers(
         "alter table assets disable trigger all",
     ):
         _rejects_database_operation(pg_engine, statement, {})
+
+
+def test_runtime_can_erase_only_through_the_narrow_owner_function(
+    pg_engine,
+    migrated_postgres_database,
+) -> None:
+    with pg_engine.connect() as connection:
+        function = connection.execute(
+            text(
+                """
+                select procedure.prosecdef,
+                       owner.rolname as owner_name,
+                       procedure.proconfig,
+                       has_function_privilege(
+                           :runtime,
+                           'public.v2_erase_protected_content(uuid,uuid)',
+                           'EXECUTE'
+                       ) as runtime_execute,
+                       exists (
+                           select 1
+                             from pg_catalog.aclexplode(procedure.proacl) acl
+                            where acl.grantee = 0
+                              and acl.privilege_type = 'EXECUTE'
+                       ) as public_execute
+                  from pg_catalog.pg_proc procedure
+                  join pg_catalog.pg_roles owner on owner.oid = procedure.proowner
+                 where procedure.oid =
+                       'public.v2_erase_protected_content(uuid,uuid)'::regprocedure
+                """
+            ),
+            {"runtime": migrated_postgres_database.runtime_role},
+        ).mappings().one()
+
+    assert function["prosecdef"] is True
+    assert function["owner_name"] == migrated_postgres_database.owner_role
+    assert function["runtime_execute"] is True
+    assert function["public_execute"] is False
+    assert any(
+        setting.replace(" ", "") == "search_path=pg_catalog,public"
+        for setting in function["proconfig"]
+    )
 
 
 def test_catalog_foreign_keys_never_cascade_and_trigger_functions_are_hardened(
@@ -865,6 +1101,7 @@ def test_catalog_foreign_keys_never_cascade_and_trigger_functions_are_hardened(
         "assets",
         "books",
         "category_versions",
+        "import_archive_manifests",
         "oauth_device_grants",
         "protected_description_sidecars",
     }

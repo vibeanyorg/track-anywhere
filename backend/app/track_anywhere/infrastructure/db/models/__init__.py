@@ -33,7 +33,7 @@ from .credit_cards import CreditCardTransactionRecord
 from .investments import InvestmentLotAllocationRecord, InvestmentLotRecord
 from .monthly_summary import MonthlyCategorySummaryRecord
 from .outbox import OutboxMessageRecord
-from .privacy import ProtectedDescriptionSidecarRecord
+from .privacy import ImportArchiveManifestRecord, ProtectedDescriptionSidecarRecord
 from .projections import (
     AccountBalanceRecord,
     JournalPostingRecord,
@@ -66,6 +66,7 @@ __all__ = [
     "JournalTransactionRecord",
     "InvestmentLotAllocationRecord",
     "InvestmentLotRecord",
+    "ImportArchiveManifestRecord",
     "MonthlyCategorySummaryRecord",
     "OAuthAuthorizationGrantRecord",
     "OAuthClientRecord",

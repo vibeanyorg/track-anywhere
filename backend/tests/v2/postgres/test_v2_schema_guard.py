@@ -41,6 +41,7 @@ V2_MODEL_TABLES = {
     "journal_transactions",
     "investment_lot_allocations",
     "investment_lots",
+    "import_archive_manifests",
     "ledger_events",
     "monthly_category_summaries",
     "oauth_authorization_grants",
@@ -1238,3 +1239,36 @@ def test_alembic_ini_contains_no_default_database_url() -> None:
     )
     assert line == "sqlalchemy.url ="
     assert "localhost" not in line
+
+
+def test_protected_content_revision_downgrades_to_the_previous_schema(
+    migrated_postgres_database,
+) -> None:
+    downgraded = _run_alembic(
+        "downgrade",
+        "v2_0011_oauth_resource_binding",
+        database_url=migrated_postgres_database.migrator_url,
+        runtime_role=migrated_postgres_database.runtime_role,
+    )
+    assert downgraded.returncode == 0, downgraded.stderr
+
+    with create_engine(migrated_postgres_database.runtime_url).connect() as connection:
+        assert connection.execute(
+            text("select to_regclass('public.import_archive_manifests')")
+        ).scalar_one() is None
+        assert connection.execute(
+            text(
+                "select has_table_privilege(:runtime, "
+                "'public.protected_description_sidecars', 'UPDATE')"
+            ),
+            {"runtime": migrated_postgres_database.runtime_role},
+        ).scalar_one() is True
+
+    upgraded = _run_alembic(
+        "upgrade",
+        "head",
+        database_url=migrated_postgres_database.migrator_url,
+        runtime_role=migrated_postgres_database.runtime_role,
+    )
+    assert upgraded.returncode == 0, upgraded.stderr
+    assert _relation_names(migrated_postgres_database.migrator_url) == V2_RELATION_NAMES

@@ -12,6 +12,7 @@ import stat
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import Literal, TypeAlias
 from uuid import UUID
 
 from cryptography.exceptions import InvalidTag
@@ -19,8 +20,13 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from ...application.privacy import ProtectedContentKind
 from ...serialization.canonical_json import canonical_json_bytes
+
+
+ProtectedContentKind: TypeAlias = Literal[
+    "transaction_description",
+    "import_archive",
+]
 
 
 PROTECTED_CONTENT_ALGORITHM = "AES-256-GCM+HKDF-SHA256"
@@ -32,8 +38,20 @@ _MAX_KEYRING_FILE_BYTES = 64 * 1024
 _MASTER_KEY_BYTES = 32
 _NONCE_BYTES = 12
 _CONTENT_COMMITMENT_VERSION = 1
+_IMPORT_ARCHIVE_SEAL_VERSION = 1
 _KEY_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", flags=re.ASCII)
 _PROTECTED_CONTENT_KINDS = frozenset({"transaction_description", "import_archive"})
+_IMPORT_ARCHIVE_COUNT_KEYS = frozenset(
+    {
+        "classification_audit_records",
+        "counterparty_records",
+        "institution_metadata_records",
+        "investment_activities",
+        "investment_valuations",
+        "omission_records",
+        "uncategorized_fx_reporting_facts",
+    }
+)
 _HKDF_SALT = b"track-anywhere:v2:protected-content:hkdf-sha256:v1"
 
 
@@ -302,6 +320,71 @@ class ProtectedContentCipher:
         ):
             raise ProtectedContentDecryptionError(
                 "protected content could not be decrypted"
+            ) from None
+
+    def commit_archive_seal(
+        self,
+        *,
+        book_id: UUID,
+        archive_id: UUID,
+        key_ref: str,
+        contract_version: int,
+        source_dump_hash: bytes,
+        source_manifest_hash: bytes,
+        card_review_hash: bytes,
+        plan_hash: bytes,
+        archive_content_commitment: bytes,
+        record_counts: Mapping[str, int],
+    ) -> bytes:
+        """Seal the public import manifest without exposing a generic MAC API."""
+
+        try:
+            if type(book_id) is not UUID or type(archive_id) is not UUID:
+                raise TypeError
+            if not _valid_key_ref(key_ref) or type(contract_version) is not int:
+                raise TypeError
+            if contract_version != _IMPORT_ARCHIVE_SEAL_VERSION:
+                raise ValueError
+            hashes_by_name = {
+                "archive_content_commitment": archive_content_commitment,
+                "card_review_hash": card_review_hash,
+                "plan_hash": plan_hash,
+                "source_dump_hash": source_dump_hash,
+                "source_manifest_hash": source_manifest_hash,
+            }
+            if any(
+                type(value) is not bytes or len(value) != 32
+                for value in hashes_by_name.values()
+            ):
+                raise ValueError
+            if (
+                type(record_counts) is not dict
+                or set(record_counts) != _IMPORT_ARCHIVE_COUNT_KEYS
+                or any(type(value) is not int or value < 0 for value in record_counts.values())
+            ):
+                raise ValueError
+            book_key = _derive_book_key(self._keyring._key_for(key_ref), book_id)
+            material = canonical_json_bytes(
+                {
+                    "archive_content_commitment": archive_content_commitment.hex(),
+                    "archive_id": str(archive_id),
+                    "book_id": str(book_id),
+                    "card_review_hash": card_review_hash.hex(),
+                    "context": "import-archive-seal",
+                    "contract_version": contract_version,
+                    "plan_hash": plan_hash.hex(),
+                    "record_counts": dict(record_counts),
+                    "source_dump_hash": source_dump_hash.hex(),
+                    "source_manifest_hash": source_manifest_hash.hex(),
+                    "version": _IMPORT_ARCHIVE_SEAL_VERSION,
+                }
+            )
+            return hmac.new(book_key, material, hashlib.sha256).digest()
+        except ProtectedContentConfigurationError:
+            raise
+        except (TypeError, ValueError):
+            raise ProtectedContentEncryptionError(
+                "import archive could not be sealed"
             ) from None
 
 
