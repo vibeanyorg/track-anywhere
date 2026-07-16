@@ -9,6 +9,12 @@ def test_sensitive_fields_are_redacted_recursively() -> None:
         "api_key": "ta_super_secret",
         "setup_key": "ta_private_setup_secret",
         "credential": "bearer secret",
+        "description": "private transaction description",
+        "purpose": "private transaction purpose",
+        "plaintext": "raw protected content",
+        "line_memo": "private line memo",
+        "ciphertext": "encrypted bytes",
+        "nonce": "private nonce bytes",
         "memo": "a full private merchant memo",
         "attachment_content": "raw attachment bytes",
         "book_id": "book-safe",
@@ -21,6 +27,12 @@ def test_sensitive_fields_are_redacted_recursively() -> None:
     assert "ta_super_secret" not in rendered
     assert "ta_private_setup_secret" not in rendered
     assert "bearer secret" not in rendered
+    assert "private transaction description" not in rendered
+    assert "private transaction purpose" not in rendered
+    assert "raw protected content" not in rendered
+    assert "private line memo" not in rendered
+    assert "encrypted bytes" not in rendered
+    assert "private nonce bytes" not in rendered
     assert "full private merchant memo" not in rendered
     assert "raw attachment bytes" not in rendered
     assert safe["book_id"] == "book-safe"
@@ -40,6 +52,12 @@ def test_audit_signal_and_metrics_expose_only_bounded_fields() -> None:
             "book_id": "book-1",
             "api_key": "secret",
             "setup_key": "setup-secret",
+            "description": "private-description",
+            "purpose": "private-purpose",
+            "plaintext": "private-plaintext",
+            "line_memo": "private-line-memo",
+            "ciphertext": "private-ciphertext",
+            "nonce": "private-nonce",
         },
     )
 
@@ -47,3 +65,9 @@ def test_audit_signal_and_metrics_expose_only_bounded_fields() -> None:
     assert signal.fields == {"memo": "[REDACTED]", "expected_hash": "[REDACTED]"}
     assert "secret" not in repr(metrics.snapshot())
     assert "setup-secret" not in repr(metrics.snapshot())
+    assert "private-description" not in repr(metrics.snapshot())
+    assert "private-purpose" not in repr(metrics.snapshot())
+    assert "private-plaintext" not in repr(metrics.snapshot())
+    assert "private-line-memo" not in repr(metrics.snapshot())
+    assert "private-ciphertext" not in repr(metrics.snapshot())
+    assert "private-nonce" not in repr(metrics.snapshot())
