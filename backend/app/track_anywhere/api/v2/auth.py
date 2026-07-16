@@ -114,7 +114,10 @@ def create_auth_router(
         except (AuthPolicyDenied, AuthSecurityError, ValidationError):
             return _oauth_error("invalid_request", _INVALID_REQUEST_DESCRIPTION)
         query = urlencode(
-            payload.model_dump(exclude={"action"}, exclude_none=True),
+            payload.model_dump(
+                exclude={"action", "approved_scopes"},
+                exclude_none=True,
+            ),
             doseq=True,
         )
         return RedirectResponse(f"/auth/callback?{query}", status_code=302)

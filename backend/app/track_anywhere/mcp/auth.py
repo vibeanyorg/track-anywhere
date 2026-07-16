@@ -18,6 +18,7 @@ from ..infrastructure.db.repositories.auth import (
 
 
 MCP_REQUIRED_SCOPE = "ledger:read"
+MCP_WRITE_SCOPE = "ledger:write"
 
 
 class DatabaseTokenVerifier(TokenVerifier):
@@ -69,6 +70,16 @@ def require_access_token() -> AccessToken:
     return token
 
 
+def require_write_access_token() -> AccessToken:
+    token = require_access_token()
+    if MCP_WRITE_SCOPE not in token.scopes:
+        raise ToolError(
+            "This action needs ledger:write. Reconnect the Track Anywhere app "
+            "and explicitly approve write access."
+        )
+    return token
+
+
 def require_book_access(
     session: Session,
     token: AccessToken,
@@ -89,9 +100,33 @@ def require_book_access(
         raise ToolError("Book not found or not accessible to this connection.")
 
 
+def require_book_write_access(
+    session: Session,
+    token: AccessToken,
+    book_id: UUID,
+) -> None:
+    require_book_access(session, token, book_id)
+    try:
+        membership = BookMembershipRepository(session).get(
+            book_id,
+            token.subject or "",
+        )
+    except AuthRecordNotFound as error:  # pragma: no cover - read check owns this path.
+        raise ToolError("Book not found or not writable by this connection.") from error
+    if (
+        membership.status != "active"
+        or membership.revoked_at is not None
+        or MCP_WRITE_SCOPE not in membership.scopes
+    ):
+        raise ToolError("Book not found or not writable by this connection.")
+
+
 __all__ = [
     "DatabaseTokenVerifier",
     "MCP_REQUIRED_SCOPE",
+    "MCP_WRITE_SCOPE",
     "require_access_token",
     "require_book_access",
+    "require_book_write_access",
+    "require_write_access_token",
 ]

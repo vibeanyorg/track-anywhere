@@ -83,8 +83,13 @@ registration field.
 Configure the connector URL as `<public-origin>/mcp` and select OAuth. ChatGPT
 discovers the authorization server from the Bearer challenge and protected
 resource metadata, dynamically registers a public client, and requests
-`ledger:read`. Every exposed MCP tool is read-only, idempotent, and mirrors its
-OAuth security scheme in both the top-level descriptor and `_meta`.
+`ledger:read`. The consent screen selects read scopes by default and leaves
+`ledger:write` off until the owner explicitly selects it. The eight query tools
+remain read-only. Four semantic write tools record expenses, transfers,
+credit-card charges, and card payments only after explicit user confirmation;
+each requires `ledger:read ledger:write` and a stable `request_id` for exact
+retries. Every tool mirrors its OAuth security scheme in both the top-level
+descriptor and `_meta`.
 
 The browser supports a private-instance owner account. `POST /api/v2/auth/signup`
 requires the existing human owner's personal API key as a high-entropy setup

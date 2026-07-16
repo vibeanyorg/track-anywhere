@@ -29,14 +29,14 @@ def test_standard_well_known_metadata_uses_fixed_resources(monkeypatch) -> None:
     assert api_resource.json()["authorization_servers"] == ["http://testserver/"]
 
 
-def test_mcp_descriptors_mirror_oauth_security_and_read_only_annotations() -> None:
+def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
     runtime = create_mcp_runtime(
         SimpleNamespace(session_factory=lambda: None),
         "http://testserver",
     )
     tools = asyncio.run(runtime.server.list_tools())
 
-    assert {tool.name for tool in tools} == {
+    read_tools = {
         "ledger_get_account",
         "ledger_get_balances",
         "ledger_get_transaction",
@@ -46,16 +46,31 @@ def test_mcp_descriptors_mirror_oauth_security_and_read_only_annotations() -> No
         "ledger_list_categories",
         "ledger_list_transactions",
     }
+    write_tools = {
+        "ledger_record_credit_card_charge",
+        "ledger_record_credit_card_payment",
+        "ledger_record_expense",
+        "ledger_record_transfer",
+    }
+    assert {tool.name for tool in tools} == read_tools | write_tools
     for tool in tools:
-        expected = [{"type": "oauth2", "scopes": ["ledger:read"]}]
+        expected_scopes = (
+            ["ledger:read", "ledger:write"]
+            if tool.name in write_tools
+            else ["ledger:read"]
+        )
+        expected = [{"type": "oauth2", "scopes": expected_scopes}]
         assert tool.model_extra["securitySchemes"] == expected
         assert tool.meta["securitySchemes"] == expected
         assert tool.description.startswith("Use this when")
-        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.readOnlyHint is (tool.name in read_tools)
         assert tool.annotations.destructiveHint is False
         assert tool.annotations.idempotentHint is True
         assert tool.annotations.openWorldHint is False
         assert tool.outputSchema is not None
+        if tool.name in write_tools:
+            assert "request_id" in tool.inputSchema["properties"]
+            assert "request_id" in tool.inputSchema["required"]
 
 
 def test_mcp_requires_oauth_and_advertises_resource_metadata() -> None:
@@ -91,7 +106,7 @@ def test_mcp_requires_oauth_and_advertises_resource_metadata() -> None:
     assert metadata.status_code == 200
     assert metadata.json()["resource"] == "http://testserver/mcp"
     assert metadata.json()["authorization_servers"] == ["http://testserver/"]
-    assert metadata.json()["scopes_supported"] == ["ledger:read"]
+    assert metadata.json()["scopes_supported"] == ["ledger:read", "ledger:write"]
 
 
 def test_mcp_accepts_only_explicitly_configured_internal_proxy_host(

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from hashlib import blake2b
+from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..infrastructure.db.models.auth import (
@@ -42,6 +44,30 @@ from .sessions import ActiveBrowserSession
 OAUTH_ACCESS_KINDS = frozenset({"pkce", "device", "oauth_refresh"})
 REFRESH_TOKEN_TTL = timedelta(days=30)
 ACCESS_TOKEN_TTL = timedelta(hours=1)
+_MCP_RESOURCE_PATH = "/mcp"
+_MCP_REQUIRED_GRANT_SCOPE = "ledger:read"
+_REFRESH_FAMILY_LOCK_PERSON = b"ta-oauth-fam"
+
+
+def require_resource_scope_floor(
+    resource: str | None,
+    scopes: tuple[str, ...],
+) -> None:
+    if (
+        resource is not None
+        and urlparse(resource).path.rstrip("/") == _MCP_RESOURCE_PATH
+        and _MCP_REQUIRED_GRANT_SCOPE not in scopes
+    ):
+        raise AuthPolicyDenied("ledger:read is required for MCP access")
+
+
+def _refresh_family_lock_key(family_id: UUID) -> int:
+    digest = blake2b(
+        family_id.bytes,
+        digest_size=8,
+        person=_REFRESH_FAMILY_LOCK_PERSON,
+    ).digest()
+    return int.from_bytes(digest, byteorder="big", signed=True)
 
 
 class PersistentOAuthService:
@@ -111,8 +137,7 @@ class PersistentOAuthService:
         active: ActiveBrowserSession,
     ) -> dict[str, str]:
         validated = self.validate_authorization_request(command)
-        scopes = tuple(str(scope) for scope in validated["scopes"])
-        require_scope_subset(scopes, set(active.credential.scopes))
+        requested_scopes = tuple(str(scope) for scope in validated["scopes"])
         if command.action == "deny":
             return {
                 "redirect_uri": redirect_with_params(
@@ -120,6 +145,16 @@ class PersistentOAuthService:
                     {"error": "access_denied", "state": command.state},
                 )
             }
+        if active.credential.book_id is not None:
+            raise AuthPolicyDenied(
+                "book-bound credentials cannot approve OAuth access"
+            )
+        scopes = requested_scopes
+        if command.approved_scopes is not None:
+            scopes = parse_requested_scopes(" ".join(command.approved_scopes))
+            require_scope_subset(scopes, set(requested_scopes))
+        require_scope_subset(scopes, set(active.credential.scopes))
+        require_resource_scope_floor(command.resource, scopes)
         raw_code = new_secret("code")
         now = datetime.now(UTC)
         self._session.add(
@@ -184,22 +219,21 @@ class PersistentOAuthService:
         command: OAuthRefreshTokenCommand,
     ) -> dict[str, object]:
         require_oauth_resource(command.resource, self._public_base_url)
-        now = datetime.now(UTC)
-        record = self._session.execute(
-            select(CredentialRecord)
-            .where(CredentialRecord.token_hash == secret_digest(command.refresh_token))
-            .with_for_update()
-        ).scalar_one_or_none()
-        if (
-            record is None
-            or record.auth_kind != "refresh_token"
-            or record.oauth_client_id != command.client_id
-            or record.resource != command.resource
-            or record.refresh_family_id is None
-        ):
+        token_hash = secret_digest(command.refresh_token)
+        candidate = self._require_refresh_record(token_hash, command)
+        family_id = candidate.refresh_family_id
+        if family_id is None:  # pragma: no cover - validated by the helper.
             raise OAuthFlowError("invalid_grant", "refresh token is invalid")
+        self._lock_refresh_family(family_id)
+        record = self._require_refresh_record(
+            token_hash,
+            command,
+            lock=True,
+            expected_family_id=family_id,
+        )
+        now = datetime.now(UTC)
         if record.revoked_at is not None:
-            self._revoke_family(record.refresh_family_id, now)
+            self._revoke_family(family_id, now)
             raise OAuthFlowError(
                 "invalid_grant",
                 "refresh token reuse invalidated the token family",
@@ -222,7 +256,7 @@ class PersistentOAuthService:
             client_id=command.client_id,
             resource=command.resource,
             issued_at=now,
-            refresh_family_id=record.refresh_family_id,
+            refresh_family_id=family_id,
         )
 
     def token_status(
@@ -265,19 +299,31 @@ class PersistentOAuthService:
         *,
         client_id: str | None = None,
     ) -> dict[str, bool]:
-        now = datetime.now(UTC)
-        record = self._session.execute(
-            select(CredentialRecord)
-            .where(CredentialRecord.token_hash == secret_digest(raw_token))
-            .with_for_update()
-        ).scalar_one_or_none()
+        token_hash = secret_digest(raw_token)
+        record = self._credential_record(token_hash)
         if record is None or (
             client_id is not None and record.oauth_client_id != client_id
         ):
             return {"revoked": True}
-        if record.auth_kind == "refresh_token" and record.refresh_family_id is not None:
-            self._revoke_family(record.refresh_family_id, now)
-        elif record.revoked_at is None:
+        family_id = record.refresh_family_id
+        if family_id is not None:
+            self._lock_refresh_family(family_id)
+            record = self._credential_record(token_hash, lock=True)
+            if (
+                record is None
+                or record.refresh_family_id != family_id
+                or (client_id is not None and record.oauth_client_id != client_id)
+            ):
+                return {"revoked": True}
+            self._revoke_family(family_id, datetime.now(UTC))
+        else:
+            record = self._credential_record(token_hash, lock=True)
+            if record is None or (
+                client_id is not None and record.oauth_client_id != client_id
+            ):
+                return {"revoked": True}
+        if family_id is None and record.revoked_at is None:
+            now = datetime.now(UTC)
             record.revoked_at = now
         self._session.flush()
         return {"revoked": True}
@@ -300,6 +346,10 @@ class PersistentOAuthService:
         client = self._session.get(OAuthClientRecord, client_id)
         if user is None or user.status != "active" or client is None or client.status != "active":
             raise OAuthFlowError("invalid_grant", "authorization subject is unavailable")
+        try:
+            require_scope_subset(scopes, set(client.scopes))
+        except AuthPolicyDenied as error:
+            raise OAuthFlowError("invalid_scope", str(error)) from error
         family_id = refresh_family_id or uuid4()
         raw_access_token = new_secret("ta")
         raw_refresh_token = new_secret("rt")
@@ -348,6 +398,54 @@ class PersistentOAuthService:
             "resource": resource,
         }
 
+    def _credential_record(
+        self,
+        token_hash: bytes,
+        *,
+        lock: bool = False,
+    ) -> CredentialRecord | None:
+        statement = select(CredentialRecord).where(
+            CredentialRecord.token_hash == token_hash
+        )
+        if lock:
+            statement = statement.with_for_update().execution_options(
+                populate_existing=True
+            )
+        return self._session.execute(statement).scalar_one_or_none()
+
+    def _require_refresh_record(
+        self,
+        token_hash: bytes,
+        command: OAuthRefreshTokenCommand,
+        *,
+        lock: bool = False,
+        expected_family_id: UUID | None = None,
+    ) -> CredentialRecord:
+        record = self._credential_record(token_hash, lock=lock)
+        if (
+            record is None
+            or record.auth_kind != "refresh_token"
+            or record.oauth_client_id != command.client_id
+            or record.resource != command.resource
+            or record.refresh_family_id is None
+            or (
+                expected_family_id is not None
+                and record.refresh_family_id != expected_family_id
+            )
+        ):
+            raise OAuthFlowError("invalid_grant", "refresh token is invalid")
+        return record
+
+    def _lock_refresh_family(self, family_id: UUID) -> None:
+        bind = self._session.get_bind()
+        if bind.dialect.name != "postgresql":
+            raise RuntimeError(
+                "OAuth refresh family rotation requires PostgreSQL advisory locks"
+            )
+        self._session.execute(
+            select(func.pg_advisory_xact_lock(_refresh_family_lock_key(family_id)))
+        ).scalar_one()
+
     def _active_client(self, client_id: str) -> OAuthClientRecord:
         client = self._session.get(OAuthClientRecord, client_id)
         if client is None or client.status != "active":
@@ -372,6 +470,7 @@ class PersistentOAuthService:
             select(CredentialRecord)
             .where(CredentialRecord.refresh_family_id == family_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         for record in records:
             if record.revoked_at is None:
@@ -384,4 +483,5 @@ __all__ = [
     "OAUTH_ACCESS_KINDS",
     "PersistentOAuthService",
     "REFRESH_TOKEN_TTL",
+    "require_resource_scope_floor",
 ]

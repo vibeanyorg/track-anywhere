@@ -50,7 +50,7 @@ silently maps an unsupported command to another operation.
 | API-key to browser-session exchange | Implemented | `POST /api/v2/auth/session/api-key` |
 | Session status and logout | Implemented | V2 session routes with CSRF/same-origin enforcement |
 | OAuth metadata, PKCE callback, and device approval | Implemented | V2 auth/OAuth routes only |
-| ChatGPT MCP connector | Implemented | OAuth-only, read-only tools, resource-bound `ledger:read`, no API-key fallback |
+| ChatGPT MCP connector | Implemented | OAuth-only; resource-bound `ledger:read` plus optional `ledger:write` for four semantic, idempotent write tools; no API-key fallback |
 | Ledger entry, query, classify, and reverse UI | Deferred | HTTP contract is implemented; product UI is not yet shipped |
 | Payment, recurring, backup, budget, and V1 draft UI | Removed | No V1 proxy or fallback exists |
 

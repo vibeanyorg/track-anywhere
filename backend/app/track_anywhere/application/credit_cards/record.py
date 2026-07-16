@@ -46,6 +46,7 @@ from ..idempotency import (
 )
 from ..ledger_committer import LedgerCommitter, LedgerWritePlan, LockedBookHead
 from ..unit_of_work import UnitOfWork
+from ..journal.account_roles import require_standard_accounts
 from ..journal.post_transaction import Authorize, authorize_journal_write
 
 
@@ -382,6 +383,7 @@ def _build_payload(
             lock=RowLock.SHARE,
         )
 
+    require_standard_accounts(card, counter)
     expected_counter_type = (
         AccountType.ASSET
         if command.intent is CreditCardIntent.PAYMENT

@@ -669,17 +669,88 @@ h1 {
   overflow-wrap: anywhere;
 }
 
-.oauth-scope-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.oauth-scope-fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid color-mix(in oklch, var(--ink), transparent 78%);
+  background: color-mix(in oklch, var(--paper), white 28%);
+  padding: 0 12px 12px;
 }
 
-.oauth-scope-list code {
-  border: 1px solid color-mix(in oklch, var(--moss), transparent 60%);
-  background: color-mix(in oklch, var(--moss), transparent 90%);
+.oauth-scope-fieldset legend {
+  color: var(--ink-soft);
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.oauth-scope-picker,
+.oauth-scope-copy {
+  display: grid;
+}
+
+.oauth-scope-picker {
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.oauth-scope-help,
+.oauth-selection-note,
+.oauth-scope-description {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.oauth-scope-option {
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid color-mix(in oklch, var(--ink), transparent 82%);
+  background: color-mix(in oklch, var(--cream), transparent 8%);
+  padding: 10px;
+  cursor: pointer;
+}
+
+.oauth-scope-option:focus-within {
+  outline: 3px solid color-mix(in oklch, var(--lake), transparent 38%);
+  outline-offset: 2px;
+}
+
+.oauth-scope-option input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--moss-deep);
+}
+
+.oauth-scope-copy {
+  gap: 3px;
+}
+
+.oauth-scope-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.oauth-scope-title code {
   color: var(--moss-deep);
-  padding: 4px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.oauth-scope-option-disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.oauth-scope-option-locked {
+  cursor: default;
 }
 
 .oauth-consent-identity {

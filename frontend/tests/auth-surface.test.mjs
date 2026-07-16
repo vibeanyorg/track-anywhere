@@ -18,7 +18,7 @@ test("signed-out home offers account links without asking for an API key", () =>
   assert.match(home, /accountUrl\("login"\)/);
 });
 
-test("home explains how to connect the read-only ChatGPT app", () => {
+test("home explains how to connect the least-privilege ChatGPT app", () => {
   const home = source("../app/page.tsx");
 
   assert.match(home, /https:\/\/ledger\.ttsseed\.com\/mcp/);
@@ -28,7 +28,9 @@ test("home explains how to connect the read-only ChatGPT app", () => {
   assert.match(home, /https:\/\/chatgpt\.com\/plugins/);
   assert.match(home, /OAuth/);
   assert.match(home, /ledger:read/);
-  assert.match(home, /read-only/);
+  assert.match(home, /ledger:write/);
+  assert.match(home, /write access is optional/i);
+  assert.match(home, /disconnect.*create it again/i);
   assert.match(home, /Never paste a setup key or API key into ChatGPT/);
 });
 
@@ -73,4 +75,33 @@ test("OAuth and device prompts send signed-out users to normal sign in", () => {
   assert.match(device, />\s*Sign in to continue\s*</);
   assert.doesNotMatch(callback, /Sign in with an API key/);
   assert.doesNotMatch(device, /Sign in with an API key/);
+});
+
+test("OAuth consent exposes accessible least-privilege scope controls", () => {
+  const callback = source("../app/auth/callback/cli-callback.tsx");
+  const styles = source("../app/globals.css");
+
+  assert.match(callback, /<fieldset[^>]*className="oauth-scope-fieldset"/);
+  assert.match(callback, /type="checkbox"/);
+  assert.match(callback, /aria-describedby=/);
+  assert.match(callback, /aria-live="polite"/);
+  assert.match(callback, /aria-atomic="true"/);
+  assert.match(callback, /role="status"/);
+  assert.match(callback, /scopeStatus/);
+  assert.match(callback, /Required for this MCP connection/);
+  assert.match(callback, /owner password/);
+  assert.match(callback, /buildAuthorizationResponsePayload/);
+  assert.match(
+    callback,
+    /onClick=\{\(\) => authorize\("deny"\)\}\s*disabled=\{busy\}/
+  );
+  assert.match(
+    callback,
+    /onClick=\{\(\) => authorize\("approve"\)\}\s*disabled=\{busy \|\| !canSubmitApproval\}/
+  );
+  assert.match(styles, /\.oauth-scope-option:focus-within/);
+  assert.match(
+    styles,
+    /\.oauth-scope-option\s*{[^}]*min-height:\s*44px/s
+  );
 });

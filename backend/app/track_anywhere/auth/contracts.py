@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -28,9 +28,11 @@ ROLE_SCOPES = {
 }
 
 DEFAULT_PLATFORM_SCOPE = "book:read ledger:read"
+DEFAULT_CLIENT_REGISTRATION_SCOPE = "book:read ledger:read ledger:write"
 DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 PKCE_PATTERN = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 PASSWORD_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+$")
+OAuthScopeName = Annotated[str, Field(min_length=1, max_length=64)]
 
 
 class AuthCommand(BaseModel):
@@ -79,7 +81,11 @@ class PasswordSignupCommand(PasswordSessionCommand):
 class OAuthRegisterCommand(OAuthProtocolCommand):
     client_name: str = Field(min_length=1, max_length=120)
     redirect_uris: list[str] = Field(min_length=1, max_length=12)
-    scope: str = Field(default=DEFAULT_PLATFORM_SCOPE, min_length=1, max_length=512)
+    scope: str = Field(
+        default=DEFAULT_CLIENT_REGISTRATION_SCOPE,
+        min_length=1,
+        max_length=512,
+    )
     token_endpoint_auth_method: Literal["none"] = "none"
     grant_types: tuple[
         Literal[
@@ -102,6 +108,10 @@ class OAuthAuthorizeCommand(OAuthProtocolCommand):
     code_challenge_method: Literal["S256"] = "S256"
     resource: str = Field(min_length=1, max_length=512)
     action: Literal["approve", "deny"] = "approve"
+    approved_scopes: tuple[OAuthScopeName, ...] | None = Field(
+        default=None,
+        max_length=8,
+    )
 
     @field_validator("code_challenge")
     @classmethod
@@ -157,7 +167,10 @@ class OAuthRevokeCommand(OAuthProtocolCommand):
 class DeviceApprovalCommand(AuthCommand):
     user_code: str = Field(min_length=1, max_length=32)
     action: Literal["approve", "deny"] = "approve"
-    approved_scopes: tuple[str, ...] | None = None
+    approved_scopes: tuple[OAuthScopeName, ...] | None = Field(
+        default=None,
+        max_length=8,
+    )
 
 
 __all__ = [
@@ -165,6 +178,7 @@ __all__ = [
     "AGENT_ALLOWED_SCOPES",
     "AUDITOR_SCOPES",
     "ApiKeySessionCommand",
+    "DEFAULT_CLIENT_REGISTRATION_SCOPE",
     "DEFAULT_PLATFORM_SCOPE",
     "DEVICE_GRANT_TYPE",
     "DeviceApprovalCommand",

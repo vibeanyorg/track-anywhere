@@ -84,10 +84,13 @@ export default function Page() {
           <p className="eyebrow">ChatGPT app</p>
           <h2 id="chatgpt-title">Connect your ledger to ChatGPT.</h2>
           <p className="chatgpt-lede">
-            Ask about accounts, balances, and transactions in a normal conversation. OAuth gives ChatGPT read-only access only after you approve it.
+            Ask about accounts, balances, and transactions in a normal conversation. OAuth starts with read access; write access is optional and stays off until you select it.
           </p>
           <p className="chatgpt-account-note">
             Have your owner account ready. <a href={accountUrl("signup")}>Create it once</a> or <a href={accountUrl("login")}>sign in</a> before connecting.
+          </p>
+          <p className="chatgpt-account-note">
+            Already connected with read-only access? Disconnect the old Track Anywhere app and create it again once so ChatGPT can request optional write access.
           </p>
 
           <div className="chatgpt-address" aria-label="Track Anywhere MCP server address">
@@ -123,7 +126,7 @@ export default function Page() {
               <span className="chatgpt-step-number">03</span>
               <div>
                 <h3>Connect securely</h3>
-                <p>Paste the MCP server URL above and create the app. ChatGPT discovers OAuth automatically; sign in here and approve <code>ledger:read</code>.</p>
+                <p>Paste the MCP server URL above and create the app. ChatGPT discovers OAuth automatically; approve <code>ledger:read</code>, then select <code>ledger:write</code> only if you want it to record expenses, transfers, or card activity.</p>
               </div>
             </li>
             <li>
@@ -141,12 +144,12 @@ export default function Page() {
               <dd>OAuth + PKCE</dd>
             </div>
             <div>
-              <dt>Permission</dt>
-              <dd><code>ledger:read</code></dd>
+              <dt>Permissions</dt>
+              <dd><code>ledger:read</code> · <code>ledger:write</code></dd>
             </div>
             <div>
               <dt>Access</dt>
-              <dd>Read-only</dd>
+              <dd>Read by default · write opt-in</dd>
             </div>
           </dl>
 

@@ -15,7 +15,7 @@ from .contracts import (
     OAuthDeviceTokenCommand,
 )
 from .errors import AuthPolicyDenied, AuthSecurityError, OAuthFlowError
-from .oauth import PersistentOAuthService
+from .oauth import PersistentOAuthService, require_resource_scope_floor
 from .resources import configured_public_base_url, require_oauth_resource
 from .security import (
     new_secret,
@@ -99,11 +99,17 @@ class PersistentDeviceService:
             self._session.flush()
             return {"status": "denied"}
 
+        if active.credential.book_id is not None:
+            raise AuthPolicyDenied(
+                "book-bound credentials cannot approve OAuth access"
+            )
+
         scopes = tuple(grant.scopes)
         if command.approved_scopes is not None:
             scopes = parse_requested_scopes(" ".join(command.approved_scopes))
             require_scope_subset(scopes, set(grant.scopes))
         require_scope_subset(scopes, set(active.credential.scopes))
+        require_resource_scope_floor(grant.resource, scopes)
         grant.scopes = list(scopes)
         grant.status = "approved"
         grant.approved_actor_subject_id = active.user.user_id

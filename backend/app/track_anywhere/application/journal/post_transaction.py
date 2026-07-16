@@ -270,7 +270,7 @@ def _execute_post_transaction(
     ) -> LedgerWritePlan:
         if received is not command:
             raise IdempotencyValidationError("unexpected post transaction command")
-        return _build_plan(
+        return build_post_transaction_plan(
             command,
             uow,
             locked_head,
@@ -289,7 +289,7 @@ def _execute_post_transaction(
     )
 
 
-def _build_plan(
+def build_post_transaction_plan(
     command: PostTransactionCommand,
     uow: UnitOfWork,
     locked_head: LockedBookHead,
@@ -444,5 +444,6 @@ __all__ = [
     "PostTransactionCommand",
     "PostTransactionPosting",
     "authorize_journal_write",
+    "build_post_transaction_plan",
     "execute_post_transaction",
 ]

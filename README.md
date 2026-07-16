@@ -123,12 +123,14 @@ The public ChatGPT connector URL is:
 https://ledger.example.com/mcp
 ```
 
-It is a stateless Streamable HTTP MCP server with read-only ledger tools.
-ChatGPT discovers OAuth through `/.well-known/*`, performs authorization code +
-PKCE, and receives a token bound specifically to the MCP resource. API keys are
-not accepted by `/mcp` and are never disclosed to ChatGPT. The REST/CLI resource
-is separately bound to `/api/v2`, so an MCP token cannot be replayed against the
-API and vice versa.
+It is a stateless Streamable HTTP MCP server with ledger read tools and four
+opt-in semantic write tools for expenses, transfers, credit-card charges, and
+card payments. ChatGPT discovers OAuth through `/.well-known/*`, performs
+authorization code + PKCE, and receives a token bound specifically to the MCP
+resource. `ledger:read` is required; `ledger:write` is selected explicitly on
+the consent screen. API keys are not accepted by `/mcp` and are never disclosed
+to ChatGPT. The REST/CLI resource is separately bound to `/api/v2`, so an MCP
+token cannot be replayed against the API and vice versa.
 
 See the [authentication and MCP runbook](docs/operations/oauth-mcp-auth.md) for
 the endpoint matrix, local setup, production settings, and revocation behavior.

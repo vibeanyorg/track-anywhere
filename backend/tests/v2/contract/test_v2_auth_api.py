@@ -4,14 +4,17 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 import base64
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
+from hashlib import blake2b, sha256
 from threading import Barrier, Lock
+import time
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from track_anywhere.infrastructure.db.models.auth import (
@@ -26,6 +29,16 @@ from track_anywhere.infrastructure.db.models.auth import (
 
 
 API_RESOURCE = "http://testserver/api/v2"
+MCP_RESOURCE = "http://testserver/mcp"
+
+
+def _oauth_refresh_family_lock_key(family_id: UUID) -> int:
+    digest = blake2b(
+        family_id.bytes,
+        digest_size=8,
+        person=b"ta-oauth-fam",
+    ).digest()
+    return int.from_bytes(digest, byteorder="big", signed=True)
 
 
 def _unused_session() -> Iterator[Session]:
@@ -103,6 +116,27 @@ def test_oauth_discovery_advertises_only_v2_endpoints() -> None:
     assert protected.json()["resource"].endswith("/api/v2")
     assert protected.json()["scopes_supported"] == metadata["scopes_supported"]
     assert "/api/v1" not in protected.text
+
+
+def test_dynamic_client_registration_allows_optional_ledger_write_by_default(
+    pg_engine,
+) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    _, get_session = _seed_api_key(pg_engine, "ta_dcr_default_seed")
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+
+    registration = TestClient(app).post(
+        "/api/v2/oauth/register",
+        json={
+            "client_name": "ChatGPT dynamic client",
+            "redirect_uris": ["https://chatgpt.com/connector/oauth/test-callback"],
+        },
+    )
+
+    assert registration.status_code == 201
+    assert registration.json()["scope"] == "book:read ledger:read ledger:write"
 
 
 def test_api_key_login_persists_binary_hashed_browser_session(pg_engine) -> None:
@@ -767,6 +801,337 @@ def test_pkce_grant_and_access_token_are_persistent_single_use_binary_hashes(
         assert len(stored.token_hash) == 32
 
 
+def test_pkce_consent_can_grant_only_a_selected_scope_subset(pg_engine) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    raw_api_key = "ta_selective_consent_seed"
+    _, get_session = _seed_api_key(
+        pg_engine,
+        raw_api_key,
+        scopes=["book:read", "ledger:read", "ledger:write"],
+    )
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+    client = TestClient(app)
+    registration = client.post(
+        "/api/v2/oauth/register",
+        json={
+            "client_name": "Selectable consent client",
+            "redirect_uris": ["http://localhost:49152/api/v2/auth/callback"],
+            "scope": "book:read ledger:read ledger:write",
+        },
+    )
+    client_id = registration.json()["client_id"]
+    login = client.post(
+        "/api/v2/auth/session/api-key",
+        json={"api_key": raw_api_key},
+    )
+    verifier = "q" * 64
+    challenge = (
+        base64.urlsafe_b64encode(sha256(verifier.encode()).digest())
+        .rstrip(b"=")
+        .decode()
+    )
+    redirect_uri = "http://localhost:49152/api/v2/auth/callback"
+    approval = client.post(
+        "/api/v2/oauth/authorize",
+        json={
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "scope": "book:read ledger:read ledger:write",
+            "approved_scopes": ["book:read", "ledger:read"],
+            "state": "selected-state",
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "resource": API_RESOURCE,
+            "action": "approve",
+        },
+        headers={
+            "X-CSRF-Token": login.json()["csrf_token"],
+            "Origin": "http://testserver",
+        },
+    )
+
+    assert approval.status_code == 200
+    code = parse_qs(urlparse(approval.json()["redirect_uri"]).query)["code"][0]
+    token = client.post(
+        "/api/v2/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "code_verifier": verifier,
+            "resource": API_RESOURCE,
+        },
+    )
+
+    assert token.status_code == 200
+    assert token.json()["scope"] == "book:read ledger:read"
+    status = client.get(
+        "/api/v2/auth/token-status",
+        headers={"Authorization": f"Bearer {token.json()['access_token']}"},
+    )
+    assert status.json()["scopes"] == ["book:read", "ledger:read"]
+
+
+def test_pkce_consent_rejects_scopes_outside_the_original_request(pg_engine) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    raw_api_key = "ta_consent_escalation_seed"
+    _, get_session = _seed_api_key(
+        pg_engine,
+        raw_api_key,
+        scopes=["book:read", "ledger:read", "ledger:write"],
+    )
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+    client = TestClient(app)
+    registration = client.post(
+        "/api/v2/oauth/register",
+        json={
+            "client_name": "No escalation client",
+            "redirect_uris": ["http://localhost:49152/api/v2/auth/callback"],
+            "scope": "book:read ledger:read ledger:write",
+        },
+    )
+    login = client.post(
+        "/api/v2/auth/session/api-key",
+        json={"api_key": raw_api_key},
+    )
+    response = client.post(
+        "/api/v2/oauth/authorize",
+        json={
+            "client_id": registration.json()["client_id"],
+            "redirect_uri": "http://localhost:49152/api/v2/auth/callback",
+            "scope": "ledger:read",
+            "approved_scopes": ["ledger:read", "ledger:write"],
+            "code_challenge": "e" * 64,
+            "code_challenge_method": "S256",
+            "resource": API_RESOURCE,
+            "action": "approve",
+        },
+        headers={
+            "X-CSRF-Token": login.json()["csrf_token"],
+            "Origin": "http://testserver",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "requested OAuth scope is not available"
+
+
+def test_read_only_actor_can_narrow_or_deny_a_write_scope_request(pg_engine) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    raw_api_key = "ta_read_only_consent_seed"
+    _, get_session = _seed_api_key(
+        pg_engine,
+        raw_api_key,
+        scopes=["book:read", "ledger:read"],
+    )
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+    client = TestClient(app)
+    registration = client.post(
+        "/api/v2/oauth/register",
+        json={
+            "client_name": "Broader request client",
+            "redirect_uris": ["http://localhost:49152/api/v2/auth/callback"],
+            "scope": "book:read ledger:read ledger:write",
+        },
+    )
+    login = client.post(
+        "/api/v2/auth/session/api-key",
+        json={"api_key": raw_api_key},
+    )
+    common = {
+        "client_id": registration.json()["client_id"],
+        "redirect_uri": "http://localhost:49152/api/v2/auth/callback",
+        "scope": "book:read ledger:read ledger:write",
+        "code_challenge": "r" * 64,
+        "code_challenge_method": "S256",
+        "resource": API_RESOURCE,
+        "state": "narrow-state",
+    }
+    headers = {
+        "X-CSRF-Token": login.json()["csrf_token"],
+        "Origin": "http://testserver",
+    }
+
+    approval = client.post(
+        "/api/v2/oauth/authorize",
+        json={
+            **common,
+            "action": "approve",
+            "approved_scopes": ["book:read", "ledger:read"],
+        },
+        headers=headers,
+    )
+    denial = client.post(
+        "/api/v2/oauth/authorize",
+        json={**common, "action": "deny"},
+        headers=headers,
+    )
+
+    assert approval.status_code == 200
+    assert denial.status_code == 200
+    denied_query = parse_qs(urlparse(denial.json()["redirect_uri"]).query)
+    assert denied_query == {"error": ["access_denied"], "state": ["narrow-state"]}
+
+
+def test_mcp_consent_requires_ledger_read_but_deny_and_api_subset_remain_valid(
+    pg_engine,
+) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    raw_api_key = "ta_mcp_scope_floor_seed"
+    _, get_session = _seed_api_key(
+        pg_engine,
+        raw_api_key,
+        scopes=["book:read", "ledger:read", "ledger:write"],
+    )
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+    client = TestClient(app)
+    registration = client.post(
+        "/api/v2/oauth/register",
+        json={
+            "client_name": "MCP minimum scope client",
+            "redirect_uris": ["http://localhost:49152/callback"],
+            "scope": "book:read ledger:read ledger:write",
+        },
+    )
+    login = client.post(
+        "/api/v2/auth/session/api-key",
+        json={"api_key": raw_api_key},
+    )
+    common = {
+        "client_id": registration.json()["client_id"],
+        "redirect_uri": "http://localhost:49152/callback",
+        "scope": "book:read ledger:read ledger:write",
+        "approved_scopes": ["book:read"],
+        "code_challenge": "m" * 64,
+        "code_challenge_method": "S256",
+        "state": "mcp-floor-state",
+    }
+    headers = {
+        "X-CSRF-Token": login.json()["csrf_token"],
+        "Origin": "http://testserver",
+    }
+
+    rejected = client.post(
+        "/api/v2/oauth/authorize",
+        json={**common, "resource": MCP_RESOURCE, "action": "approve"},
+        headers=headers,
+    )
+    denied = client.post(
+        "/api/v2/oauth/authorize",
+        json={**common, "resource": MCP_RESOURCE, "action": "deny"},
+        headers=headers,
+    )
+    api_approval = client.post(
+        "/api/v2/oauth/authorize",
+        json={**common, "resource": API_RESOURCE, "action": "approve"},
+        headers=headers,
+    )
+
+    assert rejected.status_code == 403
+    assert rejected.json()["detail"] == "ledger:read is required for MCP access"
+    assert denied.status_code == 200
+    assert parse_qs(urlparse(denied.json()["redirect_uri"]).query) == {
+        "error": ["access_denied"],
+        "state": ["mcp-floor-state"],
+    }
+    assert api_approval.status_code == 200
+
+
+def test_book_bound_browser_session_cannot_mint_global_oauth_access(pg_engine) -> None:
+    from track_anywhere.auth.contracts import OAuthAuthorizeCommand
+    from track_anywhere.auth.errors import AuthPolicyDenied
+    from track_anywhere.auth.oauth import PersistentOAuthService
+
+    factory, get_session = _seed_api_key(
+        pg_engine,
+        "ta_book_bound_consent_seed",
+        scopes=["book:read", "ledger:read", "ledger:write"],
+    )
+    app = FastAPI()
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    app.include_router(create_auth_router(get_session))
+    registration = TestClient(app).post(
+        "/api/v2/oauth/register",
+        json={
+            "client_name": "Book-bound boundary client",
+            "redirect_uris": ["http://localhost:49152/callback"],
+            "scope": "ledger:read ledger:write",
+        },
+    )
+    command = OAuthAuthorizeCommand(
+        client_id=registration.json()["client_id"],
+        redirect_uri="http://localhost:49152/callback",
+        scope="ledger:read ledger:write",
+        code_challenge="b" * 64,
+        resource=API_RESOURCE,
+        action="approve",
+    )
+    active = SimpleNamespace(
+        credential=SimpleNamespace(
+            book_id=uuid4(),
+            scopes=["ledger:read", "ledger:write"],
+        ),
+        user=SimpleNamespace(user_id="human:test"),
+    )
+
+    with factory.begin() as session:
+        service = PersistentOAuthService(session, "http://testserver")
+        with pytest.raises(
+            AuthPolicyDenied,
+            match="book-bound credentials cannot approve OAuth access",
+        ):
+            service.authorize(command, active)
+        denial = service.authorize(
+            command.model_copy(update={"action": "deny"}),
+            active,
+        )
+
+    assert parse_qs(urlparse(denial["redirect_uri"]).query) == {
+        "error": ["access_denied"]
+    }
+
+
+def test_oauth_token_issuance_rechecks_the_client_scope_ceiling(pg_engine) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+    from track_anywhere.auth.errors import OAuthFlowError
+    from track_anywhere.auth.oauth import PersistentOAuthService
+
+    factory, get_session = _seed_api_key(pg_engine, "ta_client_scope_ceiling_seed")
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+    registration = TestClient(app).post(
+        "/api/v2/oauth/register",
+        json={
+            "client_name": "Narrow client",
+            "redirect_uris": ["http://localhost:49152/callback"],
+            "scope": "ledger:read",
+        },
+    )
+
+    with factory.begin() as session:
+        with pytest.raises(OAuthFlowError) as captured:
+            PersistentOAuthService(session, "http://testserver").issue_token_pair(
+                actor_subject_id="human:test",
+                scopes=("ledger:read", "ledger:write"),
+                auth_kind="pkce",
+                client_id=registration.json()["client_id"],
+                resource=API_RESOURCE,
+                issued_at=datetime.now(UTC),
+            )
+
+    assert captured.value.error == "invalid_scope"
+
+
 def test_device_grant_is_persistent_approvable_and_single_use(pg_engine) -> None:
     from track_anywhere.api.v2.auth import create_auth_router
 
@@ -839,6 +1204,7 @@ def test_device_grant_is_persistent_approvable_and_single_use(pg_engine) -> None
     assert replay.status_code == 400
     assert replay.json()["error"] == "invalid_grant"
     access_token = token.json()["access_token"]
+    refresh_token = token.json()["refresh_token"]
     status = client.get(
         "/api/v2/auth/token-status",
         headers={"Authorization": f"Bearer {access_token}"},
@@ -852,6 +1218,17 @@ def test_device_grant_is_persistent_approvable_and_single_use(pg_engine) -> None
     )
     assert revocation.status_code == 200
     assert revocation.json() == {"revoked": True}
+    refresh_after_access_revoke = client.post(
+        "/api/v2/oauth/token",
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+            "resource": API_RESOURCE,
+        },
+    )
+    assert refresh_after_access_revoke.status_code == 400
+    assert refresh_after_access_revoke.json()["error"] == "invalid_grant"
     assert (
         client.get(
             "/api/v2/auth/token-status",
@@ -859,6 +1236,85 @@ def test_device_grant_is_persistent_approvable_and_single_use(pg_engine) -> None
         ).status_code
         == 401
     )
+
+
+def test_device_approval_enforces_the_mcp_scope_floor_only_on_approval(
+    pg_engine,
+) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    raw_api_key = "ta_device_mcp_scope_floor_seed"
+    _, get_session = _seed_api_key(pg_engine, raw_api_key)
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+    client = TestClient(app)
+    registration = client.post(
+        "/api/v2/oauth/register",
+        json={
+            "client_name": "Device MCP minimum scope client",
+            "redirect_uris": ["http://localhost:49152/callback"],
+            "scope": "book:read ledger:read",
+        },
+    )
+    client_id = registration.json()["client_id"]
+    mcp_authorization = client.post(
+        "/api/v2/oauth/device/authorize",
+        json={
+            "client_id": client_id,
+            "scope": "book:read ledger:read",
+            "resource": MCP_RESOURCE,
+        },
+    ).json()
+    api_authorization = client.post(
+        "/api/v2/oauth/device/authorize",
+        json={
+            "client_id": client_id,
+            "scope": "book:read ledger:read",
+            "resource": API_RESOURCE,
+        },
+    ).json()
+    login = client.post(
+        "/api/v2/auth/session/api-key",
+        json={"api_key": raw_api_key},
+    )
+    headers = {
+        "X-CSRF-Token": login.json()["csrf_token"],
+        "Origin": "http://testserver",
+    }
+
+    rejected = client.post(
+        "/api/v2/auth/device",
+        json={
+            "user_code": mcp_authorization["user_code"],
+            "action": "approve",
+            "approved_scopes": ["book:read"],
+        },
+        headers=headers,
+    )
+    denied = client.post(
+        "/api/v2/auth/device",
+        json={
+            "user_code": mcp_authorization["user_code"],
+            "action": "deny",
+        },
+        headers=headers,
+    )
+    api_approval = client.post(
+        "/api/v2/auth/device",
+        json={
+            "user_code": api_authorization["user_code"],
+            "action": "approve",
+            "approved_scopes": ["book:read"],
+        },
+        headers=headers,
+    )
+
+    assert rejected.status_code == 403
+    assert rejected.json()["detail"] == "ledger:read is required for MCP access"
+    assert denied.status_code == 200
+    assert denied.json() == {"status": "denied"}
+    assert api_approval.status_code == 200
+    assert api_approval.json() == {"status": "approved", "scope": "book:read"}
 
 
 def test_pending_device_poll_returns_oauth_error_and_records_poll(pg_engine) -> None:
@@ -1033,6 +1489,132 @@ def test_standard_form_pkce_refresh_rotation_and_api_key_boundary(pg_engine) -> 
     assert header_api_key.json()["auth_kind"] == "api_key"
 
 
+def test_refresh_rotation_and_revocation_share_a_family_advisory_lock(
+    pg_engine,
+) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+    from track_anywhere.auth.oauth import PersistentOAuthService
+
+    factory, get_session = _seed_api_key(pg_engine, "ta_refresh_family_lock_seed")
+    app = FastAPI()
+    app.include_router(
+        create_auth_router(get_session, public_base_url="http://testserver")
+    )
+    registration = TestClient(app).post(
+        "/api/v2/oauth/register",
+        json={
+            "client_name": "Concurrent refresh family client",
+            "redirect_uris": ["http://localhost:49152/callback"],
+            "scope": "ledger:read",
+        },
+    )
+    client_id = registration.json()["client_id"]
+    with factory.begin() as session:
+        tokens = PersistentOAuthService(session, "http://testserver").issue_token_pair(
+            actor_subject_id="human:test",
+            scopes=("ledger:read",),
+            auth_kind="pkce",
+            client_id=client_id,
+            resource=API_RESOURCE,
+            issued_at=datetime.now(UTC),
+        )
+    with factory() as session:
+        access_record = session.scalar(
+            select(CredentialRecord).where(
+                CredentialRecord.token_hash
+                == sha256(str(tokens["access_token"]).encode()).digest()
+            )
+        )
+        assert access_record is not None
+        assert access_record.refresh_family_id is not None
+        family_id = access_record.refresh_family_id
+
+    family_lock_key = _oauth_refresh_family_lock_key(family_id)
+    unsigned_lock_key = family_lock_key % (1 << 64)
+    lock_class_id = unsigned_lock_key >> 32
+    lock_object_id = unsigned_lock_key & 0xFFFF_FFFF
+    gate_connection = pg_engine.connect()
+    gate_transaction = gate_connection.begin()
+    gate_connection.scalar(
+        select(func.pg_advisory_xact_lock(family_lock_key))
+    )
+    start = Barrier(3)
+
+    def refresh_request():
+        start.wait(timeout=5)
+        with TestClient(app) as request_client:
+            return request_client.post(
+                "/api/v2/oauth/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": tokens["refresh_token"],
+                    "client_id": client_id,
+                    "resource": API_RESOURCE,
+                },
+            )
+
+    def revoke_request():
+        start.wait(timeout=5)
+        with TestClient(app) as request_client:
+            return request_client.post(
+                "/api/v2/oauth/revoke",
+                json={
+                    "token": tokens["access_token"],
+                    "client_id": client_id,
+                },
+            )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            refresh_future = pool.submit(refresh_request)
+            revoke_future = pool.submit(revoke_request)
+            start.wait(timeout=5)
+            deadline = time.monotonic() + 3
+            advisory_waiters = 0
+            while advisory_waiters < 2 and time.monotonic() < deadline:
+                with pg_engine.connect() as observer:
+                    advisory_waiters = int(
+                        observer.scalar(
+                            text(
+                                "select count(*) from pg_locks "
+                                "where locktype='advisory' and not granted "
+                                "and classid=:classid and objid=:objid "
+                                "and objsubid=1 "
+                                "and database=(select oid from pg_database "
+                                "where datname=current_database())"
+                            ),
+                            {
+                                "classid": lock_class_id,
+                                "objid": lock_object_id,
+                            },
+                        )
+                        or 0
+                    )
+                if advisory_waiters < 2:
+                    time.sleep(0.02)
+            gate_transaction.commit()
+            refresh_response = refresh_future.result(timeout=10)
+            revoke_response = revoke_future.result(timeout=10)
+    finally:
+        if gate_transaction.is_active:
+            gate_transaction.rollback()
+        gate_connection.close()
+
+    assert advisory_waiters >= 2
+    assert revoke_response.status_code == 200
+    assert refresh_response.status_code in {200, 400}
+    if refresh_response.status_code == 400:
+        assert refresh_response.json()["error"] == "invalid_grant"
+    with factory() as session:
+        family = session.scalars(
+            select(CredentialRecord).where(
+                CredentialRecord.refresh_family_id == family_id
+            )
+        ).all()
+    assert family
+    assert all(record.revoked_at is not None for record in family)
+
+
 def test_mcp_audience_token_is_rejected_by_rest_and_accepted_by_mcp(pg_engine) -> None:
     from track_anywhere.api.dependencies import build_engine_dependencies
     from track_anywhere.api.v2.auth import create_auth_router
@@ -1147,7 +1729,7 @@ def test_mcp_audience_token_is_rejected_by_rest_and_accepted_by_mcp(pg_engine) -
 
     assert initialize.status_code == 200
     assert tools.status_code == 200
-    assert len(tools.json()["result"]["tools"]) == 8
+    assert len(tools.json()["result"]["tools"]) == 12
     assert books.status_code == 200
     assert books.json()["result"]["structuredContent"] == {"items": []}
 
