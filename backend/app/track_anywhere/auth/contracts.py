@@ -28,7 +28,7 @@ ROLE_SCOPES = {
 }
 
 DEFAULT_PLATFORM_SCOPE = "book:read ledger:read"
-DEFAULT_CLIENT_REGISTRATION_SCOPE = "book:read ledger:read ledger:write"
+DEFAULT_CLIENT_REGISTRATION_SCOPE = "book:read book:write ledger:read ledger:write"
 DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code"
 PKCE_PATTERN = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 PASSWORD_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+$")
@@ -57,10 +57,7 @@ class PasswordSessionCommand(AuthCommand):
     @classmethod
     def normalize_email(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if (
-            len(normalized) > 254
-            or not PASSWORD_EMAIL_PATTERN.fullmatch(normalized)
-        ):
+        if len(normalized) > 254 or not PASSWORD_EMAIL_PATTERN.fullmatch(normalized):
             raise ValueError("email must be a valid address")
         return normalized
 

@@ -118,7 +118,7 @@ def test_oauth_discovery_advertises_only_v2_endpoints() -> None:
     assert "/api/v1" not in protected.text
 
 
-def test_dynamic_client_registration_allows_optional_ledger_write_by_default(
+def test_dynamic_client_registration_allows_optional_catalog_and_ledger_writes(
     pg_engine,
 ) -> None:
     from track_anywhere.api.v2.auth import create_auth_router
@@ -136,7 +136,42 @@ def test_dynamic_client_registration_allows_optional_ledger_write_by_default(
     )
 
     assert registration.status_code == 201
-    assert registration.json()["scope"] == "book:read ledger:read ledger:write"
+    assert registration.json()["scope"] == (
+        "book:read book:write ledger:read ledger:write"
+    )
+
+
+@pytest.mark.parametrize(
+    "scope",
+    (
+        "book:write ledger:read",
+        "book:read ledger:write",
+    ),
+)
+def test_dynamic_client_registration_rejects_write_without_matching_read(
+    pg_engine,
+    scope: str,
+) -> None:
+    from track_anywhere.api.v2.auth import create_auth_router
+
+    _, get_session = _seed_api_key(pg_engine, f"ta_dcr_dependency_{scope}")
+    app = FastAPI()
+    app.include_router(create_auth_router(get_session))
+
+    registration = TestClient(app).post(
+        "/api/v2/oauth/register",
+        json={
+            "client_name": "Invalid scope dependency client",
+            "redirect_uris": ["https://chatgpt.com/connector/oauth/test-callback"],
+            "scope": scope,
+        },
+    )
+
+    assert registration.status_code == 400
+    assert registration.json() == {
+        "error": "invalid_client_metadata",
+        "error_description": "OAuth client metadata is invalid",
+    }
 
 
 def test_api_key_login_persists_binary_hashed_browser_session(pg_engine) -> None:
@@ -362,9 +397,7 @@ def test_concurrent_first_password_signups_create_exactly_one_account(
     assert len(session_ids) == 2
     assert sorted(response.status_code for response in responses) == [201, 409]
     assert [
-        response.json()
-        for response in responses
-        if response.status_code == 409
+        response.json() for response in responses if response.status_code == 409
     ] == [{"detail": "Account setup is already complete"}]
     with factory() as session:
         password_accounts = list(session.scalars(select(PasswordAccountRecord)))
@@ -493,9 +526,11 @@ def test_password_login_is_generic_and_persists_before_follow_up(pg_engine) -> N
         },
     )
     assert wrong_password.status_code == unknown_email.status_code == 401
-    assert wrong_password.json() == unknown_email.json() == {
-        "detail": "Email or password is invalid"
-    }
+    assert (
+        wrong_password.json()
+        == unknown_email.json()
+        == {"detail": "Email or password is invalid"}
+    )
 
     login = client.post(
         "/api/v2/auth/session/password",
@@ -530,9 +565,8 @@ def test_auth_dependencies_finalize_before_the_response_body() -> None:
 
         async def __call__(self, scope, receive, send) -> None:
             async def tracked_send(message) -> None:
-                if (
-                    message["type"] == "http.response.body"
-                    and not message.get("more_body", False)
+                if message["type"] == "http.response.body" and not message.get(
+                    "more_body", False
                 ):
                     events.append("response-body")
                 await send(message)
@@ -1535,9 +1569,7 @@ def test_refresh_rotation_and_revocation_share_a_family_advisory_lock(
     lock_object_id = unsigned_lock_key & 0xFFFF_FFFF
     gate_connection = pg_engine.connect()
     gate_transaction = gate_connection.begin()
-    gate_connection.scalar(
-        select(func.pg_advisory_xact_lock(family_lock_key))
-    )
+    gate_connection.scalar(select(func.pg_advisory_xact_lock(family_lock_key)))
     start = Barrier(3)
 
     def refresh_request():
@@ -1615,13 +1647,18 @@ def test_refresh_rotation_and_revocation_share_a_family_advisory_lock(
     assert all(record.revoked_at is not None for record in family)
 
 
-def test_mcp_audience_token_is_rejected_by_rest_and_accepted_by_mcp(pg_engine) -> None:
+def test_dcr_book_write_grant_bootstraps_a_book_through_mcp(pg_engine) -> None:
     from track_anywhere.api.dependencies import build_engine_dependencies
     from track_anywhere.api.v2.auth import create_auth_router
     from track_anywhere.mcp.server import create_mcp_runtime
 
     raw_api_key = "ta_mcp_audience_seed"
-    _, get_session = _seed_api_key(pg_engine, raw_api_key)
+    catalog_scopes = "book:read book:write ledger:read"
+    _, get_session = _seed_api_key(
+        pg_engine,
+        raw_api_key,
+        scopes=catalog_scopes.split(),
+    )
     auth_app = FastAPI()
     auth_app.include_router(
         create_auth_router(get_session, public_base_url="http://testserver")
@@ -1632,7 +1669,7 @@ def test_mcp_audience_token_is_rejected_by_rest_and_accepted_by_mcp(pg_engine) -
         json={
             "client_name": "MCP contract client",
             "redirect_uris": ["https://chatgpt.com/connector/oauth/test-callback"],
-            "scope": "ledger:read",
+            "scope": catalog_scopes,
         },
     )
     client_id = registration.json()["client_id"]
@@ -1654,7 +1691,8 @@ def test_mcp_audience_token_is_rejected_by_rest_and_accepted_by_mcp(pg_engine) -
             "response_type": "code",
             "client_id": client_id,
             "redirect_uri": redirect_uri,
-            "scope": "ledger:read",
+            "scope": catalog_scopes,
+            "approved_scopes": catalog_scopes.split(),
             "state": "mcp-state",
             "code_challenge": challenge,
             "code_challenge_method": "S256",
@@ -1666,7 +1704,7 @@ def test_mcp_audience_token_is_rejected_by_rest_and_accepted_by_mcp(pg_engine) -
         },
     )
     code = parse_qs(urlparse(approval.json()["redirect_uri"]).query)["code"][0]
-    token = auth_client.post(
+    token_response = auth_client.post(
         "/api/v2/oauth/token",
         data={
             "grant_type": "authorization_code",
@@ -1676,7 +1714,10 @@ def test_mcp_audience_token_is_rejected_by_rest_and_accepted_by_mcp(pg_engine) -
             "code_verifier": verifier,
             "resource": resource,
         },
-    ).json()["access_token"]
+    )
+    assert token_response.status_code == 200
+    assert token_response.json()["scope"] == catalog_scopes
+    token = token_response.json()["access_token"]
 
     rest_status = auth_client.get(
         "/api/v2/auth/token-status",
@@ -1726,12 +1767,35 @@ def test_mcp_audience_token_is_rejected_by_rest_and_accepted_by_mcp(pg_engine) -
             },
             headers=headers,
         )
+        created_book = mcp_client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "ledger_create_book",
+                    "arguments": {
+                        "request_id": str(uuid4()),
+                        "current_name": "OAuth bootstrap Book",
+                        "base_asset_code": None,
+                    },
+                },
+            },
+            headers=headers,
+        )
 
     assert initialize.status_code == 200
     assert tools.status_code == 200
-    assert len(tools.json()["result"]["tools"]) == 12
+    assert len(tools.json()["result"]["tools"]) == 15
     assert books.status_code == 200
     assert books.json()["result"]["structuredContent"] == {"items": []}
+    assert created_book.status_code == 200
+    created = created_book.json()["result"]
+    assert created["isError"] is False
+    assert created["structuredContent"]["book"]["current_name"] == (
+        "OAuth bootstrap Book"
+    )
 
 
 def test_same_credential_and_browser_session_are_safe_under_concurrency(

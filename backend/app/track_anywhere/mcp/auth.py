@@ -19,6 +19,14 @@ from ..infrastructure.db.repositories.auth import (
 
 MCP_REQUIRED_SCOPE = "ledger:read"
 MCP_WRITE_SCOPE = "ledger:write"
+MCP_BOOK_READ_SCOPE = "book:read"
+MCP_BOOK_WRITE_SCOPE = "book:write"
+
+
+class McpInsufficientScope(ToolError):
+    def __init__(self, message: str, required_scopes: tuple[str, ...]) -> None:
+        super().__init__(message)
+        self.required_scopes = required_scopes
 
 
 class DatabaseTokenVerifier(TokenVerifier):
@@ -73,10 +81,44 @@ def require_access_token() -> AccessToken:
 def require_write_access_token() -> AccessToken:
     token = require_access_token()
     if MCP_WRITE_SCOPE not in token.scopes:
-        raise ToolError(
-            "This action needs ledger:write. Reconnect the Track Anywhere app "
-            "and explicitly approve write access."
+        raise McpInsufficientScope(
+            "This action needs ledger:write. Explicitly approve ledger write "
+            "access. If the app was created before this permission was available, "
+            "disconnect and delete the old app, then recreate it.",
+            (MCP_REQUIRED_SCOPE, MCP_WRITE_SCOPE),
         )
+    return token
+
+
+def require_book_read_access_token() -> AccessToken:
+    token = require_access_token()
+    if MCP_BOOK_READ_SCOPE not in token.scopes:
+        raise McpInsufficientScope(
+            "This action needs book:read. Explicitly approve Book visibility "
+            "access. If the app was created before this permission was available, "
+            "disconnect and delete the old app, then recreate it.",
+            (MCP_BOOK_READ_SCOPE, MCP_REQUIRED_SCOPE),
+        )
+    return token
+
+
+def require_catalog_write_access_token() -> AccessToken:
+    token = require_access_token()
+    required = (MCP_BOOK_READ_SCOPE, MCP_BOOK_WRITE_SCOPE, MCP_REQUIRED_SCOPE)
+    if not {MCP_BOOK_READ_SCOPE, MCP_BOOK_WRITE_SCOPE}.issubset(token.scopes):
+        raise McpInsufficientScope(
+            "This action needs book:write. Explicitly approve Book management "
+            "access. If the app was created before this permission was available, "
+            "disconnect and delete the old app, then recreate it.",
+            required,
+        )
+    return token
+
+
+def require_global_catalog_write_access_token() -> AccessToken:
+    token = require_catalog_write_access_token()
+    if (token.claims or {}).get("book_id") is not None:
+        raise ToolError("A Book-bound connection cannot create another Book.")
     return token
 
 
@@ -91,7 +133,9 @@ def require_book_access(
     try:
         membership = BookMembershipRepository(session).get(book_id, token.subject or "")
     except AuthRecordNotFound as error:
-        raise ToolError("Book not found or not accessible to this connection.") from error
+        raise ToolError(
+            "Book not found or not accessible to this connection."
+        ) from error
     if (
         membership.status != "active"
         or membership.revoked_at is not None
@@ -121,12 +165,42 @@ def require_book_write_access(
         raise ToolError("Book not found or not writable by this connection.")
 
 
+def require_book_catalog_write_access(
+    session: Session,
+    token: AccessToken,
+    book_id: UUID,
+) -> None:
+    require_book_access(session, token, book_id)
+    try:
+        membership = BookMembershipRepository(session).get(
+            book_id,
+            token.subject or "",
+        )
+    except AuthRecordNotFound as error:  # pragma: no cover - read check owns this path.
+        raise ToolError(
+            "Book not found or not manageable by this connection."
+        ) from error
+    if (
+        membership.status != "active"
+        or membership.revoked_at is not None
+        or MCP_BOOK_WRITE_SCOPE not in membership.scopes
+    ):
+        raise ToolError("Book not found or not manageable by this connection.")
+
+
 __all__ = [
     "DatabaseTokenVerifier",
+    "MCP_BOOK_READ_SCOPE",
+    "MCP_BOOK_WRITE_SCOPE",
     "MCP_REQUIRED_SCOPE",
     "MCP_WRITE_SCOPE",
+    "McpInsufficientScope",
     "require_access_token",
     "require_book_access",
+    "require_book_catalog_write_access",
+    "require_book_read_access_token",
     "require_book_write_access",
+    "require_catalog_write_access_token",
+    "require_global_catalog_write_access_token",
     "require_write_access_token",
 ]

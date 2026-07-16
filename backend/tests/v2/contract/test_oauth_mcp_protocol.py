@@ -52,13 +52,23 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_record_expense",
         "ledger_record_transfer",
     }
-    assert {tool.name for tool in tools} == read_tools | write_tools
+    catalog_write_tools = {
+        "ledger_create_account",
+        "ledger_create_asset",
+        "ledger_create_book",
+    }
+    assert {tool.name for tool in tools} == (
+        read_tools | write_tools | catalog_write_tools
+    )
     for tool in tools:
-        expected_scopes = (
-            ["ledger:read", "ledger:write"]
-            if tool.name in write_tools
-            else ["ledger:read"]
-        )
+        if tool.name in write_tools:
+            expected_scopes = ["ledger:read", "ledger:write"]
+        elif tool.name in catalog_write_tools:
+            expected_scopes = ["book:read", "book:write", "ledger:read"]
+        elif tool.name == "ledger_list_books":
+            expected_scopes = ["book:read", "ledger:read"]
+        else:
+            expected_scopes = ["ledger:read"]
         expected = [{"type": "oauth2", "scopes": expected_scopes}]
         assert tool.model_extra["securitySchemes"] == expected
         assert tool.meta["securitySchemes"] == expected
@@ -68,9 +78,11 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         assert tool.annotations.idempotentHint is True
         assert tool.annotations.openWorldHint is False
         assert tool.outputSchema is not None
-        if tool.name in write_tools:
+        if tool.name in write_tools | catalog_write_tools:
             assert "request_id" in tool.inputSchema["properties"]
             assert "request_id" in tool.inputSchema["required"]
+    account_tool = next(tool for tool in tools if tool.name == "ledger_create_account")
+    assert "system_role" not in account_tool.inputSchema["properties"]
 
 
 def test_mcp_requires_oauth_and_advertises_resource_metadata() -> None:
@@ -100,13 +112,17 @@ def test_mcp_requires_oauth_and_advertises_resource_metadata() -> None:
 
     assert response.status_code == 401
     assert (
-        'resource_metadata="http://testserver/.well-known/'
-        'oauth-protected-resource/mcp"'
+        'resource_metadata="http://testserver/.well-known/oauth-protected-resource/mcp"'
     ) in response.headers["WWW-Authenticate"]
     assert metadata.status_code == 200
     assert metadata.json()["resource"] == "http://testserver/mcp"
     assert metadata.json()["authorization_servers"] == ["http://testserver/"]
-    assert metadata.json()["scopes_supported"] == ["ledger:read", "ledger:write"]
+    assert metadata.json()["scopes_supported"] == [
+        "book:read",
+        "book:write",
+        "ledger:read",
+        "ledger:write",
+    ]
 
 
 def test_mcp_accepts_only_explicitly_configured_internal_proxy_host(

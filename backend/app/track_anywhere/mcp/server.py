@@ -19,7 +19,14 @@ from ..auth.security import (
     protected_resource_metadata,
     protected_resource_metadata_url,
 )
-from .auth import DatabaseTokenVerifier, MCP_REQUIRED_SCOPE, MCP_WRITE_SCOPE
+from .auth import (
+    DatabaseTokenVerifier,
+    MCP_BOOK_READ_SCOPE,
+    MCP_BOOK_WRITE_SCOPE,
+    MCP_REQUIRED_SCOPE,
+    MCP_WRITE_SCOPE,
+    McpInsufficientScope,
+)
 from .tools import register_ledger_tools
 
 
@@ -27,7 +34,7 @@ MCP_TRUSTED_PROXY_HOSTS_ENV = "TRACK_ANYWHERE_MCP_TRUSTED_PROXY_HOSTS"
 
 
 class ChatGptFastMCP(FastMCP):
-    write_scope_resource_metadata_url: str | None = None
+    scope_resource_metadata_url: str | None = None
 
     async def list_tools(self) -> list[McpTool]:
         tools = await super().list_tools()
@@ -45,14 +52,18 @@ class ChatGptFastMCP(FastMCP):
         try:
             return await super().call_tool(name, arguments)
         except ToolError as error:
-            message = str(error)
-            metadata_url = self.write_scope_resource_metadata_url
-            if "needs ledger:write" not in message or metadata_url is None:
+            scope_error = error.__cause__
+            if not isinstance(scope_error, McpInsufficientScope):
+                raise
+            message = str(scope_error)
+            metadata_url = self.scope_resource_metadata_url
+            if metadata_url is None:
                 raise
             challenge = (
                 f'Bearer resource_metadata="{metadata_url}", '
                 'error="insufficient_scope", '
-                f'scope="{MCP_REQUIRED_SCOPE} {MCP_WRITE_SCOPE}"'
+                f'error_description="{_quote_auth_parameter(message)}", '
+                f'scope="{" ".join(scope_error.required_scopes)}"'
             )
             return CallToolResult(
                 content=[TextContent(type="text", text=message)],
@@ -80,8 +91,9 @@ def create_mcp_runtime(
     server = ChatGptFastMCP(
         name="Track Anywhere Ledger",
         instructions=(
-            "Read and, only after explicit user confirmation, record verified Track "
-            "Anywhere V2 ledger data. Integer units are exact; use asset scale "
+            "Read verified Track Anywhere V2 ledger data. After explicit user "
+            "confirmation, bootstrap Books, assets, and standard accounts or record "
+            "semantic ledger entries. Integer units are exact; use asset scale "
             "metadata before presenting decimal amounts."
         ),
         token_verifier=DatabaseTokenVerifier(
@@ -123,9 +135,7 @@ def create_mcp_runtime(
             ),
         ),
     )
-    server.write_scope_resource_metadata_url = protected_resource_metadata_url(
-        resource
-    )
+    server.scope_resource_metadata_url = protected_resource_metadata_url(resource)
     register_ledger_tools(server, dependencies)
     application = server.streamable_http_app()
     _advertise_mcp_scopes(application, base, resource)
@@ -149,7 +159,12 @@ def _advertise_mcp_scopes(
             protected_resource_metadata(
                 public_base_url,
                 resource,
-                scopes=(MCP_REQUIRED_SCOPE, MCP_WRITE_SCOPE),
+                scopes=(
+                    MCP_BOOK_READ_SCOPE,
+                    MCP_BOOK_WRITE_SCOPE,
+                    MCP_REQUIRED_SCOPE,
+                    MCP_WRITE_SCOPE,
+                ),
             )
         )
 
@@ -175,6 +190,10 @@ def _trusted_proxy_hosts() -> tuple[str, ...]:
             )
         values.append(value)
     return tuple(dict.fromkeys(values))
+
+
+def _quote_auth_parameter(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 __all__ = [

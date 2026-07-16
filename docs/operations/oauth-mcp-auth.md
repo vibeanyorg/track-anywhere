@@ -82,14 +82,29 @@ registration field.
 
 Configure the connector URL as `<public-origin>/mcp` and select OAuth. ChatGPT
 discovers the authorization server from the Bearer challenge and protected
-resource metadata, dynamically registers a public client, and requests
-`ledger:read`. The consent screen selects read scopes by default and leaves
-`ledger:write` off until the owner explicitly selects it. The eight query tools
-remain read-only. Four semantic write tools record expenses, transfers,
-credit-card charges, and card payments only after explicit user confirmation;
-each requires `ledger:read ledger:write` and a stable `request_id` for exact
-retries. Every tool mirrors its OAuth security scheme in both the top-level
-descriptor and `_meta`.
+resource metadata, then dynamically registers a public OAuth client whose scope
+ceiling includes `book:read book:write ledger:read ledger:write`. The consent
+screen selects only the read scopes present in the current authorization
+request by default; requested write scopes remain off until the owner explicitly
+selects them, and a tool challenge can request missing scopes later. The eight
+query tools remain read-only; listing Books requires `book:read ledger:read`,
+while Book-internal ledger queries require `ledger:read`. Three catalog tools
+create Books, assets, and standard user accounts after explicit confirmation;
+each requires
+`book:read book:write ledger:read`. Four semantic ledger tools record expenses,
+transfers, credit-card charges, and card payments after explicit confirmation;
+each requires `ledger:read ledger:write`. Every write requires a stable
+`request_id` for exact retries, and every tool mirrors its OAuth security scheme
+in both the top-level descriptor and `_meta`. If a committed catalog write
+cannot be read back immediately, the tool returns `verification_status=pending`
+without exposing database details and instructs the client to retry only the
+same `request_id` and arguments.
+
+When a deployment adds a newly requested scope, disconnect and recreate the
+ChatGPT app instead of only reconnecting it. Dynamic client registration fixes
+the client's maximum allowed scope set when the client is created; an older
+client that was registered before `book:write` existed cannot request that
+scope later.
 
 The browser supports a private-instance owner account. `POST /api/v2/auth/signup`
 requires the existing human owner's personal API key as a high-entropy setup

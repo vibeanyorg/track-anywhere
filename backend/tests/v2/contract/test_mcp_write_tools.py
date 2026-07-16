@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 import pytest
@@ -14,8 +14,15 @@ from backend.tests.v2.fixtures.synchronous import JournalScenario, seed_journal_
 from track_anywhere.api.dependencies import build_engine_dependencies
 from track_anywhere.application.idempotency import CommandOutcome, CommandResult
 from track_anywhere.infrastructure.db.models.auth import (
+    BookMemberRecord,
     CredentialRecord,
     OAuthClientRecord,
+    UserRecord,
+)
+from track_anywhere.infrastructure.db.models.catalog import (
+    AccountRecord,
+    AssetRecord,
+    BookRecord,
 )
 from track_anywhere.infrastructure.db.models.event_store import BookEventHeadRecord
 from track_anywhere.mcp.server import create_mcp_runtime
@@ -44,6 +51,275 @@ def test_replayed_write_prefers_the_persisted_transaction_identity() -> None:
         mcp_tools._persisted_transaction_id(outcome, recomputed_fallback)
         == persisted_transaction_id
     )
+
+
+def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
+    pg_engine,
+) -> None:
+    subject_id = "human:mcp-cold-start"
+    write_token = "ta_mcp_catalog_write"
+    _seed_catalog_oauth_tokens(
+        pg_engine,
+        subject_id=subject_id,
+        write_token=write_token,
+        read_token="ta_mcp_catalog_read",
+    )
+    runtime = create_mcp_runtime(
+        build_engine_dependencies(
+            pg_engine,
+            expected_runtime_role=pg_engine.url.username,
+        ),
+        "http://testserver",
+    )
+    book_request_id = str(uuid4())
+
+    with TestClient(runtime.application) as client:
+        created_book = _call_tool(
+            client,
+            write_token,
+            "ledger_create_book",
+            {
+                "request_id": book_request_id,
+                "current_name": "Personal Ledger",
+                "base_asset_code": None,
+            },
+        )
+        replayed_book = _call_tool(
+            client,
+            write_token,
+            "ledger_create_book",
+            {
+                "request_id": book_request_id,
+                "current_name": "Personal Ledger",
+                "base_asset_code": None,
+            },
+        )
+        book_id = created_book["structuredContent"]["book"]["book_id"]
+        asset_request_id = str(uuid4())
+        asset_arguments = {
+            "book_id": book_id,
+            "request_id": asset_request_id,
+            "asset_code": "MCPUSD",
+            "kind": "currency",
+            "ledger_scale": 2,
+            "input_scale": 2,
+            "display_scale": 2,
+            "current_name": "US Dollar",
+        }
+        created_asset = _call_tool(
+            client,
+            write_token,
+            "ledger_create_asset",
+            asset_arguments,
+        )
+        replayed_asset = _call_tool(
+            client,
+            write_token,
+            "ledger_create_asset",
+            asset_arguments,
+        )
+        conflicting_asset = _call_tool(
+            client,
+            write_token,
+            "ledger_create_asset",
+            {
+                **asset_arguments,
+                "asset_code": "MCPEUR",
+                "current_name": "Euro",
+            },
+        )
+        created_account = _call_tool(
+            client,
+            write_token,
+            "ledger_create_account",
+            {
+                "book_id": book_id,
+                "request_id": str(uuid4()),
+                "asset_code": "MCPUSD",
+                "account_type": "asset",
+                "account_subtype": "checking",
+                "current_name": "Everyday checking",
+            },
+        )
+        books = _call_tool(client, write_token, "ledger_list_books", {})
+        accounts = _call_tool(
+            client,
+            write_token,
+            "ledger_list_accounts",
+            {"book_id": book_id},
+        )
+
+    assert created_book["isError"] is False
+    assert created_book["structuredContent"]["replayed"] is False
+    assert replayed_book["isError"] is False
+    assert replayed_book["structuredContent"]["replayed"] is True
+    assert (
+        replayed_book["structuredContent"]["book"]
+        == (created_book["structuredContent"]["book"])
+    )
+    assert created_book["structuredContent"]["book"]["current_name"] == (
+        "Personal Ledger"
+    )
+    assert created_asset["isError"] is False
+    assert created_asset["structuredContent"]["asset"]["asset_code"] == "MCPUSD"
+    assert created_asset["structuredContent"]["created"] is True
+    assert created_asset["structuredContent"]["replayed"] is False
+    assert replayed_asset["isError"] is False
+    assert replayed_asset["structuredContent"]["replayed"] is True
+    assert conflicting_asset["isError"] is True
+    assert "idempotency key" in conflicting_asset["content"][0]["text"]
+    assert created_account["isError"] is False
+    account_body = created_account["structuredContent"]["account"]
+    assert account_body["current_name"] == "Everyday checking"
+    assert account_body["system_role"] is None
+    assert [item["book_id"] for item in books["structuredContent"]["items"]] == [
+        book_id
+    ]
+    assert [item["account_id"] for item in accounts["structuredContent"]["items"]] == [
+        account_body["account_id"]
+    ]
+
+    parsed_book_id = UUID(book_id)
+    with sessionmaker(pg_engine)() as session:
+        book = session.get(BookRecord, parsed_book_id)
+        membership = session.get(BookMemberRecord, (parsed_book_id, subject_id))
+        asset = session.get(AssetRecord, "MCPUSD")
+        conflicting_asset_record = session.get(AssetRecord, "MCPEUR")
+        account = session.get(
+            AccountRecord,
+            (parsed_book_id, UUID(account_body["account_id"])),
+        )
+        head = session.get(BookEventHeadRecord, parsed_book_id)
+    assert book is not None
+    assert membership is not None
+    assert membership.role == "owner"
+    assert set(membership.scopes) == {
+        "book:read",
+        "book:write",
+        "ledger:read",
+        "ledger:write",
+    }
+    assert asset is not None
+    assert conflicting_asset_record is None
+    assert account is not None
+    assert head is not None and head.last_position == 0
+
+
+def test_mcp_catalog_tools_require_book_write_without_mutating_state(pg_engine) -> None:
+    subject_id = "human:mcp-catalog-read-only"
+    read_token = "ta_mcp_catalog_read_only"
+    _seed_catalog_oauth_tokens(
+        pg_engine,
+        subject_id=subject_id,
+        write_token="ta_mcp_catalog_unused_write",
+        read_token=read_token,
+        ledger_only_token="ta_mcp_ledger_read_only",
+    )
+    runtime = create_mcp_runtime(
+        build_engine_dependencies(
+            pg_engine,
+            expected_runtime_role=pg_engine.url.username,
+        ),
+        "http://testserver",
+    )
+
+    with TestClient(runtime.application) as client:
+        denied = _call_tool(
+            client,
+            read_token,
+            "ledger_create_book",
+            {
+                "request_id": str(uuid4()),
+                "current_name": "Must not exist",
+                "base_asset_code": None,
+            },
+        )
+        books_denied = _call_tool(
+            client,
+            "ta_mcp_ledger_read_only",
+            "ledger_list_books",
+            {},
+        )
+
+    assert denied["isError"] is True
+    assert "book:write" in denied["content"][0]["text"]
+    assert "recreate" in denied["content"][0]["text"].lower()
+    challenge = denied["_meta"]["mcp/www_authenticate"][0]
+    assert 'error="insufficient_scope"' in challenge
+    assert 'error_description="' in challenge
+    assert 'scope="book:read book:write ledger:read"' in challenge
+    assert books_denied["isError"] is True
+    books_challenge = books_denied["_meta"]["mcp/www_authenticate"][0]
+    assert 'error="insufficient_scope"' in books_challenge
+    assert 'error_description="' in books_challenge
+    assert 'scope="book:read ledger:read"' in books_challenge
+    with sessionmaker(pg_engine)() as session:
+        assert session.scalar(select(BookRecord).limit(1)) is None
+
+
+def test_mcp_catalog_write_reports_pending_without_leaking_readback_errors(
+    pg_engine,
+    monkeypatch,
+) -> None:
+    subject_id = "human:mcp-catalog-pending"
+    write_token = "ta_mcp_catalog_pending"
+    _seed_catalog_oauth_tokens(
+        pg_engine,
+        subject_id=subject_id,
+        write_token=write_token,
+        read_token="ta_mcp_catalog_pending_read",
+    )
+    original_read = mcp_tools._read_created_book
+    read_count = 0
+
+    def fail_only_after_commit(*args, **kwargs):
+        nonlocal read_count
+        read_count += 1
+        if read_count == 2:
+            raise SQLAlchemyError("private-ledger-value-must-not-leak")
+        return original_read(*args, **kwargs)
+
+    monkeypatch.setattr(mcp_tools, "_read_created_book", fail_only_after_commit)
+    runtime = create_mcp_runtime(
+        build_engine_dependencies(
+            pg_engine,
+            expected_runtime_role=pg_engine.url.username,
+        ),
+        "http://testserver",
+    )
+    request_id = str(uuid4())
+    arguments = {
+        "request_id": request_id,
+        "current_name": "Pending readback Book",
+        "base_asset_code": None,
+    }
+
+    with TestClient(runtime.application) as client:
+        pending = _call_tool(
+            client,
+            write_token,
+            "ledger_create_book",
+            arguments,
+        )
+        verified_retry = _call_tool(
+            client,
+            write_token,
+            "ledger_create_book",
+            arguments,
+        )
+
+    assert pending["isError"] is False
+    pending_body = pending["structuredContent"]
+    assert pending_body["committed"] is True
+    assert pending_body["verification_status"] == "pending"
+    assert pending_body["book"] is None
+    assert "private-ledger-value-must-not-leak" not in str(pending)
+    assert request_id in pending_body["retry_guidance"]
+    assert verified_retry["isError"] is False
+    assert verified_retry["structuredContent"]["verification_status"] == "verified"
+    assert verified_retry["structuredContent"]["replayed"] is True
+    with sessionmaker(pg_engine)() as session:
+        assert len(tuple(session.scalars(select(BookRecord)))) == 1
 
 
 def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
@@ -221,21 +497,24 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
         (str(scenario.credit_account_id), "debit", "1000"),
         (str(card_account_id), "credit", "1000"),
     ]
-    assert charge["structuredContent"]["transaction"]["credit_card_relation"][
-        "intent"
-    ] == "charge"
+    assert (
+        charge["structuredContent"]["transaction"]["credit_card_relation"]["intent"]
+        == "charge"
+    )
     assert payment["isError"] is False
     assert _posting_pairs(payment["structuredContent"]) == [
         (str(card_account_id), "debit", "400"),
         (str(scenario.debit_account_id), "credit", "400"),
     ]
-    assert payment["structuredContent"]["transaction"]["credit_card_relation"][
-        "intent"
-    ] == "payment"
+    assert (
+        payment["structuredContent"]["transaction"]["credit_card_relation"]["intent"]
+        == "payment"
+    )
     assert read_only_attempt["isError"] is True
     assert "ledger:write" in read_only_attempt["content"][0]["text"]
     challenge = read_only_attempt["_meta"]["mcp/www_authenticate"][0]
     assert 'error="insufficient_scope"' in challenge
+    assert 'error_description="' in challenge
     assert 'scope="ledger:read ledger:write"' in challenge
     assert wrong_account_type["isError"] is True
     assert "expense account" in wrong_account_type["content"][0]["text"]
@@ -600,7 +879,7 @@ def _seed_write_surface(
     with engine.begin() as connection:
         connection.execute(
             text(
-                "update book_members set scopes='[\"ledger:read\",\"ledger:write\"]' "
+                'update book_members set scopes=\'["ledger:read","ledger:write"]\' '
                 "where book_id=:book_id and user_id=:user_id"
             ),
             {
@@ -668,7 +947,7 @@ def _seed_oauth_tokens(
             )
 
 
-def _call_tool(client, token: str, name: str, arguments: dict[str, str]):
+def _call_tool(client, token: str, name: str, arguments: dict[str, object]):
     response = client.post(
         "/mcp",
         json={
@@ -685,6 +964,68 @@ def _call_tool(client, token: str, name: str, arguments: dict[str, str]):
     )
     assert response.status_code == 200
     return response.json()["result"]
+
+
+def _seed_catalog_oauth_tokens(
+    engine,
+    *,
+    subject_id: str,
+    write_token: str,
+    read_token: str,
+    ledger_only_token: str | None = None,
+) -> None:
+    now = datetime.now(UTC)
+    client_id = f"client-{subject_id}"
+    factory = sessionmaker(engine, expire_on_commit=False)
+    with factory.begin() as session:
+        session.add(
+            UserRecord(
+                user_id=subject_id,
+                subject_type="human",
+                current_display_name="MCP cold start",
+                status="active",
+            )
+        )
+        session.add(
+            OAuthClientRecord(
+                client_id=client_id,
+                client_name="MCP catalog contract",
+                client_type="public",
+                client_secret_hash=None,
+                scopes=["book:read", "book:write", "ledger:read", "ledger:write"],
+                status="active",
+            )
+        )
+        session.flush()
+        token_scopes = [
+            (
+                write_token,
+                ["book:read", "book:write", "ledger:read"],
+            ),
+            (read_token, ["book:read", "ledger:read"]),
+        ]
+        if ledger_only_token is not None:
+            token_scopes.append((ledger_only_token, ["ledger:read"]))
+        for raw_token, scopes in token_scopes:
+            session.add(
+                CredentialRecord(
+                    credential_id=uuid4(),
+                    token_hash=sha256(raw_token.encode()).digest(),
+                    jti=uuid4(),
+                    actor_subject_id=subject_id,
+                    actor_type="human",
+                    auth_kind="pkce",
+                    book_id=None,
+                    oauth_client_id=client_id,
+                    resource=RESOURCE,
+                    refresh_family_id=uuid4(),
+                    scopes=scopes,
+                    issued_at=now,
+                    expires_at=now + timedelta(hours=1),
+                    revoked_at=None,
+                    last_used_at=None,
+                )
+            )
 
 
 def _expense_arguments(

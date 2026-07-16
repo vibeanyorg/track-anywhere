@@ -153,6 +153,22 @@ test("write selection retains its matching read permission", () => {
   );
 });
 
+test("book management selection retains book read permission", () => {
+  const requested = ["book:read", "book:write", "ledger:read"];
+  const available = [...requested];
+
+  const selected = oauthConsent.updateApprovedScopes(
+    requested,
+    available,
+    ["ledger:read"],
+    "book:write",
+    true,
+    "https://ledger.example.com/mcp"
+  );
+
+  assert.deepEqual(selected, ["book:read", "book:write", "ledger:read"]);
+});
+
 test("MCP consent keeps ledger read selected and rejects grants without it", () => {
   const request = parseAuthorizationRequest(
     authorizationParams({ scope: "book:read ledger:read ledger:write" })

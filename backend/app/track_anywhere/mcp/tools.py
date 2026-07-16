@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import logging
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeVar
 from uuid import UUID, NAMESPACE_URL, uuid5
 
 from mcp.server.fastmcp import FastMCP
@@ -17,8 +17,10 @@ from ..api.v2.schemas import AssetCode, PlainDecimal
 from ..api.v2.query_routes.catalog import (
     AccountResponse,
     AssetListResponse,
+    AssetResponse,
     BalanceItemResponse,
     BookListResponse,
+    BookResponse,
     CategoryListResponse,
     serialize_account,
     serialize_asset,
@@ -47,6 +49,18 @@ from ..application.credit_cards.record import (
     execute_charge_credit_card,
     execute_payment_credit_card,
 )
+from ..application.catalogs.create_account import (
+    CreateAccount,
+    create_account as execute_create_account,
+)
+from ..application.catalogs.create_asset import (
+    CreateOrReuseAssetCommand,
+    execute_create_or_reuse_asset,
+)
+from ..application.catalogs.create_book import (
+    CreateBook,
+    create_book as execute_create_book,
+)
 from ..application.idempotency import (
     CommandActor,
     CommandOutcome,
@@ -63,14 +77,25 @@ from ..infrastructure.db.event_store import StreamVersionConflict
 from .auth import (
     require_access_token,
     require_book_access,
+    require_book_catalog_write_access,
+    require_book_read_access_token,
     require_book_write_access,
+    require_catalog_write_access_token,
+    require_global_catalog_write_access_token,
     require_write_access_token,
 )
 
 
 SECURITY_SCHEMES = [{"type": "oauth2", "scopes": ["ledger:read"]}]
-WRITE_SECURITY_SCHEMES = [
-    {"type": "oauth2", "scopes": ["ledger:read", "ledger:write"]}
+BOOK_READ_SECURITY_SCHEMES = [
+    {"type": "oauth2", "scopes": ["book:read", "ledger:read"]}
+]
+WRITE_SECURITY_SCHEMES = [{"type": "oauth2", "scopes": ["ledger:read", "ledger:write"]}]
+CATALOG_WRITE_SECURITY_SCHEMES = [
+    {
+        "type": "oauth2",
+        "scopes": ["book:read", "book:write", "ledger:read"],
+    }
 ]
 READ_ONLY_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=True,
@@ -79,8 +104,16 @@ READ_ONLY_ANNOTATIONS = ToolAnnotations(
     openWorldHint=False,
 )
 TOOL_META = {"securitySchemes": SECURITY_SCHEMES}
+BOOK_READ_TOOL_META = {"securitySchemes": BOOK_READ_SECURITY_SCHEMES}
 WRITE_TOOL_META = {"securitySchemes": WRITE_SECURITY_SCHEMES}
+CATALOG_WRITE_TOOL_META = {"securitySchemes": CATALOG_WRITE_SECURITY_SCHEMES}
 WRITE_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+CATALOG_WRITE_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=False,
     destructiveHint=False,
     idempotentHint=True,
@@ -91,6 +124,8 @@ _MCP_WRITE_ID_NAMESPACE = uuid5(
     "https://track-anywhere.dev/v2/mcp/write-identity",
 )
 _LOGGER = logging.getLogger(__name__)
+_CatalogValue = TypeVar("_CatalogValue")
+_CatalogResult = TypeVar("_CatalogResult")
 
 
 class AccountPage(BaseModel):
@@ -125,8 +160,43 @@ class LedgerWriteResponse(BaseModel):
     retry_guidance: str
 
 
+class BookCatalogWriteResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    request_id: UUID
+    committed: Literal[True] = True
+    replayed: bool
+    book: BookResponse | None
+    verification_status: Literal["verified", "pending"] = "verified"
+    retry_guidance: str = "No retry is needed after verified readback."
+
+
+class AssetCatalogWriteResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    request_id: UUID
+    committed: Literal[True] = True
+    replayed: bool
+    created: bool
+    asset: AssetResponse | None
+    verification_status: Literal["verified", "pending"] = "verified"
+    retry_guidance: str = "No retry is needed after verified readback."
+
+
+class AccountCatalogWriteResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    request_id: UUID
+    committed: Literal[True] = True
+    replayed: bool
+    account: AccountResponse | None
+    verification_status: Literal["verified", "pending"] = "verified"
+    retry_guidance: str = "No retry is needed after verified readback."
+
+
 def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> None:
     session_factory = dependencies.session_factory
+
     @mcp.tool(
         name="ledger_list_books",
         title="List accessible Books",
@@ -135,18 +205,258 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
             "connected user can read. Returns stable Book IDs for other tools."
         ),
         annotations=READ_ONLY_ANNOTATIONS,
-        meta=TOOL_META,
+        meta=BOOK_READ_TOOL_META,
     )
     def ledger_list_books() -> BookListResponse:
-        token = require_access_token()
+        token = require_book_read_access_token()
         restricted = (token.claims or {}).get("book_id")
         with session_factory() as session:
             values = list_accessible_books(
                 session,
                 user_id=token.subject or "",
-                restricted_book_id=None if restricted is None else UUID(str(restricted)),
+                restricted_book_id=None
+                if restricted is None
+                else UUID(str(restricted)),
             )
         return BookListResponse(items=tuple(serialize_book(item) for item in values))
+
+    @mcp.tool(
+        name="ledger_create_book",
+        title="Create a Book",
+        description=(
+            "Use this when the connected user has no Track Anywhere Book and has "
+            "explicitly asked to create one. The request_id deterministically "
+            "identifies the new Book and must be reused only for an exact retry. "
+            "base_asset_code must already exist; omit it during an empty-instance "
+            "bootstrap."
+        ),
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_create_book(
+        request_id: UUID,
+        current_name: Annotated[str, Field(min_length=1, max_length=512)],
+        base_asset_code: AssetCode | None = None,
+    ) -> BookCatalogWriteResponse:
+        token = require_global_catalog_write_access_token()
+        book_id = _catalog_entity_id(
+            token.subject or "",
+            None,
+            "ledger_create_book",
+            request_id,
+        )
+        existing = _read_catalog_before_write(
+            lambda: _read_created_book(dependencies, token, book_id),
+            request_id=request_id,
+            entity_label="Book",
+        )
+        if existing is not None:
+            if (
+                existing.current_name != current_name.strip()
+                or existing.base_asset_code != base_asset_code
+            ):
+                raise ToolError(
+                    "request_id already identifies a Book created with different "
+                    "arguments. Reuse it only for the exact same request."
+                )
+            return BookCatalogWriteResponse(
+                request_id=request_id,
+                replayed=True,
+                book=existing,
+            )
+        _call_catalog_write(
+            lambda: execute_create_book(
+                CreateBook(
+                    book_id=book_id,
+                    current_name=current_name,
+                    base_asset_code=base_asset_code,
+                ),
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+            ),
+            request_id=request_id,
+        )
+        created = _read_catalog_after_commit(
+            lambda: _read_created_book(dependencies, token, book_id),
+            request_id=request_id,
+            entity_label="Book",
+        )
+        if created is None:
+            return BookCatalogWriteResponse(
+                request_id=request_id,
+                replayed=False,
+                book=None,
+                verification_status="pending",
+                retry_guidance=_catalog_retry_guidance(request_id),
+            )
+        return BookCatalogWriteResponse(
+            request_id=request_id,
+            replayed=False,
+            book=created,
+        )
+
+    @mcp.tool(
+        name="ledger_create_asset",
+        title="Create or reuse an asset definition",
+        description=(
+            "Use this when a confirmed Book needs a currency, crypto, security, "
+            "or other asset definition before accounts can reference it. Exact "
+            "asset scale metadata must be user-confirmed; an identical existing "
+            "asset is returned safely."
+        ),
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_create_asset(
+        book_id: UUID,
+        request_id: UUID,
+        asset_code: AssetCode,
+        kind: Annotated[str, Field(min_length=1, max_length=32)],
+        ledger_scale: Annotated[int, Field(ge=0, le=30)],
+        input_scale: Annotated[int, Field(ge=0, le=30)],
+        display_scale: Annotated[int, Field(ge=0, le=30)],
+        current_name: Annotated[str, Field(min_length=1, max_length=512)],
+    ) -> AssetCatalogWriteResponse:
+        token = _require_catalog_book(dependencies, book_id, request_id)
+        command_id = _catalog_entity_id(
+            token.subject or "",
+            book_id,
+            "ledger_create_asset",
+            request_id,
+        )
+        outcome = _call_catalog_write(
+            lambda: execute_create_or_reuse_asset(
+                CreateOrReuseAssetCommand(
+                    book_id=book_id,
+                    command_id=command_id,
+                    asset_code=asset_code,
+                    kind=kind,
+                    ledger_scale=ledger_scale,
+                    input_scale=input_scale,
+                    display_scale=display_scale,
+                    current_name=current_name,
+                ),
+                raw_key=f"mcp:ledger_create_asset:{request_id}",
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+            ),
+            request_id=request_id,
+        )
+        created_by_command = _asset_created_by_command(outcome, request_id)
+        created = _read_catalog_after_commit(
+            lambda: _read_created_asset(dependencies, book_id, asset_code),
+            request_id=request_id,
+            entity_label="asset",
+        )
+        if created is None:
+            return AssetCatalogWriteResponse(
+                request_id=request_id,
+                replayed=outcome.replayed,
+                created=created_by_command,
+                asset=None,
+                verification_status="pending",
+                retry_guidance=_catalog_retry_guidance(request_id),
+            )
+        return AssetCatalogWriteResponse(
+            request_id=request_id,
+            replayed=outcome.replayed,
+            created=created_by_command,
+            asset=created,
+        )
+
+    @mcp.tool(
+        name="ledger_create_account",
+        title="Create a standard account",
+        description=(
+            "Use this when the user has explicitly confirmed a Book, an existing "
+            "asset definition, account type, optional subtype, and account name. "
+            "This tool creates only user-owned standard accounts and never "
+            "system-managed accounts. Reuse request_id only for an exact retry."
+        ),
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_create_account(
+        book_id: UUID,
+        request_id: UUID,
+        asset_code: AssetCode,
+        account_type: Literal[
+            "asset",
+            "liability",
+            "equity",
+            "income",
+            "expense",
+            "fund",
+        ],
+        current_name: Annotated[str, Field(min_length=1, max_length=512)],
+        account_subtype: Annotated[
+            str | None,
+            Field(pattern=r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$", max_length=64),
+        ] = None,
+    ) -> AccountCatalogWriteResponse:
+        token = _require_catalog_book(dependencies, book_id, request_id)
+        account_id = _catalog_entity_id(
+            token.subject or "",
+            book_id,
+            "ledger_create_account",
+            request_id,
+        )
+        existing = _read_catalog_before_write(
+            lambda: _read_created_account(dependencies, book_id, account_id),
+            request_id=request_id,
+            entity_label="account",
+        )
+        if existing is not None:
+            if (
+                existing.asset_code != asset_code
+                or existing.account_type != account_type
+                or existing.account_subtype != account_subtype
+                or existing.current_name != current_name.strip()
+                or existing.system_role is not None
+            ):
+                raise ToolError(
+                    "request_id already identifies an account created with different "
+                    "arguments. Reuse it only for the exact same request."
+                )
+            return AccountCatalogWriteResponse(
+                request_id=request_id,
+                replayed=True,
+                account=existing,
+            )
+        _call_catalog_write(
+            lambda: execute_create_account(
+                CreateAccount(
+                    book_id=book_id,
+                    account_id=account_id,
+                    asset_code=asset_code,
+                    account_type=account_type,
+                    account_subtype=account_subtype,
+                    current_name=current_name,
+                    system_role=None,
+                ),
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+            ),
+            request_id=request_id,
+        )
+        created = _read_catalog_after_commit(
+            lambda: _read_created_account(dependencies, book_id, account_id),
+            request_id=request_id,
+            entity_label="account",
+        )
+        if created is None:
+            return AccountCatalogWriteResponse(
+                request_id=request_id,
+                replayed=False,
+                account=None,
+                verification_status="pending",
+                retry_guidance=_catalog_retry_guidance(request_id),
+            )
+        return AccountCatalogWriteResponse(
+            request_id=request_id,
+            replayed=False,
+            account=created,
+        )
 
     @mcp.tool(
         name="ledger_list_assets",
@@ -576,6 +886,156 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         )
 
 
+def _require_catalog_book(
+    dependencies: RuntimeDependencies,
+    book_id: UUID,
+    request_id: UUID,
+) -> AccessToken:
+    try:
+        token = require_catalog_write_access_token()
+        with dependencies.session_factory() as session:
+            require_book_catalog_write_access(session, token, book_id)
+        return token
+    except ToolError:
+        raise
+    except Exception:
+        _log_write_boundary("mcp_catalog_access_check_failed", request_id)
+        raise ToolError(
+            "Unable to verify Book management access. No catalog write was "
+            f"attempted. Retry only with request_id {request_id} and the exact "
+            "same arguments."
+        ) from None
+
+
+def _catalog_entity_id(
+    subject_id: str,
+    book_id: UUID | None,
+    tool_name: str,
+    request_id: UUID,
+) -> UUID:
+    scope = "global" if book_id is None else str(book_id)
+    material = f"{subject_id}:{scope}:{tool_name}:{request_id}"
+    return uuid5(_MCP_WRITE_ID_NAMESPACE, f"{material}:catalog")
+
+
+def _read_created_book(
+    dependencies: RuntimeDependencies,
+    token: AccessToken,
+    book_id: UUID,
+) -> BookResponse | None:
+    with dependencies.session_factory() as session:
+        values = list_accessible_books(
+            session,
+            user_id=token.subject or "",
+            restricted_book_id=book_id,
+        )
+    return None if not values else serialize_book(values[0])
+
+
+def _read_created_asset(
+    dependencies: RuntimeDependencies,
+    book_id: UUID,
+    asset_code: str,
+) -> AssetResponse | None:
+    with dependencies.session_factory() as session:
+        values = list_assets(session, book_id)
+    match = next((value for value in values if value.asset_code == asset_code), None)
+    return None if match is None else serialize_asset(match)
+
+
+def _read_created_account(
+    dependencies: RuntimeDependencies,
+    book_id: UUID,
+    account_id: UUID,
+) -> AccountResponse | None:
+    try:
+        with dependencies.session_factory() as session:
+            value = get_account(session, book_id, account_id)
+    except LookupError:
+        return None
+    return serialize_account(value)
+
+
+def _read_catalog_before_write(
+    callback: Callable[[], _CatalogValue | None],
+    *,
+    request_id: UUID,
+    entity_label: str,
+) -> _CatalogValue | None:
+    try:
+        return callback()
+    except ToolError:
+        raise
+    except Exception:
+        _log_write_boundary("mcp_catalog_prewrite_read_failed", request_id)
+        raise ToolError(
+            f"Unable to verify the existing {entity_label}. No catalog write was "
+            f"attempted. Retry only with request_id {request_id} and the exact "
+            "same arguments."
+        ) from None
+
+
+def _read_catalog_after_commit(
+    callback: Callable[[], _CatalogValue | None],
+    *,
+    request_id: UUID,
+    entity_label: str,
+) -> _CatalogValue | None:
+    try:
+        return callback()
+    except Exception:
+        _log_write_boundary("mcp_catalog_readback_pending", request_id)
+        return None
+
+
+def _catalog_retry_guidance(request_id: UUID) -> str:
+    return (
+        "The catalog write committed but readback is pending. Retry only with "
+        f"request_id {request_id} and the exact same arguments."
+    )
+
+
+def _asset_created_by_command(
+    outcome: CommandOutcome,
+    request_id: UUID,
+) -> bool:
+    body = outcome.result.body
+    if isinstance(body, dict) and type(body.get("created")) is bool:
+        return bool(body["created"])
+    _log_write_boundary("mcp_catalog_result_invalid", request_id)
+    raise ToolError(
+        "Asset write committed with an unreadable result. Retry only with "
+        f"request_id {request_id} and the exact same arguments."
+    )
+
+
+def _call_catalog_write(
+    callback: Callable[[], _CatalogResult],
+    *,
+    request_id: UUID,
+) -> _CatalogResult:
+    try:
+        return callback()
+    except ToolError:
+        raise
+    except (IdempotencyConflict, LookupError, PermissionError, ValueError) as error:
+        raise ToolError(str(error)) from error
+    except SQLAlchemyError:
+        _log_write_boundary("mcp_catalog_write_outcome_unknown", request_id)
+        raise ToolError(
+            "Catalog write outcome is unknown. Do not create a new request_id. "
+            f"List the affected catalog, then retry only with request_id {request_id} "
+            "and the exact same arguments if the resource is absent."
+        ) from None
+    except Exception:
+        _log_write_boundary("mcp_catalog_write_outcome_unknown", request_id)
+        raise ToolError(
+            "Catalog write outcome is unknown. Do not create a new request_id. "
+            f"List the affected catalog, then retry only with request_id {request_id} "
+            "and the exact same arguments if the resource is absent."
+        ) from None
+
+
 def _require_write_book(
     dependencies: RuntimeDependencies,
     book_id: UUID,
@@ -706,8 +1166,14 @@ def _persisted_transaction_id(
 
 
 __all__ = [
+    "AccountCatalogWriteResponse",
     "AccountPage",
+    "AssetCatalogWriteResponse",
     "BalanceSnapshotResponse",
+    "BOOK_READ_SECURITY_SCHEMES",
+    "BookCatalogWriteResponse",
+    "CATALOG_WRITE_ANNOTATIONS",
+    "CATALOG_WRITE_SECURITY_SCHEMES",
     "LedgerWriteResponse",
     "READ_ONLY_ANNOTATIONS",
     "SECURITY_SCHEMES",

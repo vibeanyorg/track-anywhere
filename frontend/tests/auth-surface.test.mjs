@@ -29,6 +29,8 @@ test("home explains how to connect the least-privilege ChatGPT app", () => {
   assert.match(home, /OAuth/);
   assert.match(home, /ledger:read/);
   assert.match(home, /ledger:write/);
+  assert.match(home, /book:write/);
+  assert.match(home, /create Books, assets, and accounts/i);
   assert.match(home, /write access is optional/i);
   assert.match(home, /disconnect.*create it again/i);
   assert.match(home, /Never paste a setup key or API key into ChatGPT/);

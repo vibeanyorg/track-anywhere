@@ -17,6 +17,7 @@ const workflow = [
 const chatgptMcpUrl = "https://ledger.ttsseed.com/mcp";
 
 const chatgptPrompts = [
+  "Create a personal Book and a CNY checking account.",
   "List my accounts and current balances.",
   "Show my 20 latest transactions.",
   "What do I owe on each credit card?"
@@ -126,7 +127,7 @@ export default function Page() {
               <span className="chatgpt-step-number">03</span>
               <div>
                 <h3>Connect securely</h3>
-                <p>Paste the MCP server URL above and create the app. ChatGPT discovers OAuth automatically; approve <code>ledger:read</code>, then select <code>ledger:write</code> only if you want it to record expenses, transfers, or card activity.</p>
+                <p>Paste the MCP server URL above and create the app. ChatGPT discovers OAuth automatically; keep <code>book:read</code> and <code>ledger:read</code>, select <code>book:write</code> if you want it to create Books, assets, and accounts, and select <code>ledger:write</code> if you want it to record expenses, transfers, or card activity.</p>
               </div>
             </li>
             <li>
@@ -145,7 +146,7 @@ export default function Page() {
             </div>
             <div>
               <dt>Permissions</dt>
-              <dd><code>ledger:read</code> · <code>ledger:write</code></dd>
+              <dd><code>book:read</code> · <code>book:write</code> · <code>ledger:read</code> · <code>ledger:write</code></dd>
             </div>
             <div>
               <dt>Access</dt>

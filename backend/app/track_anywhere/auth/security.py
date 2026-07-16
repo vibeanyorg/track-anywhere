@@ -65,10 +65,7 @@ def hash_password(password: str) -> str:
         salt.encode("utf-8"),
         PASSWORD_HASH_ITERATIONS,
     ).hex()
-    return (
-        f"{PASSWORD_HASH_ALGORITHM}${PASSWORD_HASH_ITERATIONS}"
-        f"${salt}${digest}"
-    )
+    return f"{PASSWORD_HASH_ALGORITHM}${PASSWORD_HASH_ITERATIONS}${salt}${digest}"
 
 
 def new_secret(prefix: str) -> str:
@@ -112,6 +109,15 @@ def parse_requested_scopes(scope: str) -> tuple[str, ...]:
     unknown = set(scopes) - AGENT_ALLOWED_SCOPES
     if unknown:
         raise AuthSecurityError(f"unknown OAuth scopes: {sorted(unknown)}")
+    scope_set = set(scopes)
+    for write_scope, read_scope in (
+        ("book:write", "book:read"),
+        ("ledger:write", "ledger:read"),
+    ):
+        if write_scope in scope_set and read_scope not in scope_set:
+            raise AuthSecurityError(
+                f"{write_scope} requires its matching read scope {read_scope}"
+            )
     return scopes
 
 

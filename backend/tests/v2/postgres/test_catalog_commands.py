@@ -15,7 +15,13 @@ from track_anywhere.application.catalogs.create_account import (
     CreateAccount,
     create_account,
 )
-from track_anywhere.application.catalogs.create_asset import CreateAsset, create_asset
+from track_anywhere.application.catalogs.create_asset import (
+    AssetMetadataConflict,
+    CreateAsset,
+    CreateOrReuseAssetCommand,
+    create_asset,
+    execute_create_or_reuse_asset,
+)
 from track_anywhere.application.catalogs.create_book import CreateBook, create_book
 from track_anywhere.application.catalogs.create_category import (
     CreateCategory,
@@ -26,7 +32,7 @@ from track_anywhere.application.catalogs.reopen_account import (
     ReopenAccount,
     reopen_account,
 )
-from track_anywhere.application.idempotency import CommandActor
+from track_anywhere.application.idempotency import CommandActor, IdempotencyConflict
 from track_anywhere.infrastructure.db.models.auth import BookMemberRecord, UserRecord
 from track_anywhere.infrastructure.db.models.catalog import (
     AccountRecord,
@@ -35,7 +41,10 @@ from track_anywhere.infrastructure.db.models.catalog import (
     CategoryRecord,
     CategoryVersionRecord,
 )
-from track_anywhere.infrastructure.db.models.event_store import BookEventHeadRecord
+from track_anywhere.infrastructure.db.models.event_store import (
+    BookEventHeadRecord,
+    CommandReceiptRecord,
+)
 from track_anywhere.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
 
 
@@ -173,6 +182,154 @@ def test_catalog_handlers_create_asset_account_and_versioned_category(
             and current.current_version_id == category.category_version_id
         )
         assert version is not None and version.name == "Food"
+
+
+def _asset_command(book_id, **overrides) -> CreateOrReuseAssetCommand:
+    values = {
+        "book_id": book_id,
+        "command_id": uuid4(),
+        "asset_code": "USD",
+        "kind": "fiat",
+        "ledger_scale": 2,
+        "input_scale": 2,
+        "display_scale": 2,
+        "current_name": "US Dollar",
+    }
+    values.update(overrides)
+    return CreateOrReuseAssetCommand(**values)
+
+
+def test_idempotent_asset_create_replays_same_request_without_duplicate(
+    pg_engine,
+) -> None:
+    book, _ = _create_book(pg_engine)
+    first = execute_create_or_reuse_asset(
+        _asset_command(book.book_id),
+        raw_key="catalog-asset-request",
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+    replay = execute_create_or_reuse_asset(
+        _asset_command(book.book_id),
+        raw_key="catalog-asset-request",
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+
+    assert first.replayed is False
+    assert first.result.status_code == 201
+    assert first.result.body == {
+        "asset_code": "USD",
+        "as_of_book_position": 0,
+        "created": True,
+    }
+    assert replay.replayed is True
+    assert replay.result == first.result
+    with Session(pg_engine) as session:
+        assert session.scalar(select(func.count()).select_from(AssetRecord)) == 1
+        assert (
+            session.scalar(select(func.count()).select_from(CommandReceiptRecord)) == 1
+        )
+
+
+def test_idempotent_asset_create_rejects_same_key_with_different_metadata(
+    pg_engine,
+) -> None:
+    book, _ = _create_book(pg_engine)
+    execute_create_or_reuse_asset(
+        _asset_command(book.book_id),
+        raw_key="catalog-asset-request",
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+
+    with pytest.raises(IdempotencyConflict):
+        execute_create_or_reuse_asset(
+            _asset_command(book.book_id, current_name="Different Dollar"),
+            raw_key="catalog-asset-request",
+            actor=ACTOR,
+            uow_factory=_uow_factory(pg_engine),
+        )
+
+    with Session(pg_engine) as session:
+        asset = session.get(AssetRecord, "USD")
+        assert asset is not None and asset.current_name == "US Dollar"
+        assert (
+            session.scalar(select(func.count()).select_from(CommandReceiptRecord)) == 1
+        )
+
+
+def test_idempotent_asset_create_safely_reuses_identical_existing_asset(
+    pg_engine,
+) -> None:
+    book, _ = _create_book(pg_engine)
+    create_asset(
+        CreateAsset(
+            book_id=book.book_id,
+            asset_code="USD",
+            kind="fiat",
+            ledger_scale=2,
+            input_scale=2,
+            display_scale=2,
+            current_name="US Dollar",
+        ),
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+
+    outcome = execute_create_or_reuse_asset(
+        _asset_command(book.book_id),
+        raw_key="catalog-asset-reuse",
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+
+    assert outcome.replayed is False
+    assert outcome.result.status_code == 200
+    assert outcome.result.body == {
+        "asset_code": "USD",
+        "as_of_book_position": 0,
+        "created": False,
+    }
+    with Session(pg_engine) as session:
+        assert session.scalar(select(func.count()).select_from(AssetRecord)) == 1
+        assert (
+            session.scalar(select(func.count()).select_from(CommandReceiptRecord)) == 1
+        )
+
+
+def test_idempotent_asset_create_rejects_different_existing_metadata_atomically(
+    pg_engine,
+) -> None:
+    book, _ = _create_book(pg_engine)
+    create_asset(
+        CreateAsset(
+            book_id=book.book_id,
+            asset_code="USD",
+            kind="fiat",
+            ledger_scale=2,
+            input_scale=2,
+            display_scale=2,
+            current_name="US Dollar",
+        ),
+        actor=ACTOR,
+        uow_factory=_uow_factory(pg_engine),
+    )
+
+    with pytest.raises(AssetMetadataConflict, match="different metadata"):
+        execute_create_or_reuse_asset(
+            _asset_command(book.book_id, ledger_scale=4),
+            raw_key="catalog-asset-conflict",
+            actor=ACTOR,
+            uow_factory=_uow_factory(pg_engine),
+        )
+
+    with Session(pg_engine) as session:
+        asset = session.get(AssetRecord, "USD")
+        assert asset is not None and asset.ledger_scale == 2
+        assert (
+            session.scalar(select(func.count()).select_from(CommandReceiptRecord)) == 0
+        )
 
 
 def test_close_account_is_serialized_by_book_head_and_is_terminal(pg_engine) -> None:
