@@ -99,10 +99,11 @@ assert sealed.nonce == b"n" * 12
 assert cipher.decrypt(..., sealed=sealed) == b'{"purpose":"coffee"}'
 ```
 
-Add separate tests for random nonce/ciphertext variation, deterministic plaintext
-hash, wrong key version, every AAD field mutation, invalid/non-0400 key file,
-wrong key length, tampered ciphertext, and error/log representations that never
-contain plaintext, ciphertext, nonce, purpose, or memo.
+Add separate tests for random nonce/ciphertext variation, a deterministic keyed
+content commitment, wrong key version, every AAD field mutation,
+invalid/non-0400 key file, wrong key length, tampered ciphertext, and error/log
+representations that never contain plaintext, ciphertext, nonce, purpose, or
+memo.
 
 Use strict frozen contracts such as:
 
