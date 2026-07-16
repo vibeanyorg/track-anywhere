@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 from xml.etree import ElementTree
 
 from fastapi.testclient import TestClient
 
+from track_anywhere.api.v2.query_routes.journal import serialize_journal_item
 from track_anywhere.auth.security import redirect_uri_matches, validate_redirect_uri
 from track_anywhere.mcp.server import create_mcp_runtime
+from track_anywhere.queries.journal import JournalItem
 from track_anywhere.server import create_server
 
 
 _PROTECTED_OUTPUT_FIELDS = {
     "description",
     "description_ref",
+    "memo",
     "purpose",
     "transaction_memo",
     "line_memos",
@@ -35,6 +40,20 @@ def _schema_property_names(value: object) -> set[str]:
         names: set[str] = set()
         for child in value:
             names.update(_schema_property_names(child))
+        return names
+    return set()
+
+
+def _payload_keys(value: object) -> set[str]:
+    if isinstance(value, dict):
+        names = set(value)
+        for child in value.values():
+            names.update(_payload_keys(child))
+        return names
+    if isinstance(value, (list, tuple)):
+        names: set[str] = set()
+        for child in value:
+            names.update(_payload_keys(child))
         return names
     return set()
 
@@ -127,11 +146,22 @@ def test_mcp_transaction_reads_cannot_request_or_return_protected_content() -> N
             _PROTECTED_OUTPUT_FIELDS
         )
 
-    assert not any(
-        fragment in tool.name
-        for tool in tools
-        for fragment in ("archive", "import", "protected")
+
+def test_mcp_journal_serializer_drops_internal_protected_content_reference() -> None:
+    item = JournalItem(
+        transaction_id=uuid4(),
+        effective_at=datetime(2026, 7, 17, tzinfo=UTC),
+        book_position=1,
+        transaction_kind="standard",
+        postings=(),
+        reversed_by_transaction_id=None,
+        reverses_transaction_id=None,
+        description_ref=uuid4(),
     )
+
+    payload = serialize_journal_item(item).model_dump(mode="json")
+
+    assert _payload_keys(payload).isdisjoint(_PROTECTED_OUTPUT_FIELDS)
 
 
 def test_mcp_requires_oauth_and_advertises_resource_metadata() -> None:

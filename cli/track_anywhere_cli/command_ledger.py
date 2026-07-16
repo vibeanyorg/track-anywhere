@@ -57,7 +57,9 @@ def request_list_transactions(
             "limit": args.limit,
             "cursor": args.cursor,
             "as_of_book_position": args.as_of_book_position,
-            "include_description": True if args.include_description else None,
+            "include_description": (
+                True if getattr(args, "include_description", False) else None
+            ),
         },
     )
     return requester(config, "GET", path, None, None)
@@ -76,7 +78,9 @@ def request_show_transaction(
         ),
         {
             "as_of_book_position": args.as_of_book_position,
-            "include_description": True if args.include_description else None,
+            "include_description": (
+                True if getattr(args, "include_description", False) else None
+            ),
         },
     )
     return requester(config, "GET", path, None, None)

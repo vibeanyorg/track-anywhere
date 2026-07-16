@@ -312,6 +312,51 @@ def test_direct_dispatch_omits_description_query_when_flag_is_false():
     ]
 
 
+def test_legacy_direct_dispatch_defaults_missing_description_flag_to_omitted():
+    calls = []
+    requester = _recorder(calls)
+    config = CliConfig(base_url="http://testserver", token="token")
+
+    assert dispatch_api_command(
+        Namespace(
+            command="tx",
+            tx_command="list",
+            book_id=BOOK,
+            limit=50,
+            cursor=None,
+            as_of_book_position=None,
+        ),
+        config,
+        requester,
+    ) == (200, {"ok": True})
+    assert dispatch_api_command(
+        Namespace(
+            command="tx",
+            tx_command="show",
+            book_id=BOOK,
+            transaction_id=TX,
+            as_of_book_position=None,
+        ),
+        config,
+        requester,
+    ) == (200, {"ok": True})
+
+    assert calls == [
+        (
+            "GET",
+            f"/api/v2/books/{BOOK}/journal?limit=50",
+            None,
+            None,
+        ),
+        (
+            "GET",
+            f"/api/v2/books/{BOOK}/journal/transactions/{TX}",
+            None,
+            None,
+        ),
+    ]
+
+
 def test_reverse_and_classify_use_transaction_scoped_v2_routes(capsys):
     calls = []
     request = _recorder(calls)
