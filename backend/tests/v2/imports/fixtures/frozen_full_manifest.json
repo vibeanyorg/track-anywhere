@@ -1,0 +1,21 @@
+{
+  "content_sha256": "f1cb565c646dc759b203efad3a5584492f3c824a16abb728bbce83150413597f",
+  "dump_sha256": "a125b857a317e8c017d7028a26f78cf664ff6d57f6c0e698b3c229acf5d6cf9e",
+  "format_version": 1,
+  "snapshot_id": "sha256:f1cb565c646dc759b203efad3a5584492f3c824a16abb728bbce83150413597f",
+  "source_revision": "0019_posting_constraints",
+  "tables": [
+    {"ndjson_sha256": "adb97d5b9e2959dd72d67a51dc80b00fe837eca3d8c2821a96ef96d389329890", "primary_key": ["account_id"], "row_count": 121, "table": "accounts"},
+    {"ndjson_sha256": "c0ccdfdebe14fb8ed6008901546c25838df380d775a62bb82b30a64cde51ad48", "primary_key": ["asset_code"], "row_count": 20, "table": "assets"},
+    {"ndjson_sha256": "d3d9c750c48ce5bc3dabd0d9d1423e60bca9b9aaf1c4d7673b447ea460c4d354", "primary_key": ["category_id"], "row_count": 37, "table": "categories"},
+    {"ndjson_sha256": "d540c3f42ec321321ab1f3b07a2096fc6bff221c998637df802202767dcc9b3b", "primary_key": ["category_version_id"], "row_count": 37, "table": "category_versions"},
+    {"ndjson_sha256": "36ffd21df519c2eba57e6206801f13078a1c9c5b23a44ac7d21ca79d77c7c171", "primary_key": ["classification_event_id"], "row_count": 43, "table": "classification_events"},
+    {"ndjson_sha256": "b6d201c5076c0acf4da0a0ce6197e5d5f9acb0b4b8511ed8dc66a054435b6a8e", "primary_key": ["counterparty_id"], "row_count": 2, "table": "counterparties"},
+    {"ndjson_sha256": "4382cdc5fb1d1afe86790d66e90cd07e0903cfbf711eaa0c126614d68f988bd6", "primary_key": ["event_id"], "row_count": 6, "table": "investment_events"},
+    {"ndjson_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "primary_key": ["valuation_id"], "row_count": 0, "table": "investment_valuations"},
+    {"ndjson_sha256": "ed4001620a8ea1f415682758e46e3916b161edde867d5fcd1dcf580800e9c7a4", "primary_key": ["book_id"], "row_count": 1, "table": "ledger_books"},
+    {"ndjson_sha256": "958b8cd9c751592dd16c2ed00467c2314416eb652fadd94b002c506364221f0b", "primary_key": ["transaction_id", "position", "id"], "row_count": 284, "table": "postings"},
+    {"ndjson_sha256": "7c4c19396714bf018109b2ddb545a7f65513f657a7f17d1e3a7daa49a57b4f70", "primary_key": ["transaction_id", "position", "line_id"], "row_count": 43, "table": "transaction_lines"},
+    {"ndjson_sha256": "4f4704a2636f49116cc963dac13b147e2ab2259a77c5d694b1d5a6bdd3865ee8", "primary_key": ["transaction_id"], "row_count": 135, "table": "transactions"}
+  ]
+}
