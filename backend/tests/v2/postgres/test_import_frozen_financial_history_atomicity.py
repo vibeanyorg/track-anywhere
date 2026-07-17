@@ -4,7 +4,12 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from backend.tests.v2.postgres.test_frozen_import_catalog import seed_target_baseline
+from backend.tests.v2.postgres.test_frozen_import_catalog import (
+    BASELINE_ACCOUNT_IDS,
+    BASELINE_ASSET_CODES,
+    _account_row,
+    seed_target_baseline,
+)
 from backend.tests.v2.postgres.test_import_frozen_financial_history import (
     _cipher,
     _fixed_synthetic_plan,
@@ -48,6 +53,73 @@ from track_anywhere.infrastructure.projections.synchronous import (
 
 class InjectedImportFailure(RuntimeError):
     pass
+
+
+@pytest.mark.parametrize("baseline_accounts", (63, 65))
+def test_wrong_exact_catalog_baseline_aborts_and_rolls_back_before_sidecars(
+    pg_engine,
+    baseline_accounts: int,
+) -> None:
+    plan = _fixed_synthetic_plan()
+    seed_target_baseline(pg_engine, plan, seed_receipt=False)
+    with pg_engine.begin() as connection:
+        if baseline_accounts == 63:
+            removed_id = next(iter(BASELINE_ACCOUNT_IDS))
+            result = connection.execute(
+                AccountRecord.__table__.delete().where(
+                    AccountRecord.book_id == plan.target_book_id,
+                    AccountRecord.account_id == removed_id,
+                )
+            )
+            assert result.rowcount == 1
+        else:
+            extra = next(
+                account
+                for account in plan.accounts
+                if account.account_id not in BASELINE_ACCOUNT_IDS
+                and account.asset_code in BASELINE_ASSET_CODES
+            )
+            connection.execute(
+                AccountRecord.__table__.insert(),
+                _account_row(plan.target_book_id, extra),
+            )
+
+    session_factory = sessionmaker(pg_engine, expire_on_commit=False)
+    with pytest.raises(
+        frozen_import.FrozenFinancialHistoryImportError,
+        match="fixed contract",
+    ):
+        frozen_import.import_frozen_financial_history(
+            plan,
+            expected_plan_hash=plan_sha256(plan),
+            raw_key="frozen-import-receipt",
+            actor=CommandActor(subject_id=FROZEN_IMPORT_ACTOR_SUBJECT_ID),
+            uow_factory=lambda: SqlAlchemyUnitOfWork(session_factory),
+            protected_content_cipher=_cipher(),
+        )
+
+    with Session(pg_engine) as session:
+        head = session.get(BookEventHeadRecord, plan.target_book_id)
+        assert head is not None
+        assert (head.last_position, head.last_hash) == (0, bytes(32))
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(AccountRecord)
+                .where(AccountRecord.book_id == plan.target_book_id)
+            )
+            == baseline_accounts
+        )
+        assert session.scalar(select(func.count()).select_from(AssetRecord)) == 16
+        for model in (
+            CategoryRecord,
+            LedgerEventRecord,
+            JournalTransactionRecord,
+            ProtectedDescriptionSidecarRecord,
+            ImportArchiveManifestRecord,
+            CommandReceiptRecord,
+        ):
+            assert session.scalar(select(func.count()).select_from(model)) == 0
 
 
 @pytest.mark.parametrize(

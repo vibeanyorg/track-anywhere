@@ -58,6 +58,12 @@ FROZEN_IMPORT_MANIFEST_HASH: Final = (
 FROZEN_IMPORT_CARD_REVIEW_HASH: Final = (
     "237f964a990018eb7fc91b9e45ba001ebb319456577f14263e3a444dc4d54430"
 )
+FROZEN_IMPORT_PLAN_HASH: Final = (
+    "c93ed8aed78918d71caab6e7178a2c4347d72b55a08dfeace1d95eeb81604ec8"
+)
+FROZEN_IMPORT_EXPECTED_TERMINAL_HASH: Final = (
+    "bcc2828422fda617df93fb2fc92e41599f0c694f9f1d502f1dcd22f4d85186fc"
+)
 
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _EXPECTED_COUNTS: Final[dict[str, int]] = {
@@ -75,6 +81,12 @@ _EXPECTED_COUNTS: Final[dict[str, int]] = {
     "reporting_lines": 38,
     "reversals": 8,
 }
+_EXPECTED_FIRST_CATALOG_RESULT: Final = FrozenImportCatalogApplyResult(
+    assets_created=4,
+    accounts_created=57,
+    categories_created=37,
+    category_versions_created=37,
+)
 
 
 class FrozenFinancialHistoryImportError(ValueError):
@@ -296,6 +308,10 @@ def _build_handler(
                 command_id=expected_command.command_id,
             ),
         )
+        if catalog_result != _EXPECTED_FIRST_CATALOG_RESULT:
+            raise FrozenFinancialHistoryImportError(
+                "frozen financial history import fixed contract is invalid"
+            )
         for content in plan.descriptions:
             content_service.create_or_exact_verify(
                 uow.session,
@@ -599,8 +615,10 @@ def _verify_card_balances(
 
 __all__ = [
     "FROZEN_IMPORT_CARD_REVIEW_HASH",
+    "FROZEN_IMPORT_EXPECTED_TERMINAL_HASH",
     "FROZEN_IMPORT_MANIFEST_HASH",
     "FROZEN_IMPORT_OPERATION",
+    "FROZEN_IMPORT_PLAN_HASH",
     "FROZEN_IMPORT_SOURCE_DUMP_HASH",
     "FROZEN_IMPORT_TARGET_BOOK_ID",
     "FrozenFinancialHistoryImportError",

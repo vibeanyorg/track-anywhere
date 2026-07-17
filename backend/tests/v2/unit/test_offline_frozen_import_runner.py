@@ -33,6 +33,24 @@ def fixture_plan_bytes(fixture_plan) -> bytes:
     return contracts.canonical_plan_bytes(fixture_plan)
 
 
+@pytest.fixture(autouse=True)
+def approve_synthetic_plan_for_hermetic_runner_tests(
+    monkeypatch: pytest.MonkeyPatch,
+    fixture_plan,
+) -> None:
+    """Keep generic unit fixtures while production remains pinned to one plan."""
+    monkeypatch.setattr(
+        runner,
+        "FROZEN_IMPORT_PLAN_HASH",
+        contracts.plan_sha256(fixture_plan),
+    )
+    monkeypatch.setattr(
+        runner,
+        "FROZEN_IMPORT_EXPECTED_TERMINAL_HASH",
+        fixture_plan.expected_terminal_hash,
+    )
+
+
 def _argv(plan_hash: str, *, target_book_id: str | None = None) -> list[str]:
     return [
         "--target-book-id",
@@ -180,8 +198,111 @@ def test_invalid_arguments_are_rejected_before_stdin_or_runtime_access(
     assert stderr.getvalue() == b'{"error":"invalid_arguments"}\n'
 
 
+def test_self_consistent_unapproved_plan_hash_is_rejected_before_stdin_or_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    fixture_plan,
+) -> None:
+    approved_hash = "c93ed8aed78918d71caab6e7178a2c4347d72b55a08dfeace1d95eeb81604ec8"
+    alternate_hash = contracts.plan_sha256(fixture_plan)
+    assert alternate_hash != approved_hash
+    monkeypatch.setattr(runner, "FROZEN_IMPORT_PLAN_HASH", approved_hash)
+
+    class UnreadableInput:
+        def read(self, _size: int) -> bytes:
+            raise AssertionError("unapproved hash must be rejected before stdin")
+
+    monkeypatch.setattr(
+        runner.ProtectedContentKeyring,
+        "from_file",
+        lambda *_args, **_kwargs: pytest.fail("keyring must remain untouched"),
+    )
+    stdout = io.BytesIO()
+    stderr = io.BytesIO()
+
+    status = runner._run(
+        _argv(alternate_hash),
+        stdin=UnreadableInput(),
+        stdout=stdout,
+        stderr=stderr,
+        environ=_environment(),
+    )
+
+    assert status == 2
+    assert stdout.getvalue() == b""
+    assert stderr.getvalue() == b'{"error":"plan_contract_mismatch"}\n'
+
+
+def test_approved_hash_argument_cannot_disguise_an_alternate_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    fixture_plan_bytes: bytes,
+) -> None:
+    approved_hash = "c93ed8aed78918d71caab6e7178a2c4347d72b55a08dfeace1d95eeb81604ec8"
+    monkeypatch.setattr(runner, "FROZEN_IMPORT_PLAN_HASH", approved_hash)
+    monkeypatch.setattr(
+        runner.ProtectedContentKeyring,
+        "from_file",
+        lambda *_args, **_kwargs: pytest.fail("keyring must remain untouched"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "create_v2_engine",
+        lambda *_args, **_kwargs: pytest.fail("engine must remain untouched"),
+    )
+
+    status, stdout, stderr = _invoke(_argv(approved_hash), fixture_plan_bytes)
+
+    assert status == 2
+    assert stdout == b""
+    assert stderr == b'{"error":"plan_contract_mismatch"}\n'
+
+
+def test_nonapproved_terminal_hash_is_rejected_before_runtime_access(
+    monkeypatch: pytest.MonkeyPatch,
+    fixture_plan,
+    fixture_plan_bytes: bytes,
+) -> None:
+    approved_hash = "c93ed8aed78918d71caab6e7178a2c4347d72b55a08dfeace1d95eeb81604ec8"
+    approved_terminal = (
+        "bcc2828422fda617df93fb2fc92e41599f0c694f9f1d502f1dcd22f4d85186fc"
+    )
+    monkeypatch.setattr(runner, "FROZEN_IMPORT_PLAN_HASH", approved_hash)
+    monkeypatch.setattr(
+        runner,
+        "FROZEN_IMPORT_EXPECTED_TERMINAL_HASH",
+        approved_terminal,
+    )
+    monkeypatch.setattr(runner, "plan_sha256", lambda _plan: approved_hash)
+    monkeypatch.setattr(
+        runner,
+        "build_frozen_financial_history_command",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            counts=tuple(
+                sorted(contracts.plan_summary(fixture_plan)["counts"].items())
+            ),
+            expected_terminal_hash="a" * 64,
+        ),
+    )
+    monkeypatch.setattr(
+        runner.ProtectedContentKeyring,
+        "from_file",
+        lambda *_args, **_kwargs: pytest.fail("keyring must remain untouched"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "create_v2_engine",
+        lambda *_args, **_kwargs: pytest.fail("engine must remain untouched"),
+    )
+
+    status, stdout, stderr = _invoke(_argv(approved_hash), fixture_plan_bytes)
+
+    assert status == 2
+    assert stdout == b""
+    assert stderr == b'{"error":"plan_contract_mismatch"}\n'
+
+
 def test_stdin_is_read_with_max_plus_one_and_oversize_is_rejected_before_parse(
     monkeypatch: pytest.MonkeyPatch,
+    fixture_plan,
 ) -> None:
     requested: list[int] = []
 
@@ -199,7 +320,7 @@ def test_stdin_is_read_with_max_plus_one_and_oversize_is_rejected_before_parse(
     stderr = io.BytesIO()
 
     status = runner._run(
-        _argv("0" * 64),
+        _argv(contracts.plan_sha256(fixture_plan)),
         stdin=OversizedInput(),
         stdout=stdout,
         stderr=stderr,
@@ -273,7 +394,7 @@ def test_chunked_valid_stdin_is_read_to_eof_before_runtime_configuration(
     assert stderr.getvalue() == b'{"error":"runtime_configuration_invalid"}\n'
 
 
-def test_chunked_oversize_and_midstream_read_failure_are_safe() -> None:
+def test_chunked_oversize_and_midstream_read_failure_are_safe(fixture_plan) -> None:
     cases = (
         (
             iter((b"x" * runner.MAX_STDIN_BYTES, b"x")),
@@ -293,7 +414,7 @@ def test_chunked_oversize_and_midstream_read_failure_are_safe() -> None:
         stdout = io.BytesIO()
         stderr = io.BytesIO()
         status = runner._run(
-            _argv("0" * 64),
+            _argv(contracts.plan_sha256(fixture_plan)),
             stdin=FailingInput(),
             stdout=stdout,
             stderr=stderr,

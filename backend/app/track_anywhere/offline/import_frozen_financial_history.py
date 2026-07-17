@@ -17,6 +17,8 @@ from ..application.imports.contracts import (
     plan_sha256,
 )
 from ..application.imports.import_frozen_financial_history import (
+    FROZEN_IMPORT_EXPECTED_TERMINAL_HASH,
+    FROZEN_IMPORT_PLAN_HASH,
     FROZEN_IMPORT_TARGET_BOOK_ID,
     build_frozen_financial_history_command,
     import_frozen_financial_history,
@@ -128,6 +130,8 @@ def _parse_arguments(argv: Sequence[str]) -> tuple[str, str]:
         or _HEX_SHA256.fullmatch(expected_plan_hash) is None
     ):
         raise _RunnerFailure("invalid_arguments")
+    if not hmac.compare_digest(expected_plan_hash, FROZEN_IMPORT_PLAN_HASH):
+        raise _RunnerFailure("plan_contract_mismatch")
     return target_book_id, expected_plan_hash
 
 
@@ -244,6 +248,11 @@ def _execute(
             plan,
             expected_plan_hash=expected_plan_hash,
         )
+        if not hmac.compare_digest(
+            command.expected_terminal_hash,
+            FROZEN_IMPORT_EXPECTED_TERMINAL_HASH,
+        ):
+            raise ValueError
         expected_counts = dict(command.counts)
     except (TypeError, ValueError):
         raise _RunnerFailure("plan_contract_mismatch") from None
