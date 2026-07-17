@@ -170,10 +170,11 @@ def test_account_uuid_aggregate_protocol_is_hash_only_and_source_book_bound() ->
     assert len(ACCOUNT_UUID_MAP_SHA256) == 64
 
 
-def test_global_source_contract_blocks_rows_hidden_by_book_filter() -> None:
-    counts = {
+def _fixed_source_contract_row() -> dict[str, object]:
+    return {
         "source_revision": "0019_posting_constraints",
-        "attachments_relation": None,
+        "attachments_relation": "attachments",
+        "attachments_count": 0,
         **{
             f"{spec.table}_count": {
                 "accounts": 121,
@@ -197,7 +198,34 @@ def test_global_source_contract_blocks_rows_hidden_by_book_filter() -> None:
             if spec.book_scoped
         },
     }
-    validate_source_contract(counts)
+
+
+def test_global_source_contract_accepts_the_existing_empty_attachments_table() -> None:
+    counts = _fixed_source_contract_row()
+
+    assert validate_source_contract(counts) == 0
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        {"attachments_count": 1},
+        {"attachments_count": False},
+        {"attachments_relation": None},
+        {"attachments_relation": "public.attachments"},
+    ),
+)
+def test_global_source_contract_blocks_attachment_shape_or_content_drift(
+    mutation: dict[str, object],
+) -> None:
+    counts = {**_fixed_source_contract_row(), **mutation}
+
+    with pytest.raises(ValueError, match="global source contract"):
+        validate_source_contract(counts)
+
+
+def test_global_source_contract_blocks_rows_hidden_by_book_filter() -> None:
+    counts = _fixed_source_contract_row()
     counts["postings_count"] = 285
     counts["postings_foreign_count"] = 1
     with pytest.raises(ValueError, match="global source contract"):

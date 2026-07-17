@@ -9,7 +9,7 @@ import hashlib
 import random
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from sqlalchemy import Connection, create_engine, text
@@ -431,10 +431,11 @@ def validate_source_url(source_url: str) -> None:
         raise ValueError("source URL must use postgresql+psycopg with a database")
 
 
-def validate_source_contract(row: Mapping[str, object]) -> None:
+def validate_source_contract(row: Mapping[str, object]) -> int:
     expected_keys = {
         "source_revision",
         "attachments_relation",
+        "attachments_count",
         *(f"{spec.table}_count" for spec in TABLE_SPECS),
         *(
             f"{spec.table}_foreign_count"
@@ -444,7 +445,9 @@ def validate_source_contract(row: Mapping[str, object]) -> None:
     }
     valid = set(row) == expected_keys
     valid = valid and row.get("source_revision") == EXPECTED_SOURCE_REVISION
-    valid = valid and row.get("attachments_relation") is None
+    valid = valid and row.get("attachments_relation") == "attachments"
+    attachments_count = row.get("attachments_count")
+    valid = valid and type(attachments_count) is int and attachments_count == 0
     for spec in TABLE_SPECS:
         value = row.get(f"{spec.table}_count")
         valid = (
@@ -457,6 +460,7 @@ def validate_source_contract(row: Mapping[str, object]) -> None:
             valid = valid and type(foreign) is int and foreign == 0
     if not valid:
         raise ValueError("global source contract does not match the fixed snapshot")
+    return cast(int, attachments_count)
 
 
 def load_source_contract_sql() -> str:
@@ -598,7 +602,7 @@ def extract_fixed_source(
                 )
                 if len(contract_rows) != 1:
                     raise ValueError("global source contract query returned invalid rows")
-                validate_source_contract(contract_rows[0])
+                attachments_count = validate_source_contract(contract_rows[0])
                 for table in schedule:
                     if table == "ledger_books":
                         continue
@@ -631,7 +635,7 @@ def extract_fixed_source(
         tables=MappingProxyType(
             {table.table: table for table in sorted(frozen_tables, key=lambda t: t.table)}
         ),
-        attachments_count=0,
+        attachments_count=attachments_count,
     )
     verify_frozen_source_rows(result)
     return result

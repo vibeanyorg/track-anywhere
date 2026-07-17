@@ -1,6 +1,7 @@
 SELECT
     (SELECT version_num FROM public.alembic_version) AS source_revision,
     CAST(to_regclass('public.attachments') AS text) AS attachments_relation,
+    (SELECT count(*) FROM public.attachments) AS attachments_count,
     (SELECT count(*) FROM public.accounts) AS accounts_count,
     (SELECT count(*) FROM public.accounts WHERE book_id IS DISTINCT FROM :source_book_id) AS accounts_foreign_count,
     (SELECT count(*) FROM public.assets) AS assets_count,
