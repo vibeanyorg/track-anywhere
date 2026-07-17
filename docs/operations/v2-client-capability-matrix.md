@@ -29,6 +29,8 @@ Status meanings:
 | Investment lot acquire/dispose | Implemented | Book-scoped lot command routes |
 | OAuth status, logout, refresh, device, and PKCE login | Implemented | OAuth discovery first; authorization-code + S256 PKCE is the interactive default and device flow is explicit |
 | Machine API key | Implemented | `--api-key-file` sends only `X-API-Key`; env use requires `--insecure-automation`; `--token` is OAuth-only |
+| Protected descriptions and import archive list/export | Implemented | Owner-authorized explicit reads; archive export decrypts only on explicit request and has no MCP fallback |
+| Frozen V1 financial-history apply | Removed | Operator-only one-shot process; there is no client command, HTTP route, MCP tool, or general import fallback. See the [runbook](v1-financial-backfill.md). |
 | Local version, schema, and capability output | Implemented | Local CLI metadata; no server fallback |
 | Payment instruments and payment profiles | Removed | No V2 route or CLI command group |
 | Recurring items, reminders, and draft generation | Removed | No V2 route or CLI command group |
@@ -64,3 +66,7 @@ silently maps an unsupported command to another operation.
 - Contract tests provision a fresh migrated PostgreSQL 17 database and install
   its runtime-role URL before app construction. SQLite is not a supported test
   substitute for the V2 contract.
+- The frozen historical import is an offline, hash-pinned one-shot operation
+  described in the [operator runbook](v1-financial-backfill.md). Clients can
+  read the resulting V2 ledger and owner-authorized archive, but cannot invoke
+  or generalize the importer.

@@ -22,6 +22,8 @@ Internet -> Dokploy Traefik -> Track Anywhere :8000 -> PostgreSQL 17
   not services.
 - No application volume, public database port, Node.js runtime, cache, queue, or
   separate worker service is required.
+- ClamAV is not used, and there is no separate port 3000 web service. FastAPI
+  serves the static export and all public protocols on port 8000.
 
 Dokploy recommends building production images in CI and deploying the
 prebuilt image. Pin a commit tag or digest; do not deploy `latest`.
@@ -109,7 +111,17 @@ TRACK_ANYWHERE_DATABASE_URL=postgresql+psycopg://track_anywhere_runtime:<url-enc
 TRACK_ANYWHERE_PUBLIC_BASE_URL=https://ledger.example.com
 TRACK_ANYWHERE_ALLOWED_ORIGINS=https://ledger.example.com
 TRACK_ANYWHERE_PROJECTION_POLL_SECONDS=2
+TRACK_ANYWHERE_PROTECTED_CONTENT_KEYRING_FILE=/run/secrets/track-anywhere-protected-content-keyring.json
 ```
+
+Create `/etc/track-anywhere/protected-content-keyring.json` outside the
+checkout, owned by the numeric runtime UID and readable only by that owner
+(`0400` or `0600`). Configure a read-only bind mount from that host path to
+`/run/secrets/track-anywhere-protected-content-keyring.json`. Store only this
+fixed path in the Application environment. Never store a raw or base64-encoded
+master key in Dokploy environment variables, Compose, logs, or the repository.
+Back up the keyring and its recovery instructions separately from PostgreSQL;
+do not print its content while validating the mount.
 
 In Domains, attach the public hostname to port 8000 and let Dokploy/Traefik
 manage HTTPS. Do not add a host `ports:` mapping. In Advanced/Swarm settings,
@@ -147,6 +159,21 @@ projection supervisor in the FastAPI lifespan. A rolling overlap is safe, but
 one Application replica is sufficient for a personal deployment. Never replace
 the image command with `track_anywhere.api.app:app`, because that API-only
 composition root intentionally has no static site, MCP, or projection runtime.
+
+## One-time frozen financial-history job
+
+The optional `frozen-v1-backfill` Compose profile is a private, disposable job
+using the exact same immutable API image, runtime DSN, and read-only keyring
+mount as the Application. It has no public port and is never a long-running
+Dokploy service. Do not add it as another Application or expose it through
+Traefik.
+
+Follow [the frozen V1 financial-history runbook](v1-financial-backfill.md) and
+its separate production-authorization gate. The runbook requires a validated
+backup/fresh PostgreSQL 17 restore, two-target rehearsal, maintenance write
+block, stdin-only atomic apply, independent verification, and restore-and-switch
+recovery. The profile must not be run merely because it exists in the Compose
+file.
 
 ## 4. Use an ACL-preserving S3/R2 archive
 

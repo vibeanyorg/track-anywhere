@@ -1,14 +1,30 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[4]
+PROTECTED_CONTENT_KEYRING_PATH = (
+    "/run/secrets/track-anywhere-protected-content-keyring.json"
+)
+PROTECTED_CONTENT_KEYRING_HOST_PATH = (
+    "/etc/track-anywhere/protected-content-keyring.json"
+)
 
 
 def _read(relative_path: str) -> str:
     return (ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def _production_service(compose: str, name: str) -> str:
+    match = re.search(
+        rf"(?ms)^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+        compose,
+    )
+    assert match is not None, f"missing production service: {name}"
+    return match.group("body")
 
 
 def test_runtime_image_contains_the_static_export_without_a_node_server() -> None:
@@ -58,6 +74,70 @@ def test_production_compose_has_one_application_and_no_zombie_services() -> None
     assert "TRACK_ANYWHERE_WEB_IMAGE" not in compose
     assert "TRACK_ANYWHERE_CLAMAV" not in compose
     assert ":3000" not in compose
+
+
+def test_production_api_and_frozen_runner_share_a_fixed_read_only_keyring() -> None:
+    compose = _read("compose.prod.yaml")
+    runtime = _read("deploy/env/prod.env.example")
+    api = _production_service(compose, "api")
+    runner = _production_service(compose, "frozen-v1-backfill")
+    immutable_image = (
+        "image: ${TRACK_ANYWHERE_IMAGE:?TRACK_ANYWHERE_IMAGE must be an "
+        "immutable image reference}"
+    )
+
+    assert (
+        runtime.count(
+            f"TRACK_ANYWHERE_PROTECTED_CONTENT_KEYRING_FILE={PROTECTED_CONTENT_KEYRING_PATH}"
+        )
+        == 1
+    )
+    assert "TRACK_ANYWHERE_PROTECTED_CONTENT_KEY=" not in runtime
+    assert "TRACK_ANYWHERE_PROTECTED_CONTENT_MASTER_KEY=" not in runtime
+    configured_protected_content_variables = set(
+        re.findall(
+            r"\b(TRACK_ANYWHERE_PROTECTED_CONTENT_[A-Z0-9_]+)\s*[=:]",
+            runtime + compose,
+        )
+    )
+    assert configured_protected_content_variables == {
+        "TRACK_ANYWHERE_PROTECTED_CONTENT_KEYRING_FILE"
+    }
+    for service in (api, runner):
+        assert immutable_image in service
+        assert (
+            "TRACK_ANYWHERE_PROTECTED_CONTENT_KEYRING_FILE: "
+            f"{PROTECTED_CONTENT_KEYRING_PATH}"
+        ) in service
+        assert f"source: {PROTECTED_CONTENT_KEYRING_HOST_PATH}" in service
+        assert f"target: {PROTECTED_CONTENT_KEYRING_PATH}" in service
+        assert "read_only: true" in service
+        assert "create_host_path: false" in service
+        assert "TRACK_ANYWHERE_PROTECTED_CONTENT_KEY:" not in service
+        assert "TRACK_ANYWHERE_PROTECTED_CONTENT_MASTER_KEY:" not in service
+
+    assert compose.count(f"source: {PROTECTED_CONTENT_KEYRING_HOST_PATH}") == 2
+
+
+def test_frozen_history_runner_is_private_one_shot_and_stdin_only() -> None:
+    compose = _read("compose.prod.yaml")
+    runner = _production_service(compose, "frozen-v1-backfill")
+
+    assert 'profiles: ["frozen-v1-backfill"]' in runner
+    assert "${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}" in runner
+    assert "python" in runner
+    assert "track_anywhere.offline.import_frozen_financial_history" in runner
+    assert '"--stdin"' in runner
+    assert '"--target-book-id"' in runner
+    assert '"a682ddd2-f26a-5ad1-8f0a-f2fc1f75fa3d"' in runner
+    assert '"--plan-sha256"' in runner
+    assert (
+        '"c93ed8aed78918d71caab6e7178a2c4347d72b55a08dfeace1d95eeb81604ec8"' in runner
+    )
+    assert 'restart: "no"' in runner
+    assert "ports:" not in runner
+    assert "build:" not in runner
+    assert compose.count("\n    ports:") == 1
 
 
 def test_local_compose_runs_postgres_migration_and_the_single_application() -> None:

@@ -10,6 +10,11 @@ The scope named by each implemented row is exact. For example, Book membership
 means atomic owner membership at Book creation plus membership authorization;
 it does not imply an invitation or membership-administration API.
 
+The sole historical-data exception is the hash-pinned, private one-shot process
+documented in the [frozen V1 backfill runbook](v1-financial-backfill.md). It is
+an operator-only release procedure, not a reachable V1 runtime or client
+capability.
+
 | Capability | Status | Owner | Test | Evidence | Reason |
 | --- | --- | --- | --- | --- | --- |
 | Auth | implemented | V2 platform | [V2 auth API contract](../../backend/tests/v2/contract/test_v2_auth_api.py) | [persistent V2 auth router](../../backend/app/track_anywhere/api/v2/auth.py) | — |
@@ -32,12 +37,14 @@ it does not imply an invitation or membership-administration API.
 | Attachments | deferred | — | — | — | Event privacy forbids attachment content and no V2 object-storage, metadata, authorization, or retention contract exists. |
 | Recurring rules | removed | — | — | — | V1 recurring schedulers and generated drafts are intentionally absent; any future rules engine needs a new event contract. |
 | Payment instruments and tools | removed | — | — | — | V1 payment-profile and payment-instrument helpers are not ledger primitives and have no V2 fallback. This does not remove the typed credit-card liability operations implemented under Journal. |
-| Backup and restore | deferred | — | — | — | The V1 client-side SQLite backup command is removed; PostgreSQL backup and restore require a separately validated operations runbook. |
+| Backup and restore | implemented | V2 operations | [single-service deployment contract](../../backend/tests/v2/unit/test_single_service_deployment.py) | [ACL-preserving backup](../../scripts/backup-postgres-s3.sh), [fresh-target restore](../../scripts/restore-postgres-s3.sh), and [Dokploy/frozen backfill operations](dokploy-deploy.md) | Scope is ACL-preserving PostgreSQL backup, fresh-target restore-and-switch recovery, and the single hash-pinned one-shot import; there is no client-side SQLite backup or general V1 migration API. |
 | System and operations configuration | implemented | V2 operations | [PG17 readiness and identity tests](../../backend/tests/v2/postgres/test_v2_readiness.py) | [fail-closed V2 system router](../../backend/app/track_anywhere/api/v2/system.py) | Scope is health, exact PG17 readiness, schema head, and non-owner runtime identity validation. |
 
 ## Retirement rule
 
 Only rows marked `implemented` may retain reachable V2 runtime code. Deferred
 and removed rows must have no hidden V1 route, adapter, SQLite fallback, or CLI
-network call. Current HEAD has no historical import implementation; adding one
-later requires a new reviewed capability row and executable contract.
+network call. The frozen financial-history importer is deliberately unreachable
+from the public runtime and accepts only the reviewed plan on stdin through its
+one-shot profile. Any other historical import requires a new reviewed
+capability row and executable contract.

@@ -8,7 +8,15 @@ services:
       - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
     environment:
       TRACK_ANYWHERE_MODE: production
+      TRACK_ANYWHERE_PROTECTED_CONTENT_KEYRING_FILE: /run/secrets/track-anywhere-protected-content-keyring.json
       PYTHONUNBUFFERED: "1"
+    volumes:
+      - type: bind
+        source: /etc/track-anywhere/protected-content-keyring.json
+        target: /run/secrets/track-anywhere-protected-content-keyring.json
+        read_only: true
+        bind:
+          create_host_path: false
     ports:
       - "${TRACK_ANYWHERE_PROD_API_BIND:-127.0.0.1}:${TRACK_ANYWHERE_PROD_API_PORT:-8000}:8000"
     read_only: true
@@ -30,6 +38,40 @@ services:
       TRACK_ANYWHERE_MODE: production
       PYTHONUNBUFFERED: "1"
     command: ["python", "-m", "alembic", "upgrade", "head"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  frozen-v1-backfill:
+    image: ${TRACK_ANYWHERE_IMAGE:?TRACK_ANYWHERE_IMAGE must be an immutable image reference}
+    profiles: ["frozen-v1-backfill"]
+    env_file:
+      - ${TRACK_ANYWHERE_PROD_ENV_FILE:-deploy/env/prod.env}
+    environment:
+      TRACK_ANYWHERE_MODE: production
+      TRACK_ANYWHERE_PROTECTED_CONTENT_KEYRING_FILE: /run/secrets/track-anywhere-protected-content-keyring.json
+      PYTHONUNBUFFERED: "1"
+    command:
+      - "python"
+      - "-m"
+      - "track_anywhere.offline.import_frozen_financial_history"
+      - "--stdin"
+      - "--target-book-id"
+      - "a682ddd2-f26a-5ad1-8f0a-f2fc1f75fa3d"
+      - "--plan-sha256"
+      - "c93ed8aed78918d71caab6e7178a2c4347d72b55a08dfeace1d95eeb81604ec8"
+    volumes:
+      - type: bind
+        source: /etc/track-anywhere/protected-content-keyring.json
+        target: /run/secrets/track-anywhere-protected-content-keyring.json
+        read_only: true
+        bind:
+          create_host_path: false
     read_only: true
     tmpfs:
       - /tmp
