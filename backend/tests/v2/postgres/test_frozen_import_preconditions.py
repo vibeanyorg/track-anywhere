@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import event, func, select, text
+from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.orm import Session
 
 from backend.tests.v2.imports._plan_factory import (
@@ -13,9 +13,10 @@ from backend.tests.v2.imports._plan_factory import (
 )
 from backend.tests.v2.postgres.test_frozen_import_catalog import (
     BASELINE_ACCOUNT_IDS,
-    apply_full_catalog,
     processing_receipt,
+    seed_full_catalog,
     seed_target_baseline,
+    stage_processing_receipt,
 )
 from track_anywhere.application.event_batch import PendingEvent
 from track_anywhere.application.imports.contracts import FrozenFinancialHistoryPlan
@@ -54,56 +55,101 @@ def _assert_preflight_drift(
     entity_kind: str,
     field_name: str,
     receipt: ProcessingReceiptIdentity | None = None,
+    staged_receipt: ProcessingReceiptIdentity | None = None,
+    extra_receipts: tuple[ProcessingReceiptIdentity, ...] = (),
+    stage_receipt: bool = True,
 ) -> FrozenImportCatalogDrift:
-    with Session(pg_engine) as session, session.begin():
-        before = (
-            session.scalar(select(func.count()).select_from(AssetRecord)),
-            session.scalar(
-                select(func.count())
-                .select_from(AccountRecord)
-                .where(AccountRecord.book_id == plan.target_book_id)
-            ),
-            session.scalar(
-                select(func.count())
-                .select_from(CategoryRecord)
-                .where(CategoryRecord.book_id == plan.target_book_id)
-            ),
-        )
-        with pytest.raises(FrozenImportCatalogDrift) as caught:
-            FrozenImportCatalogRepository(session).apply_exact_catalog(
-                plan,
-                current_receipt=receipt or processing_receipt(plan),
+    with Session(pg_engine) as session:
+        transaction = session.begin()
+        try:
+            if stage_receipt:
+                stage_processing_receipt(
+                    session,
+                    plan,
+                    receipt=staged_receipt or processing_receipt(plan),
+                )
+            for index, extra in enumerate(extra_receipts, start=1):
+                stage_processing_receipt(
+                    session,
+                    plan,
+                    receipt=extra,
+                    idempotency_key_hash=bytes([index]) * 32,
+                )
+            before = (
+                session.scalar(select(func.count()).select_from(AssetRecord)),
+                session.scalar(
+                    select(func.count())
+                    .select_from(AccountRecord)
+                    .where(AccountRecord.book_id == plan.target_book_id)
+                ),
+                session.scalar(
+                    select(func.count())
+                    .select_from(CategoryRecord)
+                    .where(CategoryRecord.book_id == plan.target_book_id)
+                ),
             )
-        after = (
-            session.scalar(select(func.count()).select_from(AssetRecord)),
-            session.scalar(
-                select(func.count())
-                .select_from(AccountRecord)
-                .where(AccountRecord.book_id == plan.target_book_id)
-            ),
-            session.scalar(
-                select(func.count())
-                .select_from(CategoryRecord)
-                .where(CategoryRecord.book_id == plan.target_book_id)
-            ),
-        )
-        assert before == after
-        assert not session.new
-        assert caught.value.entity_kind == entity_kind
-        assert caught.value.field_name == field_name
-        return caught.value
+            with pytest.raises(FrozenImportCatalogDrift) as caught:
+                FrozenImportCatalogRepository(session).apply_exact_catalog(
+                    plan,
+                    current_receipt=receipt or processing_receipt(plan),
+                )
+            after = (
+                session.scalar(select(func.count()).select_from(AssetRecord)),
+                session.scalar(
+                    select(func.count())
+                    .select_from(AccountRecord)
+                    .where(AccountRecord.book_id == plan.target_book_id)
+                ),
+                session.scalar(
+                    select(func.count())
+                    .select_from(CategoryRecord)
+                    .where(CategoryRecord.book_id == plan.target_book_id)
+                ),
+            )
+            assert before == after
+            assert not session.new
+            assert caught.value.entity_kind == entity_kind
+            assert caught.value.field_name == field_name
+            return caught.value
+        finally:
+            if transaction.is_active:
+                transaction.rollback()
+
+
+def _force_out_of_band_drift(
+    migrated_postgres_database,
+    *,
+    table_name: str,
+    statement: str,
+    parameters: dict[str, object],
+) -> None:
+    assert table_name in {"accounts", "assets", "book_event_heads"}
+    admin_engine = create_engine(migrated_postgres_database.admin_url)
+    try:
+        with admin_engine.begin() as connection:
+            connection.exec_driver_sql(
+                f'alter table public."{table_name}" disable trigger user'
+            )
+            connection.execute(text(statement), parameters)
+            connection.exec_driver_sql(
+                f'alter table public."{table_name}" enable trigger user'
+            )
+    finally:
+        admin_engine.dispose()
 
 
 @pytest.mark.parametrize(
-    ("update_sql", "parameters", "entity_kind", "field_name"),
+    ("table_name", "update_sql", "parameters", "entity_kind", "field_name"),
     (
         (
+            "assets",
             "update assets set ledger_scale=3 where asset_code='T00'",
             {},
             "asset",
             "ledger_scale",
         ),
         (
+            "accounts",
             "update accounts set account_type='liability' "
             "where book_id=:book_id and account_id=:account_id",
             {"account_id": fixture_id(1005)},
@@ -111,6 +157,7 @@ def _assert_preflight_drift(
             "account_type",
         ),
         (
+            "accounts",
             "update accounts set status='closed' "
             "where book_id=:book_id and account_id=:account_id",
             {"account_id": next(iter(BASELINE_ACCOUNT_IDS))},
@@ -121,6 +168,8 @@ def _assert_preflight_drift(
 )
 def test_asset_and_account_accounting_drift_aborts_before_writes(
     pg_engine,
+    migrated_postgres_database,
+    table_name: str,
     update_sql: str,
     parameters: dict[str, object],
     entity_kind: str,
@@ -128,11 +177,12 @@ def test_asset_and_account_accounting_drift_aborts_before_writes(
 ) -> None:
     plan = build_valid_fixture_plan()
     seed_target_baseline(pg_engine, plan)
-    with pg_engine.begin() as connection:
-        connection.execute(
-            text(update_sql),
-            {"book_id": plan.target_book_id, **parameters},
-        )
+    _force_out_of_band_drift(
+        migrated_postgres_database,
+        table_name=table_name,
+        statement=update_sql,
+        parameters={"book_id": plan.target_book_id, **parameters},
+    )
 
     _assert_preflight_drift(
         pg_engine,
@@ -275,7 +325,10 @@ def test_unexpected_asset_account_or_category_aborts(pg_engine) -> None:
     assert drift.entity_id == unexpected_id
 
 
-def test_inactive_book_and_nonzero_head_abort(pg_engine) -> None:
+def test_inactive_book_and_nonzero_head_abort(
+    pg_engine,
+    migrated_postgres_database,
+) -> None:
     plan = build_valid_fixture_plan()
     seed_target_baseline(pg_engine, plan)
     with pg_engine.begin() as connection:
@@ -295,13 +348,15 @@ def test_inactive_book_and_nonzero_head_abort(pg_engine) -> None:
             text("update books set write_state='active' where book_id=:id"),
             {"id": plan.target_book_id},
         )
-        connection.execute(
-            text(
-                "update book_event_heads set last_position=1, last_hash=:hash "
-                "where book_id=:id"
-            ),
-            {"id": plan.target_book_id, "hash": b"h" * 32},
-        )
+    _force_out_of_band_drift(
+        migrated_postgres_database,
+        table_name="book_event_heads",
+        statement=(
+            "update book_event_heads set last_position=1, last_hash=:hash "
+            "where book_id=:id"
+        ),
+        parameters={"id": plan.target_book_id, "hash": b"h" * 32},
+    )
     _assert_preflight_drift(
         pg_engine,
         plan,
@@ -323,44 +378,33 @@ def test_only_the_exact_current_processing_receipt_is_allowed(pg_engine) -> None
         plan,
         entity_kind="receipt",
         field_name="current_processing",
-        receipt=wrong,
+        staged_receipt=wrong,
     )
 
-    with pg_engine.begin() as connection:
-        connection.execute(
-            text(
-                "insert into command_receipts ("
-                "actor_subject_id, book_id, operation, idempotency_key_hash, "
-                "request_hash, command_id, status"
-                ") values ("
-                "'offline:other', :book_id, 'other.operation', :key_hash, "
-                ":request_hash, :command_id, 'processing'"
-                ")"
-            ),
-            {
-                "book_id": plan.target_book_id,
-                "key_hash": b"x" * 32,
-                "request_hash": b"y" * 32,
-                "command_id": uuid4(),
-            },
-        )
+    other = ProcessingReceiptIdentity(
+        actor_subject_id="offline:other",
+        operation="other.operation",
+        command_id=uuid4(),
+    )
     _assert_preflight_drift(
         pg_engine,
         plan,
         entity_kind="receipt",
         field_name="current_processing",
+        extra_receipts=(other,),
     )
 
 
 def test_missing_current_processing_receipt_aborts(pg_engine) -> None:
     plan = build_valid_fixture_plan()
-    seed_target_baseline(pg_engine, plan, seed_receipt=False)
+    seed_target_baseline(pg_engine, plan)
 
     _assert_preflight_drift(
         pg_engine,
         plan,
         entity_kind="receipt",
         field_name="current_processing",
+        stage_receipt=False,
     )
 
 
@@ -488,7 +532,7 @@ def _append(
 def test_journal_and_reporting_occupancy_abort_with_specific_table(pg_engine) -> None:
     plan = build_valid_fixture_plan()
     seed_target_baseline(pg_engine, plan)
-    apply_full_catalog(pg_engine, plan)
+    seed_full_catalog(pg_engine, plan)
     posted = _pending_standard(plan)
     _append(pg_engine, plan, (posted,))
     _assert_preflight_drift(
@@ -538,8 +582,12 @@ def test_journal_and_reporting_occupancy_abort_with_specific_table(pg_engine) ->
 def test_typed_card_occupancy_aborts_with_specific_table(pg_engine) -> None:
     plan = build_valid_fixture_plan()
     seed_target_baseline(pg_engine, plan)
-    apply_full_catalog(pg_engine, plan)
-    card = plan.accounts[0]
+    seed_full_catalog(pg_engine, plan)
+    card = next(
+        account
+        for account in plan.accounts
+        if account.account_subtype == "credit_card" and not account.close_after_import
+    )
     counter = plan.accounts[5]
     transaction_id = uuid4()
     pending = PendingEvent(
@@ -592,7 +640,7 @@ def test_typed_card_occupancy_aborts_with_specific_table(pg_engine) -> None:
 def test_preflight_rejects_nonzero_retired_alias_target_balance(pg_engine) -> None:
     plan = build_valid_fixture_plan()
     seed_target_baseline(pg_engine, plan)
-    apply_full_catalog(pg_engine, plan)
+    seed_full_catalog(pg_engine, plan)
     alias = next(account for account in plan.accounts if account.close_after_import)
     assert alias.expected_natural_units == 0
 
@@ -658,15 +706,18 @@ def test_drift_path_never_autoflushes_or_stages_catalog_rows(pg_engine) -> None:
         nonlocal flushes
         flushes += 1
 
-    with Session(pg_engine) as session, session.begin():
+    with Session(pg_engine) as session:
+        transaction = session.begin()
         event.listen(session, "before_flush", count_flushes)
         try:
+            receipt = stage_processing_receipt(session, plan)
             with pytest.raises(FrozenImportCatalogDrift):
                 FrozenImportCatalogRepository(session).apply_exact_catalog(
                     plan,
-                    current_receipt=processing_receipt(plan),
+                    current_receipt=receipt,
                 )
             assert flushes == 0
             assert not session.new
         finally:
             event.remove(session, "before_flush", count_flushes)
+            transaction.rollback()

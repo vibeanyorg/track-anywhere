@@ -114,12 +114,72 @@ def processing_receipt(plan: FrozenFinancialHistoryPlan) -> ProcessingReceiptIde
     )
 
 
+def stage_processing_receipt(
+    session,
+    plan: FrozenFinancialHistoryPlan,
+    *,
+    receipt: ProcessingReceiptIdentity | None = None,
+    idempotency_key_hash: bytes = b"k" * 32,
+) -> ProcessingReceiptIdentity:
+    selected = receipt or processing_receipt(plan)
+    session.execute(
+        text(
+            "insert into command_receipts ("
+            "actor_subject_id, book_id, operation, idempotency_key_hash, "
+            "request_hash, command_id, status"
+            ") values ("
+            ":actor_subject_id, :book_id, :operation, :key_hash, "
+            ":request_hash, :command_id, 'processing'"
+            ")"
+        ),
+        {
+            "actor_subject_id": selected.actor_subject_id,
+            "book_id": plan.target_book_id,
+            "operation": selected.operation,
+            "key_hash": idempotency_key_hash,
+            "request_hash": b"r" * 32,
+            "command_id": selected.command_id,
+        },
+    )
+    return selected
+
+
+def complete_processing_receipt(
+    session,
+    plan: FrozenFinancialHistoryPlan,
+    *,
+    receipt: ProcessingReceiptIdentity | None = None,
+) -> None:
+    selected = receipt or processing_receipt(plan)
+    result = session.execute(
+        text(
+            "update command_receipts set "
+            "status='completed', response_schema_version=1, result_status=200, "
+            "result_body='{}'::jsonb, completed_at=clock_timestamp() "
+            "where actor_subject_id=:actor_subject_id and book_id=:book_id "
+            "and operation=:operation and command_id=:command_id "
+            "and status='processing'"
+        ),
+        {
+            "actor_subject_id": selected.actor_subject_id,
+            "book_id": plan.target_book_id,
+            "operation": selected.operation,
+            "command_id": selected.command_id,
+        },
+    )
+    assert result.rowcount == 1
+
+
 def seed_target_baseline(
     pg_engine,
     plan: FrozenFinancialHistoryPlan,
     *,
-    seed_receipt: bool = True,
+    seed_receipt: bool = False,
 ) -> None:
+    if seed_receipt:
+        raise AssertionError(
+            "a processing receipt cannot be committed as baseline data"
+        )
     baseline_assets = tuple(
         _asset_row(asset)
         for asset in plan.assets
@@ -153,39 +213,58 @@ def seed_target_baseline(
             {"book_id": plan.target_book_id, "zero_hash": bytes(32)},
         )
         connection.execute(AccountRecord.__table__.insert(), baseline_accounts)
-        if seed_receipt:
-            receipt = processing_receipt(plan)
-            connection.execute(
-                text(
-                    "insert into command_receipts ("
-                    "actor_subject_id, book_id, operation, idempotency_key_hash, "
-                    "request_hash, command_id, status"
-                    ") values ("
-                    ":actor_subject_id, :book_id, :operation, :key_hash, "
-                    ":request_hash, :command_id, 'processing'"
-                    ")"
-                ),
-                {
-                    "actor_subject_id": receipt.actor_subject_id,
-                    "book_id": plan.target_book_id,
-                    "operation": receipt.operation,
-                    "key_hash": b"k" * 32,
-                    "request_hash": b"r" * 32,
-                    "command_id": receipt.command_id,
-                },
-            )
 
 
 def apply_full_catalog(pg_engine, plan: FrozenFinancialHistoryPlan) -> None:
     with Session(pg_engine) as session, session.begin():
+        receipt = stage_processing_receipt(session, plan)
         result = FrozenImportCatalogRepository(session).apply_exact_catalog(
             plan,
-            current_receipt=processing_receipt(plan),
+            current_receipt=receipt,
         )
         assert result.assets_created == 4
         assert result.accounts_created == 57
         assert result.categories_created == 37
         assert result.category_versions_created == 37
+        complete_processing_receipt(session, plan, receipt=receipt)
+
+
+def seed_full_catalog(pg_engine, plan: FrozenFinancialHistoryPlan) -> None:
+    missing_assets = tuple(
+        _asset_row(asset)
+        for asset in plan.assets
+        if asset.asset_code not in BASELINE_ASSET_CODES
+    )
+    missing_accounts = tuple(
+        _account_row(plan.target_book_id, account)
+        for account in plan.accounts
+        if account.account_id not in BASELINE_ACCOUNT_IDS
+    )
+    category_rows = tuple(
+        {**_category_row(plan.target_book_id, category), "current_version_id": None}
+        for category in plan.categories
+    )
+    version_rows = tuple(
+        _category_version_row(plan.target_book_id, category)
+        for category in plan.categories
+    )
+    with pg_engine.begin() as connection:
+        connection.execute(AssetRecord.__table__.insert(), missing_assets)
+        connection.execute(AccountRecord.__table__.insert(), missing_accounts)
+        connection.execute(CategoryRecord.__table__.insert(), category_rows)
+        connection.execute(CategoryVersionRecord.__table__.insert(), version_rows)
+        for category in plan.categories:
+            connection.execute(
+                text(
+                    "update categories set current_version_id=:version_id "
+                    "where book_id=:book_id and category_id=:category_id"
+                ),
+                {
+                    "book_id": plan.target_book_id,
+                    "category_id": category.category_id,
+                    "version_id": category.current_version_id,
+                },
+            )
 
 
 def test_catalog_apply_inserts_only_missing_exact_rows_in_callers_transaction(
@@ -193,13 +272,19 @@ def test_catalog_apply_inserts_only_missing_exact_rows_in_callers_transaction(
 ) -> None:
     plan = build_valid_fixture_plan()
     seed_target_baseline(pg_engine, plan)
+    with pg_engine.connect() as observer:
+        assert observer.scalar(text("select count(*) from command_receipts")) == 0
 
     session = Session(pg_engine)
     transaction = session.begin()
     try:
+        receipt = stage_processing_receipt(session, plan)
+        assert session.scalar(text("select count(*) from command_receipts")) == 1
+        with pg_engine.connect() as observer:
+            assert observer.scalar(text("select count(*) from command_receipts")) == 0
         result = FrozenImportCatalogRepository(session).apply_exact_catalog(
             plan,
-            current_receipt=processing_receipt(plan),
+            current_receipt=receipt,
         )
 
         assert result.assets_created == 4
@@ -259,19 +344,28 @@ def test_catalog_apply_inserts_only_missing_exact_rows_in_callers_transaction(
 def test_catalog_exact_replay_is_a_noop(pg_engine) -> None:
     plan = build_valid_fixture_plan()
     seed_target_baseline(pg_engine, plan)
-    apply_full_catalog(pg_engine, plan)
 
     with Session(pg_engine) as session, session.begin():
+        receipt = stage_processing_receipt(session, plan)
+        created = FrozenImportCatalogRepository(session).apply_exact_catalog(
+            plan,
+            current_receipt=receipt,
+        )
         result = FrozenImportCatalogRepository(session).apply_exact_catalog(
             plan,
-            current_receipt=processing_receipt(plan),
+            current_receipt=receipt,
         )
 
+        assert created.assets_created == 4
+        assert created.accounts_created == 57
+        assert created.categories_created == 37
+        assert created.category_versions_created == 37
         assert result.assets_created == 0
         assert result.accounts_created == 0
         assert result.categories_created == 0
         assert result.category_versions_created == 0
         assert not session.new
+        complete_processing_receipt(session, plan, receipt=receipt)
 
 
 def test_parent_child_category_apply_and_replay_preserve_circular_fk_exactly(
@@ -300,9 +394,10 @@ def test_parent_child_category_apply_and_replay_preserve_circular_fk_exactly(
     seed_target_baseline(pg_engine, plan)
 
     with Session(pg_engine) as session, session.begin():
+        receipt = stage_processing_receipt(session, plan)
         created = FrozenImportCatalogRepository(session).apply_exact_catalog(
             plan,
-            current_receipt=processing_receipt(plan),
+            current_receipt=receipt,
         )
         stored_child = session.get(
             CategoryRecord,
@@ -324,13 +419,13 @@ def test_parent_child_category_apply_and_replay_preserve_circular_fk_exactly(
         assert stored_version is not None
         assert stored_version.parent_category_id == parent.category_id
 
-    with Session(pg_engine) as session, session.begin():
         replay = FrozenImportCatalogRepository(session).apply_exact_catalog(
             plan,
-            current_receipt=processing_receipt(plan),
+            current_receipt=receipt,
         )
         assert replay.categories_created == 0
         assert replay.category_versions_created == 0
+        complete_processing_receipt(session, plan, receipt=receipt)
 
 
 def test_same_frozen_account_uuid_in_another_book_is_not_a_target_collision(
@@ -385,19 +480,24 @@ def test_catalog_drift_is_structured_and_does_not_expose_values(pg_engine) -> No
             {"value": protected_value, "asset_code": changed.asset_code},
         )
 
-    with Session(pg_engine) as session, session.begin():
-        with pytest.raises(FrozenImportCatalogDrift) as caught:
-            FrozenImportCatalogRepository(session).apply_exact_catalog(
-                plan,
-                current_receipt=processing_receipt(plan),
-            )
+    with Session(pg_engine) as session:
+        transaction = session.begin()
+        try:
+            receipt = stage_processing_receipt(session, plan)
+            with pytest.raises(FrozenImportCatalogDrift) as caught:
+                FrozenImportCatalogRepository(session).apply_exact_catalog(
+                    plan,
+                    current_receipt=receipt,
+                )
 
-        assert caught.value.entity_kind == "asset"
-        assert caught.value.entity_id == changed.asset_code
-        assert caught.value.field_name == "current_name"
-        assert protected_value not in str(caught.value)
-        assert protected_value not in repr(caught.value)
-        assert not session.new
+            assert caught.value.entity_kind == "asset"
+            assert caught.value.entity_id == changed.asset_code
+            assert caught.value.field_name == "current_name"
+            assert protected_value not in str(caught.value)
+            assert protected_value not in repr(caught.value)
+            assert not session.new
+        finally:
+            transaction.rollback()
 
 
 def test_repository_has_only_catalog_orm_and_caller_session_boundaries() -> None:
@@ -589,9 +689,10 @@ def test_catalog_fence_precedes_book_lock_in_dangerous_fk_interleaving(
         with Session(pg_engine) as importer, importer.begin():
             importer.execute(text("set local statement_timeout = '10s'"))
             importer_pid.put(importer.scalar(text("select pg_backend_pid()")))
+            receipt = stage_processing_receipt(importer, plan)
             FrozenImportCatalogRepository(importer).apply_exact_catalog(
                 plan,
-                current_receipt=processing_receipt(plan),
+                current_receipt=receipt,
             )
 
     contender = Session(pg_engine)
@@ -642,9 +743,10 @@ def test_common_fence_blocks_ordinary_asset_and_account_writes_until_rollback(
     importer = Session(pg_engine)
     importer_transaction = importer.begin()
     try:
+        receipt = stage_processing_receipt(importer, plan)
         FrozenImportCatalogRepository(importer).apply_exact_catalog(
             plan,
-            current_receipt=processing_receipt(plan),
+            current_receipt=receipt,
         )
         for statement, values in (
             (
@@ -694,9 +796,10 @@ def test_common_fence_freezes_book_write_state_until_import_commit(pg_engine) ->
     importer = Session(pg_engine)
     importer_transaction = importer.begin()
     try:
+        receipt = stage_processing_receipt(importer, plan)
         FrozenImportCatalogRepository(importer).apply_exact_catalog(
             plan,
-            current_receipt=processing_receipt(plan),
+            current_receipt=receipt,
         )
         contender = Session(pg_engine)
         try:
@@ -708,6 +811,7 @@ def test_common_fence_freezes_book_write_state_until_import_commit(pg_engine) ->
         finally:
             contender.rollback()
             contender.close()
+        complete_processing_receipt(importer, plan, receipt=receipt)
         importer_transaction.commit()
     finally:
         if importer_transaction.is_active:
