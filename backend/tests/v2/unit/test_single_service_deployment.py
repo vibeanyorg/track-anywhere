@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from setuptools import find_packages
+
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -18,11 +20,23 @@ def test_runtime_image_contains_the_static_export_without_a_node_server() -> Non
     assert "COPY --from=web-builder /app/frontend/out /app/frontend" in dockerfile
     assert "TRACK_ANYWHERE_STATIC_DIRECTORY=/app/frontend" in dockerfile
     assert "FROM node:22-alpine AS web-runtime" not in dockerfile
-    assert 'EXPOSE 3000' not in dockerfile
-    assert '/api/v2/ready' in dockerfile
+    assert "EXPOSE 3000" not in dockerfile
+    assert "/api/v2/ready" in dockerfile
     assert '"--timeout-graceful-shutdown", "60"' in dockerfile
     assert "**/.env" in dockerignore
     assert "**/.env.*" in dockerignore
+
+
+def test_image_and_package_contain_the_private_offline_runner() -> None:
+    dockerfile = _read("Dockerfile")
+    packages = set(find_packages(where=ROOT / "backend/app"))
+
+    assert "track_anywhere.offline" in packages
+    assert (
+        ROOT / "backend/app/track_anywhere/offline/import_frozen_financial_history.py"
+    ).is_file()
+    assert "COPY backend ./backend" in dockerfile
+    assert "COPY --from=python-builder /app/backend/app /app/backend/app" in dockerfile
 
 
 def test_production_compose_has_one_application_and_no_zombie_services() -> None:

@@ -15,6 +15,7 @@ APPROVED_ROOT_ENTRIES = {
     "infrastructure/",
     "mcp/",
     "observability/",
+    "offline/",
     "outbox/",
     "queries/",
     "serialization/",

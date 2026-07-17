@@ -81,3 +81,40 @@ def test_auth_advertises_only_live_v2_authorization_scopes() -> None:
         "ledger:read",
         "ledger:write",
     }
+
+
+def test_offline_runner_is_not_registered_on_online_or_automatic_surfaces() -> None:
+    runner_markers = (
+        "track_anywhere.offline",
+        "offline.import_frozen_financial_history",
+    )
+    roots = (
+        ROOT / "backend/app/track_anywhere/api",
+        ROOT / "backend/app/track_anywhere/mcp",
+        ROOT / "backend/app/track_anywhere/outbox",
+        ROOT / "alembic",
+    )
+    files = [
+        ROOT / "backend/app/track_anywhere/server.py",
+        ROOT / "scripts/backup-postgres-s3.sh",
+        ROOT / "scripts/deploy-local.sh",
+        ROOT / "scripts/deploy-vps.sh",
+        ROOT / "scripts/restore-postgres-s3.sh",
+        ROOT / "scripts/start-stable-local.sh",
+    ]
+    for root in roots:
+        files.extend(path for path in root.rglob("*") if path.is_file())
+    files.extend(ROOT.glob("compose*.yaml"))
+
+    findings = [
+        str(path.relative_to(ROOT))
+        for path in files
+        if any(
+            marker in path.read_text(encoding="utf-8", errors="ignore")
+            for marker in runner_markers
+        )
+    ]
+
+    assert not findings, (
+        "offline import runner was registered automatically:\n" + "\n".join(findings)
+    )
