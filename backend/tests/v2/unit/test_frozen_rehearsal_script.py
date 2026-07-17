@@ -460,6 +460,7 @@ def test_report_collects_and_validates_only_safe_fixed_operational_metadata() ->
     assert "SELECT version_num FROM alembic_version" in source
     assert "v2_0013_frozen_import_fence" in source
     assert "EXPECTED_VERIFICATION_COUNTS_JSON" in source
+    assert "EXPECTED_RECEIPT_COUNTS_JSON" in source
     assert "EXPECTED_INSERTED_COUNTS_JSON" in source
     assert "f1cb565c646dc759b203efad3a5584492f3c824a16abb728bbce83150413597f" in source
     assert "237f964a990018eb7fc91b9e45ba001ebb319456577f14263e3a444dc4d54430" in source
@@ -472,6 +473,57 @@ def test_report_collects_and_validates_only_safe_fixed_operational_metadata() ->
         "frozen_source_reader",
     ):
         assert role in source
+
+
+def test_receipt_and_verification_use_distinct_exact_count_contracts() -> None:
+    source = _source()
+
+    def constant(name: str) -> dict[str, int]:
+        matched = re.search(rf"readonly {name}='(?P<value>{{[^']+}})'", source)
+        assert matched is not None
+        value = json.loads(matched.group("value"))
+        assert type(value) is dict
+        return value
+
+    assert constant("EXPECTED_RECEIPT_COUNTS_JSON") == {
+        "accounts": 121,
+        "archives": 1,
+        "assets": 20,
+        "categories": 37,
+        "category_versions": 37,
+        "descriptions": 138,
+        "events": 176,
+        "journal_transactions": 138,
+        "postings": 290,
+        "quarantine": 0,
+        "reporting_assignments": 38,
+        "reporting_lines": 38,
+        "reversals": 8,
+    }
+    assert constant("EXPECTED_VERIFICATION_COUNTS_JSON") == {
+        "accounts": 121,
+        "archives": 1,
+        "assets": 20,
+        "async_projection_rows": 30,
+        "categories": 37,
+        "category_versions": 37,
+        "credit_card_transactions": 0,
+        "descriptions": 138,
+        "journal_postings": 290,
+        "journal_transactions": 138,
+        "ledger_events": 176,
+        "quarantine": 0,
+        "reporting_lines": 38,
+        "reversals": 8,
+        "synchronous_projection_applied_events": 176,
+    }
+    receipt_assertions = source.split(
+        "assert_first_receipt_completed() {", maxsplit=1
+    )[1].split("compare_catalog_hashes() {", maxsplit=1)[0]
+    assert receipt_assertions.count(
+        '--argjson counts "$EXPECTED_RECEIPT_COUNTS_JSON"'
+    ) == 2
+    assert "EXPECTED_VERIFICATION_COUNTS_JSON" not in receipt_assertions
 
 
 def test_read_hash_is_single_pass_strict_and_substitution_failures_are_not_masked(

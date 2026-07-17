@@ -13,6 +13,7 @@ readonly CATALOG_IDENTITY_SHA256='3b7556099f961ffdd65869fd2cd41af97aa03604065867
 readonly EXPECTED_ALEMBIC_VERSION='v2_0013_frozen_import_fence'
 readonly TARGET_BOOK_ID='a682ddd2-f26a-5ad1-8f0a-f2fc1f75fa3d'
 readonly EXPECTED_VERIFICATION_COUNTS_JSON='{"accounts":121,"archives":1,"assets":20,"async_projection_rows":30,"categories":37,"category_versions":37,"credit_card_transactions":0,"descriptions":138,"journal_postings":290,"journal_transactions":138,"ledger_events":176,"quarantine":0,"reporting_lines":38,"reversals":8,"synchronous_projection_applied_events":176}'
+readonly EXPECTED_RECEIPT_COUNTS_JSON='{"accounts":121,"archives":1,"assets":20,"categories":37,"category_versions":37,"descriptions":138,"events":176,"journal_transactions":138,"postings":290,"quarantine":0,"reporting_assignments":38,"reporting_lines":38,"reversals":8}'
 readonly EXPECTED_INSERTED_COUNTS_JSON='{"accounts":57,"archives":1,"assets":4,"categories":37,"category_versions":37,"credit_card_transactions":0,"descriptions":138,"events":176,"journal_transactions":138,"postings":290,"quarantine":0,"reporting_lines":38,"reversals":8}'
 readonly RECEIPT_STATE_JSON='{"first_apply":"completed","first_apply_replayed":false,"replay":"completed","replay_inserted_total":0,"replayed":true}'
 readonly ROLE_NAMES_JSON='{"migrator":"frozen_migrator","owner":"frozen_owner","runtime":"frozen_runtime","source_reader":"frozen_source_reader"}'
@@ -616,7 +617,7 @@ assert_first_receipt_completed() {
   jq -e \
     --arg plan "$PLAN_SHA256" \
     --arg terminal "$TERMINAL_HASH" \
-    --argjson counts "$EXPECTED_VERIFICATION_COUNTS_JSON" \
+    --argjson counts "$EXPECTED_RECEIPT_COUNTS_JSON" \
     --argjson inserted "$EXPECTED_INSERTED_COUNTS_JSON" \
     'keys == ["counts", "expected_terminal_hash", "first_book_position",
               "inserted_counts", "last_book_position", "plan_hash",
@@ -634,7 +635,7 @@ assert_zero_inserted_counts() {
   jq -e \
     --arg plan "$PLAN_SHA256" \
     --arg terminal "$TERMINAL_HASH" \
-    --argjson counts "$EXPECTED_VERIFICATION_COUNTS_JSON" \
+    --argjson counts "$EXPECTED_RECEIPT_COUNTS_JSON" \
     --argjson inserted "$EXPECTED_INSERTED_COUNTS_JSON" \
     'keys == ["counts", "expected_terminal_hash", "first_book_position",
               "inserted_counts", "last_book_position", "plan_hash",
