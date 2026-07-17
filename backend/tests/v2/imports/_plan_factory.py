@@ -87,9 +87,9 @@ def _archive() -> PlannedProtectedContent:
         {
             "record_type": "archive_manifest",
             "contract_version": 1,
-            "source_dump_hash": "a" * 64,
-            "source_manifest_hash": "b" * 64,
-            "card_review_hash": "c" * 64,
+            "source_dump_hash": "a125b857a317e8c017d7028a26f78cf664ff6d57f6c0e698b3c229acf5d6cf9e",
+            "source_manifest_hash": "f1cb565c646dc759b203efad3a5584492f3c824a16abb728bbce83150413597f",
+            "card_review_hash": "237f964a990018eb7fc91b9e45ba001ebb319456577f14263e3a444dc4d54430",
             "source_revision": "0019_posting_constraints",
             "source_counts": {
                 "accounts": 121,
@@ -182,15 +182,21 @@ def _archive() -> PlannedProtectedContent:
     )
 
 
-def build_valid_fixture_plan() -> FrozenFinancialHistoryPlan:
+def build_valid_fixture_plan(
+    *,
+    target_book_id: UUID | None = None,
+    command_id: UUID | None = None,
+) -> FrozenFinancialHistoryPlan:
     assets = tuple(
         PlannedAsset(
-            asset_code=f"T{index:02d}",
-            kind="synthetic",
-            ledger_scale=2,
-            input_scale=2,
-            display_scale=2,
-            current_name=f"fixture-asset-{index:02d}",
+            asset_code="USDT" if index == 19 else f"T{index:02d}",
+            kind="crypto" if index == 19 else "synthetic",
+            ledger_scale=8 if index == 19 else 2,
+            input_scale=6 if index == 19 else 2,
+            display_scale=6 if index == 19 else 2,
+            current_name=(
+                "fixture-usdt" if index == 19 else f"fixture-asset-{index:02d}"
+            ),
             status="active",
         )
         for index in range(20)
@@ -198,7 +204,7 @@ def build_valid_fixture_plan() -> FrozenFinancialHistoryPlan:
     accounts = tuple(
         PlannedAccount(
             account_id=fixture_id(1000 + index),
-            asset_code="T00",
+            asset_code="USDT" if index >= 119 else "T00",
             account_type="liability" if index < 5 else "asset",
             account_subtype="credit_card" if index < 5 else None,
             system_role=None,
@@ -237,15 +243,20 @@ def build_valid_fixture_plan() -> FrozenFinancialHistoryPlan:
         )
         for index in range(138)
     )
-    target_book_id = fixture_id(1)
-    command_id = fixture_id(2)
+    target_book_id = target_book_id or fixture_id(1)
+    command_id = command_id or fixture_id(2)
     effective_at = datetime(2026, 1, 2, 3, 4, 5, 6, tzinfo=UTC)
 
     pending_posted: list[PendingEvent] = []
     next_posting_id = 10_000
     for index in range(130):
         posting_count = 3 if 8 <= index < 22 else 2
-        if posting_count == 3:
+        if index == 40:
+            posting_shape = (
+                (PostingSide.DEBIT, "12345678"),
+                (PostingSide.CREDIT, "12345678"),
+            )
+        elif posting_count == 3:
             posting_shape = (
                 (PostingSide.DEBIT, "2"),
                 (PostingSide.CREDIT, "1"),
@@ -263,9 +274,13 @@ def build_valid_fixture_plan() -> FrozenFinancialHistoryPlan:
                 account_id=(
                     accounts[0].account_id
                     if index == 0
-                    else accounts[5 + ((index + position) % 116)].account_id
+                    else accounts[index - 7].account_id
+                    if 8 <= index < 12 and position == 1
+                    else accounts[119 + position].account_id
+                    if index == 40
+                    else accounts[5 + ((index + position) % 114)].account_id
                 ),
-                asset_code="T00",
+                asset_code="USDT" if index == 40 else "T00",
                 side=side,
                 units=units,
             )
@@ -417,9 +432,9 @@ def build_valid_fixture_plan() -> FrozenFinancialHistoryPlan:
     return FrozenFinancialHistoryPlan(
         contract_version=1,
         target_book_id=target_book_id,
-        source_dump_hash="a" * 64,
-        manifest_hash="b" * 64,
-        card_review_hash="c" * 64,
+        source_dump_hash="a125b857a317e8c017d7028a26f78cf664ff6d57f6c0e698b3c229acf5d6cf9e",
+        manifest_hash="f1cb565c646dc759b203efad3a5584492f3c824a16abb728bbce83150413597f",
+        card_review_hash="237f964a990018eb7fc91b9e45ba001ebb319456577f14263e3a444dc4d54430",
         assets=assets,
         accounts=accounts,
         categories=categories,

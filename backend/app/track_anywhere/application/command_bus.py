@@ -225,6 +225,8 @@ def _execute_financial_once(
             expected_stream_versions=plan.expected_stream_versions,
             events=plan.events,
         )
+        if plan.post_projection_finalizer is not None:
+            plan.post_projection_finalizer(uow.session, appended)
         result = plan.to_result(appended)
         receipts.complete(receipt_scope, result)
         return CommandOutcome(result=result, replayed=False)

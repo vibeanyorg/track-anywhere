@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import Protocol
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -31,6 +32,17 @@ class LedgerWriteBoundaryError(RuntimeError):
     pass
 
 
+class PostProjectionFinalizer(Protocol):
+    """Narrow callback executed inside the financial command transaction."""
+
+    def __call__(
+        self,
+        session: Session,
+        appended: AppendBatchResult,
+        /,
+    ) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class LockedBookHead:
     book_id: UUID
@@ -46,6 +58,11 @@ class LedgerWritePlan:
     response_schema_version: int
     status_code: int
     body: dict[str, JSONValue] | list[JSONValue]
+    post_projection_finalizer: PostProjectionFinalizer | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         expected = dict(self.expected_stream_versions)
@@ -63,6 +80,12 @@ class LedgerWritePlan:
             status_code=self.status_code,
             body=self.body,
         )
+        if self.post_projection_finalizer is not None and not callable(
+            self.post_projection_finalizer
+        ):
+            raise IdempotencyValidationError(
+                "post-projection finalizer must be callable"
+            )
 
     def to_result(self, appended: AppendBatchResult) -> CommandResult:
         return CommandResult(
@@ -181,4 +204,5 @@ __all__ = [
     "LedgerWriteBoundaryError",
     "LedgerWritePlan",
     "LockedBookHead",
+    "PostProjectionFinalizer",
 ]
