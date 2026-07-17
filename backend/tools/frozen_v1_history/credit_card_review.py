@@ -86,6 +86,7 @@ class CreditCardSemanticReview:
     accounts: tuple[CreditCardAccountDecision, ...] = field(repr=False)
     expected_balances: tuple[ExpectedCreditCardBalance, ...] = field(repr=False)
     card_source_posting_count: int
+    reviewed_at_text: str = field(default="", repr=False)
 
     @property
     def transaction_count(self) -> int:
@@ -111,7 +112,9 @@ class CreditCardSemanticReview:
         return len(self.expected_balances)
 
 
-def _object_without_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+def _object_without_duplicate_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
@@ -141,10 +144,92 @@ def calculated_review_sha256(raw: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical_json_bytes(review_content_payload(raw))).hexdigest()
 
 
+def _review_as_raw(review: CreditCardSemanticReview) -> dict[str, object]:
+    try:
+        if (
+            type(review) is not CreditCardSemanticReview
+            or any(
+                type(item) is not CreditCardTransactionDecision
+                for item in review.transactions
+            )
+            or any(
+                type(posting) is not CreditCardPostingDecision
+                for item in review.transactions
+                for posting in item.postings
+            )
+            or any(
+                type(item) is not CreditCardAccountDecision for item in review.accounts
+            )
+            or any(
+                type(item) is not ExpectedCreditCardBalance
+                for item in review.expected_balances
+            )
+            or not review.reviewed_at_text
+            or _timestamp(review.reviewed_at_text) != review.reviewed_at
+        ):
+            raise ValueError
+        return {
+            "schema_version": 1,
+            "snapshot_id": review.snapshot_id,
+            "source_manifest_sha256": review.source_manifest_sha256,
+            "reviewer": review.reviewer,
+            "reviewed_at": review.reviewed_at_text,
+            "transactions": [
+                {
+                    "book_id": transaction.book_id,
+                    "source_transaction_id": transaction.source_transaction_id,
+                    "source_transaction_sha256": transaction.source_transaction_sha256,
+                    "source_postings_sha256": transaction.source_postings_sha256,
+                    "postings": [
+                        {
+                            "source_posting_id": posting.source_posting_id,
+                            "target_account_id": posting.target_account_id,
+                            "target_side": posting.target_side,
+                        }
+                        for posting in transaction.postings
+                    ],
+                    "post_import_action": transaction.post_import_action,
+                }
+                for transaction in review.transactions
+            ],
+            "accounts": [
+                {
+                    "book_id": account.book_id,
+                    "source_account_id": account.source_account_id,
+                    "source_account_sha256": account.source_account_sha256,
+                    "action": account.action,
+                }
+                for account in review.accounts
+            ],
+            "expected_card_balances": [
+                {
+                    "book_id": balance.book_id,
+                    "source_account_id": balance.source_account_id,
+                    "asset_code": balance.asset_code,
+                    "natural_units": str(balance.natural_units),
+                }
+                for balance in review.expected_balances
+            ],
+            "content_sha256": review.content_sha256,
+        }
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        raise ValueError("credit-card review object is invalid") from None
+
+
 def _nonblank(value: object, *, field_name: str) -> str:
     if type(value) is not str or not value.strip():
         raise ValueError(f"credit-card review {field_name} must be nonblank")
     return value
+
+
+def canonical_source_identity(value: object) -> str:
+    """Return the exact review identity for a text or integer source key."""
+
+    if type(value) is str and value.strip():
+        return value
+    if type(value) is int and value >= 0:
+        return str(value)
+    raise ValueError("credit-card source identity is invalid")
 
 
 def _sha256(value: object, *, field_name: str) -> str:
@@ -275,7 +360,9 @@ def _parse_expected_balances(value: object) -> tuple[ExpectedCreditCardBalance, 
         }:
             raise ValueError("expected credit-card balance shape is invalid")
         raw_units = item["natural_units"]
-        if type(raw_units) is not str or not re.fullmatch(r"-?(?:0|[1-9][0-9]*)", raw_units):
+        if type(raw_units) is not str or not re.fullmatch(
+            r"-?(?:0|[1-9][0-9]*)", raw_units
+        ):
             raise ValueError("expected credit-card natural units must be canonical")
         units = int(raw_units)
         if str(units) != raw_units or len(raw_units.lstrip("-")) > 48:
@@ -308,7 +395,7 @@ def source_postings_sha256(rows: Sequence[Row]) -> str:
         rows,
         key=lambda row: (
             _source_int(row.get("position"), field_name="position"),
-            str(row.get("id")),
+            canonical_source_identity(row.get("id")),
         ),
     )
     return hashlib.sha256(
@@ -316,7 +403,9 @@ def source_postings_sha256(rows: Sequence[Row]) -> str:
     ).hexdigest()
 
 
-def _card_accounts(rows_by_table: Mapping[str, Sequence[Row]]) -> dict[tuple[str, str], Row]:
+def _card_accounts(
+    rows_by_table: Mapping[str, Sequence[Row]],
+) -> dict[tuple[str, str], Row]:
     return {
         (str(row.get("book_id")), str(row.get("account_id"))): row
         for row in rows_by_table.get("accounts", ())
@@ -355,20 +444,27 @@ def _validate_against_source(
     scope = {
         key
         for key, postings in postings_by_transaction.items()
-        if any((key[0], str(posting.get("account_id"))) in card_accounts for posting in postings)
+        if any(
+            (key[0], str(posting.get("account_id"))) in card_accounts
+            for posting in postings
+        )
     }
     transaction_index = {
-        (item.book_id, item.source_transaction_id): item
-        for item in review.transactions
+        (item.book_id, item.source_transaction_id): item for item in review.transactions
     }
-    if len(transaction_index) != len(review.transactions) or set(transaction_index) != scope:
+    if (
+        len(transaction_index) != len(review.transactions)
+        or set(transaction_index) != scope
+    ):
         raise ValueError("credit-card review transaction coverage mismatch")
 
     scales: dict[str, int] = {}
     for row in rows_by_table.get("assets", ()):
         asset_code = str(row.get("asset_code"))
         source_scale = _source_int(row.get("scale"), field_name="scale")
-        source_display = _source_int(row.get("display_scale"), field_name="display_scale")
+        source_display = _source_int(
+            row.get("display_scale"), field_name="display_scale"
+        )
         scales[asset_code] = HistoricalAssetScale.for_source(
             asset_code=asset_code,
             source_scale=source_scale,
@@ -385,7 +481,7 @@ def _validate_against_source(
             postings_by_transaction[key],
             key=lambda row: (
                 _source_int(row.get("position"), field_name="position"),
-                str(row.get("id")),
+                canonical_source_identity(row.get("id")),
             ),
         )
         decision = transaction_index[key]
@@ -393,19 +489,29 @@ def _validate_against_source(
             raise ValueError("credit-card review transaction source hash mismatch")
         if decision.source_postings_sha256 != source_postings_sha256(source_postings):
             raise ValueError("credit-card review posting-set source hash mismatch")
-        posting_index = {posting.source_posting_id: posting for posting in decision.postings}
-        source_ids = {str(row.get("id")) for row in source_postings}
-        if len(posting_index) != len(decision.postings) or set(posting_index) != source_ids:
+        posting_index = {
+            posting.source_posting_id: posting for posting in decision.postings
+        }
+        source_ids = {
+            canonical_source_identity(row.get("id")) for row in source_postings
+        }
+        if (
+            len(posting_index) != len(decision.postings)
+            or set(posting_index) != source_ids
+        ):
             raise ValueError("credit-card review posting coverage mismatch")
 
         balance: Counter[tuple[str, str]] = Counter()
         resolved: list[tuple[str, str, str, int]] = []
         for row in source_postings:
-            posting = posting_index[str(row.get("id"))]
+            posting = posting_index[canonical_source_identity(row.get("id"))]
             target_key = (key[0], posting.target_account_id)
             target_account = source_accounts.get(target_key)
             asset_code = str(row.get("currency"))
-            if target_account is None or str(target_account.get("currency")) != asset_code:
+            if (
+                target_account is None
+                or str(target_account.get("currency")) != asset_code
+            ):
                 raise ValueError("credit-card review posting target is invalid")
             if asset_code not in scales:
                 raise ValueError("credit-card review posting asset is unknown")
@@ -439,7 +545,10 @@ def _validate_against_source(
         book_id = str(reversal_row.get("book_id"))
         reversal_key = (book_id, reversal_id)
         original_key = (book_id, original_id)
-        if reversal_key not in resolved_postings or original_key not in resolved_postings:
+        if (
+            reversal_key not in resolved_postings
+            or original_key not in resolved_postings
+        ):
             continue
         expected_inverse = sorted(
             (
@@ -516,16 +625,18 @@ def _parse_credit_card_review(
     transactions = _parse_transactions(raw["transactions"])
     accounts = _parse_accounts(raw["accounts"])
     expected_balances = _parse_expected_balances(raw["expected_card_balances"])
+    reviewed_at_text = _nonblank(raw["reviewed_at"], field_name="reviewed_at")
     provisional = CreditCardSemanticReview(
         snapshot_id=manifest.snapshot_id,
         source_manifest_sha256=EXPECTED_FULL_MANIFEST_SHA256,
         reviewer=_nonblank(raw["reviewer"], field_name="reviewer"),
-        reviewed_at=_timestamp(raw["reviewed_at"]),
+        reviewed_at=_timestamp(reviewed_at_text),
         content_sha256=content_sha256,
         transactions=transactions,
         accounts=accounts,
         expected_balances=expected_balances,
         card_source_posting_count=0,
+        reviewed_at_text=reviewed_at_text,
     )
     card_source_posting_count = _validate_against_source(provisional, rows_by_table)
     review = CreditCardSemanticReview(
@@ -538,6 +649,7 @@ def _parse_credit_card_review(
         accounts=provisional.accounts,
         expected_balances=provisional.expected_balances,
         card_source_posting_count=card_source_posting_count,
+        reviewed_at_text=provisional.reviewed_at_text,
     )
     observed_summary = (
         review.transaction_count,
@@ -552,12 +664,50 @@ def _parse_credit_card_review(
     return review
 
 
+def validate_credit_card_review_object(
+    review: CreditCardSemanticReview,
+    *,
+    manifest: FrozenSourceManifest,
+    rows_by_table: Mapping[str, Sequence[Row]],
+    expected_content_sha256: str,
+    expected_summary: tuple[int, int, int, int, int, int],
+) -> CreditCardSemanticReview:
+    """Reparse a hand-built object through the complete hash/source contract."""
+
+    try:
+        reparsed = _parse_credit_card_review(
+            _review_as_raw(review),
+            manifest=manifest,
+            rows_by_table=rows_by_table,
+            expected_content_sha256=expected_content_sha256,
+            expected_summary=expected_summary,
+        )
+        if reparsed != review:
+            raise ValueError
+        return reparsed
+    except (AttributeError, KeyError, TypeError, ValueError, OverflowError):
+        raise ValueError("credit-card review object is invalid") from None
+
+
 def parse_approved_credit_card_review(
     raw: object, *, source: FrozenSourceRows
 ) -> CreditCardSemanticReview:
     verify_frozen_source_rows(source)
     return _parse_credit_card_review(
         raw,
+        manifest=source.manifest,
+        rows_by_table={name: table.rows for name, table in source.tables.items()},
+        expected_content_sha256=EXPECTED_CREDIT_CARD_REVIEW_SHA256,
+        expected_summary=(22, 48, 23, 3, 1, 5),
+    )
+
+
+def validate_approved_credit_card_review_object(
+    review: CreditCardSemanticReview, *, source: FrozenSourceRows
+) -> CreditCardSemanticReview:
+    verify_frozen_source_rows(source)
+    return validate_credit_card_review_object(
+        review,
         manifest=source.manifest,
         rows_by_table={name: table.rows for name, table in source.tables.items()},
         expected_content_sha256=EXPECTED_CREDIT_CARD_REVIEW_SHA256,
@@ -583,9 +733,12 @@ __all__ = [
     "CreditCardTransactionDecision",
     "ExpectedCreditCardBalance",
     "calculated_review_sha256",
+    "canonical_source_identity",
     "parse_approved_credit_card_review",
     "read_approved_credit_card_review",
     "review_content_payload",
     "source_postings_sha256",
     "source_row_sha256",
+    "validate_approved_credit_card_review_object",
+    "validate_credit_card_review_object",
 ]
