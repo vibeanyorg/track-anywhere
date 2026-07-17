@@ -39,6 +39,17 @@ _SIMPLE_KEYS = frozenset(
         "restore_database",
     }
 )
+_EXPECTED_SIMPLE_METADATA = {
+    "created_at": "2026-07-13T01:56:34Z",
+    "verified_at": "2026-07-13T02:00:26Z",
+    "archive_entries": "140",
+    "source_database": "track_anywhere",
+    "source_schema": "public",
+    "source_runtime_revision": "ed52ac2",
+    "restore_test": "passed",
+    "restore_postgres_version": "17",
+    "restore_database": "track_anywhere_restore",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +302,11 @@ def read_simple_manifest(path: Path) -> SimpleBackupManifest:
     source_revision = values["source_alembic_revision"]
     if source_revision != EXPECTED_SOURCE_REVISION:
         raise ValueError("simple manifest source revision mismatch")
+    if any(
+        values[field] != expected
+        for field, expected in _EXPECTED_SIMPLE_METADATA.items()
+    ):
+        raise ValueError("simple manifest fixed metadata mismatch")
 
     counts: dict[str, int] = {}
     for name, expected in EXPECTED_SIMPLE_MANIFEST_COUNTS.items():

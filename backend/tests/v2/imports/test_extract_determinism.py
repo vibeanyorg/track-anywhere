@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import os
 from pathlib import Path
@@ -92,6 +92,79 @@ def test_audited_sql_has_exact_columns_order_and_no_parameters_or_writes() -> No
     source_contract_sql = load_source_contract_sql()
     assert ":source_book_id" in source_contract_sql
     assert ":" not in source_contract_sql.replace(":source_book_id", "")
+
+
+@pytest.mark.parametrize(
+    "unsafe_suffix",
+    [
+        ";\n",
+        "\nUNION SELECT account_id FROM public.accounts\n",
+        "\nINTO frozen_accounts\n",
+        "\nDELETE\nFROM public.accounts\n",
+        "\n-- audit note\n",
+        "\n/* audit note */\n",
+    ],
+)
+def test_audited_table_sql_rejects_multiple_statements_comments_and_split_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe_suffix: str,
+) -> None:
+    spec = next(item for item in TABLE_SPECS if item.table == "accounts")
+    sql_path = tmp_path / "accounts.sql"
+    sql_path.write_text(
+        "SELECT\naccount_id\nFROM public.accounts\n"
+        "WHERE book_id = :source_book_id\n"
+        + unsafe_suffix,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(type(spec), "sql_path", property(lambda _self: sql_path))
+
+    with pytest.raises(RuntimeError, match="one explicit public SELECT"):
+        load_audited_sql(spec)
+
+
+@pytest.mark.parametrize("unsafe_suffix", ["\n-- audit note\n", "\n/* audit note */\n"])
+def test_source_contract_sql_rejects_comments_independently_of_write_keywords(
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe_suffix: str,
+) -> None:
+    original_read_text = Path.read_text
+
+    def add_unsafe_suffix(path: Path, *args: object, **kwargs: object) -> str:
+        return original_read_text(path, *args, **kwargs) + unsafe_suffix
+
+    monkeypatch.setattr(Path, "read_text", add_unsafe_suffix)
+
+    with pytest.raises(RuntimeError, match="audited read-only statement"):
+        load_source_contract_sql()
+
+
+def test_audited_table_sql_rejects_lexically_valid_digest_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = next(item for item in TABLE_SPECS if item.table == "accounts")
+    sql_path = tmp_path / "accounts.sql"
+    sql_path.write_text(spec.sql_path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    monkeypatch.setattr(type(spec), "sql_path", property(lambda _self: sql_path))
+
+    with pytest.raises(RuntimeError, match="fixed query"):
+        load_audited_sql(spec)
+
+
+def test_source_contract_sql_rejects_lexically_valid_digest_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_read_text = Path.read_text
+
+    def add_trailing_newline(path: Path, *args: object, **kwargs: object) -> str:
+        return original_read_text(path, *args, **kwargs) + "\n"
+
+    monkeypatch.setattr(Path, "read_text", add_trailing_newline)
+
+    with pytest.raises(RuntimeError, match="fixed query"):
+        load_source_contract_sql()
 
 
 def test_canonical_values_preserve_exact_types_and_reject_float_or_naive_time() -> None:

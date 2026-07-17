@@ -89,6 +89,15 @@ def test_simple_manifest_accepts_only_the_fixed_source_contract(tmp_path: Path) 
         ({"bytes": "1"}, "fixed dump size"),
         ({"source_alembic_revision": "wrong"}, "source revision"),
         ({"transactions": "134"}, "fixed table count"),
+        ({"created_at": "2026-07-13T01:56:35Z"}, "fixed metadata"),
+        ({"verified_at": "2026-07-13T02:00:27Z"}, "fixed metadata"),
+        ({"archive_entries": "139"}, "fixed metadata"),
+        ({"source_database": "other"}, "fixed metadata"),
+        ({"source_schema": "private"}, "fixed metadata"),
+        ({"source_runtime_revision": "0000000"}, "fixed metadata"),
+        ({"restore_test": "failed"}, "fixed metadata"),
+        ({"restore_postgres_version": "16"}, "fixed metadata"),
+        ({"restore_database": "other_restore"}, "fixed metadata"),
     ],
 )
 def test_simple_manifest_rejects_fixed_contract_mismatches(
@@ -101,6 +110,17 @@ def test_simple_manifest_rejects_fixed_contract_mismatches(
 
     with pytest.raises(ValueError, match=match):
         read_simple_manifest(path)
+
+
+def test_simple_manifest_metadata_mismatch_does_not_echo_input(tmp_path: Path) -> None:
+    secret = "sensitive-metadata-must-not-escape"
+    path = tmp_path / "source.manifest.txt"
+    path.write_text(_simple_manifest_text(source_schema=secret), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="fixed metadata mismatch") as exc_info:
+        read_simple_manifest(path)
+
+    assert secret not in str(exc_info.value)
 
 
 def test_simple_manifest_rejects_unknown_and_duplicate_keys_without_echoing_values(

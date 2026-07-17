@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 import os
-from pathlib import Path
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +13,6 @@ from backend.tools.frozen_v1_history.credit_card_review import (
     _parse_credit_card_review,
     _read_strict_json,
     calculated_review_sha256,
-    parse_approved_credit_card_review,
     read_approved_credit_card_review,
     source_postings_sha256,
     source_row_sha256,

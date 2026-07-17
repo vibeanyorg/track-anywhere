@@ -7,9 +7,10 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 import hashlib
 import random
+import re
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import Connection, create_engine, text
@@ -33,6 +34,44 @@ from .namespaces import deterministic_uuid
 ACCOUNT_UUID_MAP_PROTOCOL = "frozen-v1-account-uuid-map/v1-naked-pairs"
 ACCOUNT_UUID_MAP_SHA256 = (
     "5ac49a95183e2f6096f497225be7b616af7f35103ddb1c362175115fd1fc5c4f"
+)
+_SQL_COMMENT_MARKERS = ("--", "/*", "*/")
+_SQL_FORBIDDEN_WORDS = frozenset(
+    {
+        "alter",
+        "call",
+        "copy",
+        "create",
+        "delete",
+        "do",
+        "drop",
+        "grant",
+        "insert",
+        "into",
+        "merge",
+        "refresh",
+        "revoke",
+        "truncate",
+        "update",
+        "vacuum",
+    }
+)
+_EXPECTED_TABLE_SQL_SHA256 = {
+    "accounts": "3a0a36e4e607b072c1e8bb9229fe5d47b5973791138f2ee6c2fc066748f2cd97",
+    "assets": "f3455b4971a51367ad0d5e7a84fc806e5f409910309a23ef10efbb484362cb9e",
+    "categories": "62636a6f52347afa08752cc966a1d348c0eb6ff66ea2a6d26431a2c75a35bc7b",
+    "category_versions": "658b8c8a5cb56ab9f58eb71d7b3d61cd2b6e02a9f73fbd5fe9783a44cdce6cff",
+    "classification_events": "640e9981b42a604452357aa8a11a3225882a2f15993a0b827f971914fa644051",
+    "counterparties": "eb4f0c087b992a637a79ff5bcd571b207c9b9842dc3cf7499ac81320a38c783f",
+    "investment_events": "df6e326800c50ebbdbedd0ec47f026ea4bd858b4c5225d5c27b43ae0ea4fce3f",
+    "investment_valuations": "9e534635c05c9e87f805e1ef9640354a05b1c7bc7e0770d345364db435f83d59",
+    "ledger_books": "71bfeec295d59ffbb06a22db9e059824882cad0d7b92ab4f9c098bd44752b3a5",
+    "postings": "52fcb18b8baaf5f2227e8baf10949bc69015d15365c62ad93bde247f20310b9a",
+    "transaction_lines": "66b139bf7b31e0e63fe2d1900e2564c88f2732488b599789033d1b6e84640a0a",
+    "transactions": "fbfaa00996742c5e8f531f853ade186a2e95423e0fcbfe422b1632afe159fc2f",
+}
+_EXPECTED_SOURCE_CONTRACT_SQL_SHA256 = (
+    "d8f74036b262d914b1175e495658e717c40f11e7196b47b960ddebd4bbf13772"
 )
 
 
@@ -398,7 +437,18 @@ def load_audited_sql(spec: TableSpec) -> str:
     sql = spec.sql_path.read_text(encoding="utf-8")
     lowered = sql.casefold()
     collapsed = " ".join(lowered.split())
-    if not lowered.startswith("select\n") or " from public." not in collapsed:
+    words = re.findall(r"[a-z_][a-z0-9_]*", lowered)
+    if (
+        not lowered.startswith("select\n")
+        or " from public." not in collapsed
+        or ";" in sql
+        or any(marker in sql for marker in _SQL_COMMENT_MARKERS)
+        or not words
+        or words[0] != "select"
+        or words.count("select") != 1
+        or words.count("from") != 1
+        or _SQL_FORBIDDEN_WORDS.intersection(words)
+    ):
         raise RuntimeError("audited source SQL must be one explicit public SELECT")
     expected_bind_count = 1 if spec.book_scoped else 0
     if sql.count(":source_book_id") != expected_bind_count:
@@ -406,11 +456,11 @@ def load_audited_sql(spec: TableSpec) -> str:
     without_approved_bind = sql.replace(":source_book_id", "")
     if any(token in without_approved_bind for token in ("*", ":", "%s", "$1", "?")):
         raise RuntimeError("audited source SQL must be parameter-free and explicit")
-    if any(
-        token in lowered
-        for token in (" insert ", " update ", " delete ", " alter ", " drop ")
+    if (
+        _EXPECTED_TABLE_SQL_SHA256.get(spec.table)
+        != hashlib.sha256(sql.encode("utf-8")).hexdigest()
     ):
-        raise RuntimeError("audited source SQL may not write")
+        raise RuntimeError("audited source SQL does not match the fixed query")
     return sql
 
 
@@ -467,20 +517,27 @@ def load_source_contract_sql() -> str:
     sql = Path(__file__).with_name("sql").joinpath("source_contract.sql").read_text(
         encoding="utf-8"
     )
-    collapsed = " ".join(sql.casefold().split())
+    lowered = sql.casefold()
+    collapsed = " ".join(lowered.split())
+    words = re.findall(r"[a-z_][a-z0-9_]*", lowered)
     without_bind = sql.replace(":source_book_id", "").replace("::bigint", "")
     if (
         not collapsed.startswith("select ")
+        or not words
+        or words[0] != "select"
         or ":source_book_id" not in sql
         or ":" in without_bind
         or "select *" in collapsed
         or ";" in sql
-        or any(
-            token in f" {collapsed} "
-            for token in (" insert ", " update ", " delete ", " alter ", " drop ")
-        )
+        or any(marker in sql for marker in _SQL_COMMENT_MARKERS)
+        or _SQL_FORBIDDEN_WORDS.intersection(words)
     ):
         raise RuntimeError("source contract SQL is not an audited read-only statement")
+    if (
+        hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        != _EXPECTED_SOURCE_CONTRACT_SQL_SHA256
+    ):
+        raise RuntimeError("source contract SQL does not match the fixed query")
     return sql
 
 
