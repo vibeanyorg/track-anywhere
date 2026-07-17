@@ -104,7 +104,10 @@ def test_offline_runner_is_not_registered_on_online_or_automatic_surfaces() -> N
     ]
     for root in roots:
         files.extend(path for path in root.rglob("*") if path.is_file())
-    files.extend(ROOT.glob("compose*.yaml"))
+    production_compose = ROOT / "compose.prod.yaml"
+    files.extend(
+        path for path in ROOT.glob("compose*.yaml") if path != production_compose
+    )
 
     findings = [
         str(path.relative_to(ROOT))
@@ -118,3 +121,16 @@ def test_offline_runner_is_not_registered_on_online_or_automatic_surfaces() -> N
     assert not findings, (
         "offline import runner was registered automatically:\n" + "\n".join(findings)
     )
+
+    production = production_compose.read_text(encoding="utf-8")
+    marker = "\n  frozen-v1-backfill:\n"
+    prefix, separator, remainder = production.partition(marker)
+    runner, next_service, suffix = remainder.partition("\n  cli:\n")
+    assert separator == marker
+    assert next_service == "\n  cli:\n"
+    assert all(value in runner for value in runner_markers)
+    assert 'profiles: ["frozen-v1-backfill"]' in runner
+    assert 'restart: "no"' in runner
+    assert "ports:" not in runner
+    assert "depends_on:" not in runner
+    assert "frozen-v1-backfill" not in prefix + suffix
