@@ -64,6 +64,9 @@ FROZEN_IMPORT_PLAN_HASH: Final = (
 FROZEN_IMPORT_EXPECTED_TERMINAL_HASH: Final = (
     "bcc2828422fda617df93fb2fc92e41599f0c694f9f1d502f1dcd22f4d85186fc"
 )
+FROZEN_IMPORT_CATALOG_IDENTITY_SHA256: Final = (
+    "3b7556099f961ffdd65869fd2cd41af97aa0360406586734fab0cd71bce2dc02"
+)
 
 _HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _EXPECTED_COUNTS: Final[dict[str, int]] = {
@@ -306,6 +309,14 @@ def _build_handler(
                 actor_subject_id=FROZEN_IMPORT_ACTOR_SUBJECT_ID,
                 operation=expected_command.operation,
                 command_id=expected_command.command_id,
+            ),
+            expected_baseline_identity_sha256=(
+                FROZEN_IMPORT_CATALOG_IDENTITY_SHA256
+                if hmac.compare_digest(
+                    expected_command.plan_hash,
+                    FROZEN_IMPORT_PLAN_HASH,
+                )
+                else None
             ),
         )
         if catalog_result != _EXPECTED_FIRST_CATALOG_RESULT:
@@ -615,6 +626,7 @@ def _verify_card_balances(
 
 __all__ = [
     "FROZEN_IMPORT_CARD_REVIEW_HASH",
+    "FROZEN_IMPORT_CATALOG_IDENTITY_SHA256",
     "FROZEN_IMPORT_EXPECTED_TERMINAL_HASH",
     "FROZEN_IMPORT_MANIFEST_HASH",
     "FROZEN_IMPORT_OPERATION",

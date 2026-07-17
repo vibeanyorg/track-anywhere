@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import hmac
+import re
 from typing import Never
 from uuid import UUID
 
@@ -13,6 +16,7 @@ from ....application.imports.contracts import (
     PlannedAsset,
     PlannedCategory,
 )
+from ....serialization.canonical_json import canonical_json_bytes
 from ..models.catalog import (
     AccountRecord,
     AssetRecord,
@@ -68,6 +72,23 @@ class _CatalogPreflight:
     missing_assets: tuple[PlannedAsset, ...]
     missing_accounts: tuple[PlannedAccount, ...]
     missing_categories: tuple[PlannedCategory, ...]
+
+
+_LOWER_SHA256 = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
+
+
+def catalog_identity_sha256(
+    book_id: UUID,
+    *,
+    asset_codes: tuple[str, ...],
+    account_ids: tuple[UUID, ...],
+) -> str:
+    identity = {
+        "account_ids": [str(account_id) for account_id in account_ids],
+        "asset_codes": list(asset_codes),
+        "target_book_id": str(book_id),
+    }
+    return hashlib.sha256(canonical_json_bytes(identity)).hexdigest()
 
 
 _OCCUPANCY_SQL = text(
@@ -184,18 +205,28 @@ class FrozenImportCatalogRepository:
         plan: FrozenFinancialHistoryPlan,
         *,
         current_receipt: ProcessingReceiptIdentity,
+        expected_baseline_identity_sha256: str | None = None,
     ) -> FrozenImportCatalogApplyResult:
         if type(plan) is not FrozenFinancialHistoryPlan:
             self._drift("plan", "frozen-financial-history", "contract")
         if type(current_receipt) is not ProcessingReceiptIdentity:
             self._drift("receipt", plan.target_book_id, "current_processing")
+        if expected_baseline_identity_sha256 is not None and (
+            type(expected_baseline_identity_sha256) is not str
+            or _LOWER_SHA256.fullmatch(expected_baseline_identity_sha256) is None
+        ):
+            self._drift("catalog", plan.target_book_id, "baseline_identity")
         if self._session.get_transaction() is None:
             self._drift("session", plan.target_book_id, "transaction")
         if self._session.new or self._session.dirty or self._session.deleted:
             self._drift("session", plan.target_book_id, "pending_state")
 
         with self._session.no_autoflush:
-            preflight = self._preflight(plan, current_receipt=current_receipt)
+            preflight = self._preflight(
+                plan,
+                current_receipt=current_receipt,
+                expected_baseline_identity_sha256=(expected_baseline_identity_sha256),
+            )
 
         asset_records = [
             AssetRecord(
@@ -278,11 +309,15 @@ class FrozenImportCatalogRepository:
         plan: FrozenFinancialHistoryPlan,
         *,
         current_receipt: ProcessingReceiptIdentity,
+        expected_baseline_identity_sha256: str | None,
     ) -> _CatalogPreflight:
         self._validate_plan_boundary(plan, current_receipt=current_receipt)
         self._session.execute(_CATALOG_FENCE_SQL)
         self._lock_and_validate_book(plan.target_book_id)
-        catalog = self._preflight_catalog(plan)
+        catalog = self._preflight_catalog(
+            plan,
+            expected_baseline_identity_sha256=(expected_baseline_identity_sha256),
+        )
         self._validate_receipt(plan, current_receipt=current_receipt)
         alias = next(account for account in plan.accounts if account.close_after_import)
         self._validate_alias_target_balance(plan.target_book_id, alias)
@@ -322,6 +357,8 @@ class FrozenImportCatalogRepository:
     def _preflight_catalog(
         self,
         plan: FrozenFinancialHistoryPlan,
+        *,
+        expected_baseline_identity_sha256: str | None,
     ) -> _CatalogPreflight:
         planned_assets = {asset.asset_code: asset for asset in plan.assets}
         existing_assets = tuple(
@@ -341,6 +378,17 @@ class FrozenImportCatalogRepository:
                 .order_by(AccountRecord.account_id)
             )
         )
+        if expected_baseline_identity_sha256 is not None:
+            actual_identity_sha256 = catalog_identity_sha256(
+                plan.target_book_id,
+                asset_codes=tuple(record.asset_code for record in existing_assets),
+                account_ids=tuple(record.account_id for record in existing_accounts),
+            )
+            if not hmac.compare_digest(
+                actual_identity_sha256,
+                expected_baseline_identity_sha256,
+            ):
+                self._drift("catalog", plan.target_book_id, "baseline_identity")
         for record in existing_accounts:
             planned = planned_accounts.get(record.account_id)
             if planned is None:

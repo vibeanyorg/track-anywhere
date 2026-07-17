@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.tests.v2.postgres.test_frozen_import_catalog import (
@@ -43,12 +45,14 @@ from track_anywhere.infrastructure.db.models.projections import (
     JournalTransactionRecord,
 )
 from track_anywhere.infrastructure.db.repositories.frozen_import import (
+    FrozenImportCatalogDrift,
     FrozenImportCatalogRepository,
 )
 from track_anywhere.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
 from track_anywhere.infrastructure.projections.synchronous import (
     SynchronousProjector,
 )
+from track_anywhere.serialization.canonical_json import canonical_json_bytes
 
 
 class InjectedImportFailure(RuntimeError):
@@ -58,31 +62,36 @@ class InjectedImportFailure(RuntimeError):
 @pytest.mark.parametrize("baseline_accounts", (63, 65))
 def test_wrong_exact_catalog_baseline_aborts_and_rolls_back_before_sidecars(
     pg_engine,
+    migrated_postgres_database,
     baseline_accounts: int,
 ) -> None:
     plan = _fixed_synthetic_plan()
     seed_target_baseline(pg_engine, plan, seed_receipt=False)
-    with pg_engine.begin() as connection:
-        if baseline_accounts == 63:
-            removed_id = next(iter(BASELINE_ACCOUNT_IDS))
-            result = connection.execute(
-                AccountRecord.__table__.delete().where(
-                    AccountRecord.book_id == plan.target_book_id,
-                    AccountRecord.account_id == removed_id,
+    admin_engine = create_engine(migrated_postgres_database.admin_url)
+    try:
+        with admin_engine.begin() as connection:
+            if baseline_accounts == 63:
+                removed_id = min(BASELINE_ACCOUNT_IDS, key=str)
+                result = connection.execute(
+                    AccountRecord.__table__.delete().where(
+                        AccountRecord.book_id == plan.target_book_id,
+                        AccountRecord.account_id == removed_id,
+                    )
                 )
-            )
-            assert result.rowcount == 1
-        else:
-            extra = next(
-                account
-                for account in plan.accounts
-                if account.account_id not in BASELINE_ACCOUNT_IDS
-                and account.asset_code in BASELINE_ASSET_CODES
-            )
-            connection.execute(
-                AccountRecord.__table__.insert(),
-                _account_row(plan.target_book_id, extra),
-            )
+                assert result.rowcount == 1
+            else:
+                extra = next(
+                    account
+                    for account in plan.accounts
+                    if account.account_id not in BASELINE_ACCOUNT_IDS
+                    and account.asset_code in BASELINE_ASSET_CODES
+                )
+                connection.execute(
+                    AccountRecord.__table__.insert(),
+                    _account_row(plan.target_book_id, extra),
+                )
+    finally:
+        admin_engine.dispose()
 
     session_factory = sessionmaker(pg_engine, expire_on_commit=False)
     with pytest.raises(
@@ -111,6 +120,154 @@ def test_wrong_exact_catalog_baseline_aborts_and_rolls_back_before_sidecars(
             == baseline_accounts
         )
         assert session.scalar(select(func.count()).select_from(AssetRecord)) == 16
+        for model in (
+            CategoryRecord,
+            LedgerEventRecord,
+            JournalTransactionRecord,
+            ProtectedDescriptionSidecarRecord,
+            ImportArchiveManifestRecord,
+            CommandReceiptRecord,
+        ):
+            assert session.scalar(select(func.count()).select_from(model)) == 0
+
+
+@pytest.mark.parametrize("substitution", ("account", "asset"))
+def test_equal_count_catalog_identity_substitution_aborts_atomically(
+    pg_engine,
+    migrated_postgres_database,
+    monkeypatch: pytest.MonkeyPatch,
+    substitution: str,
+) -> None:
+    plan = _fixed_synthetic_plan()
+    seed_target_baseline(pg_engine, plan, seed_receipt=False)
+    expected_identity = {
+        "account_ids": [
+            str(account_id) for account_id in sorted(BASELINE_ACCOUNT_IDS, key=str)
+        ],
+        "asset_codes": sorted(BASELINE_ASSET_CODES),
+        "target_book_id": str(plan.target_book_id),
+    }
+    monkeypatch.setattr(
+        frozen_import,
+        "FROZEN_IMPORT_PLAN_HASH",
+        plan_sha256(plan),
+    )
+    monkeypatch.setattr(
+        frozen_import,
+        "FROZEN_IMPORT_CATALOG_IDENTITY_SHA256",
+        hashlib.sha256(canonical_json_bytes(expected_identity)).hexdigest(),
+    )
+
+    admin_engine = create_engine(migrated_postgres_database.admin_url)
+    try:
+        with admin_engine.begin() as connection:
+            if substitution == "account":
+                removed_id = min(BASELINE_ACCOUNT_IDS, key=str)
+                extra = next(
+                    account
+                    for account in plan.accounts
+                    if account.account_id not in BASELINE_ACCOUNT_IDS
+                    and account.asset_code in BASELINE_ASSET_CODES
+                )
+                deleted = connection.execute(
+                    AccountRecord.__table__.delete().where(
+                        AccountRecord.book_id == plan.target_book_id,
+                        AccountRecord.account_id == removed_id,
+                    )
+                )
+                assert deleted.rowcount == 1
+                connection.execute(
+                    AccountRecord.__table__.insert(),
+                    _account_row(plan.target_book_id, extra),
+                )
+            else:
+                removed_code = min(
+                    (
+                        asset_code
+                        for asset_code in BASELINE_ASSET_CODES
+                        if asset_code
+                        not in {
+                            account.asset_code
+                            for account in plan.accounts
+                            if account.account_id in BASELINE_ACCOUNT_IDS
+                        }
+                    ),
+                )
+                extra = next(
+                    asset
+                    for asset in plan.assets
+                    if asset.asset_code not in BASELINE_ASSET_CODES
+                )
+                deleted = connection.execute(
+                    AssetRecord.__table__.delete().where(
+                        AssetRecord.asset_code == removed_code
+                    )
+                )
+                assert deleted.rowcount == 1
+                connection.execute(
+                    AssetRecord.__table__.insert(),
+                    {
+                        "asset_code": extra.asset_code,
+                        "kind": extra.kind,
+                        "ledger_scale": extra.ledger_scale,
+                        "input_scale": extra.input_scale,
+                        "display_scale": extra.display_scale,
+                        "current_name": extra.current_name,
+                        "status": extra.status,
+                    },
+                )
+    finally:
+        admin_engine.dispose()
+
+    with Session(pg_engine) as session:
+        initial_assets = tuple(
+            session.scalars(
+                select(AssetRecord.asset_code).order_by(AssetRecord.asset_code)
+            )
+        )
+        initial_accounts = tuple(
+            session.scalars(
+                select(AccountRecord.account_id)
+                .where(AccountRecord.book_id == plan.target_book_id)
+                .order_by(AccountRecord.account_id)
+            )
+        )
+    assert len(initial_assets) == 16
+    assert len(initial_accounts) == 64
+
+    session_factory = sessionmaker(pg_engine, expire_on_commit=False)
+    with pytest.raises(FrozenImportCatalogDrift) as caught:
+        frozen_import.import_frozen_financial_history(
+            plan,
+            expected_plan_hash=plan_sha256(plan),
+            raw_key="frozen-import-receipt",
+            actor=CommandActor(subject_id=FROZEN_IMPORT_ACTOR_SUBJECT_ID),
+            uow_factory=lambda: SqlAlchemyUnitOfWork(session_factory),
+            protected_content_cipher=_cipher(),
+        )
+    assert caught.value.entity_kind == "catalog"
+    assert caught.value.entity_id == plan.target_book_id
+    assert caught.value.field_name == "baseline_identity"
+
+    with Session(pg_engine) as session:
+        assert (
+            tuple(
+                session.scalars(
+                    select(AssetRecord.asset_code).order_by(AssetRecord.asset_code)
+                )
+            )
+            == initial_assets
+        )
+        assert (
+            tuple(
+                session.scalars(
+                    select(AccountRecord.account_id)
+                    .where(AccountRecord.book_id == plan.target_book_id)
+                    .order_by(AccountRecord.account_id)
+                )
+            )
+            == initial_accounts
+        )
         for model in (
             CategoryRecord,
             LedgerEventRecord,
