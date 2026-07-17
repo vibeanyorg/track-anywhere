@@ -41,6 +41,7 @@ TOOLS_DIR="$RUN_ROOT/tools"
 PG_NAME="ta-v2-pg-$RUN_SHORT"
 PG_NETWORK="ta-v2-net-$RUN_SHORT"
 PG_ENV_FILE="/dev/shm/ta-v2-pg-$RUN_SHORT.env"
+PG_INIT_MOUNT="$RUN_ROOT/001-v2-roles.sh"
 IMAGE_TAG="track-anywhere-api:v1-backfill-${SOURCE_COMMIT:0:12}-$RUN_SHORT"
 IMAGE_IID_FILE="$RUN_ROOT/candidate-image.iid"
 PG_CREATED=0
@@ -71,11 +72,12 @@ PG_INIT_SCRIPT="$REPO/docker/postgres/init/001-v2-roles.sh"
 PG_INIT_COMMITTED_BLOB="$(git -C "$REPO" rev-parse "$SOURCE_COMMIT:docker/postgres/init/001-v2-roles.sh")"
 PG_INIT_WORKTREE_BLOB="$(git -C "$REPO" hash-object "$PG_INIT_SCRIPT")"
 [[ "$PG_INIT_WORKTREE_BLOB" == "$PG_INIT_COMMITTED_BLOB" ]]
-# The checkout root may be private. The bind-mounted, tracked executable must
-# still be readable/executable by the postgres uid inside the pinned image.
-chmod 0555 "$PG_INIT_SCRIPT"
-[[ "$(stat -c '%a' "$PG_INIT_SCRIPT")" == '555' ]]
-[[ "$(git -C "$REPO" hash-object "$PG_INIT_SCRIPT")" == "$PG_INIT_COMMITTED_BLOB" ]]
+# Keep the checkout file writable for mutation tests. The first PG17 container
+# receives an exact-blob, run-scoped copy readable by its postgres uid.
+cp "$PG_INIT_SCRIPT" "$PG_INIT_MOUNT"
+chmod 0555 "$PG_INIT_MOUNT"
+[[ "$(stat -c '%a' "$PG_INIT_MOUNT")" == '555' ]]
+[[ "$(git -C "$REPO" hash-object "$PG_INIT_MOUNT")" == "$PG_INIT_COMMITTED_BLOB" ]]
 [[ -z "$(git -C "$REPO" status --porcelain)" ]]
 
 container_fingerprint() {
@@ -278,7 +280,7 @@ docker run -d \
   --label "$LABEL_KEY=$LABEL_VALUE" \
   --tmpfs /var/lib/postgresql/data:rw,nosuid,noexec,size=2g \
   --env-file "$PG_ENV_FILE" \
-  -v "$REPO/docker/postgres/init/001-v2-roles.sh:/docker-entrypoint-initdb.d/001-v2-roles.sh:ro" \
+  -v "$PG_INIT_MOUNT:/docker-entrypoint-initdb.d/001-v2-roles.sh:ro" \
   "$POSTGRES_IMAGE" >/dev/null
 PG_CREATED=1
 rm -f "$PG_ENV_FILE"
@@ -348,6 +350,13 @@ TAG_ID="$(docker image inspect "$IMAGE_TAG" --format '{{.Id}}')"
 [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$IMAGE_REVISION" == "$SOURCE_COMMIT" && "$TAG_ID" == "$IMAGE_ID" ]]
 
 printf 'phase=isolated_staging\n'
+# Compose bind-mounts the checkout path. All mutation tests have completed, so
+# make only this exact tracked blob readable/executable inside the PG container.
+[[ "$(git -C "$REPO" hash-object "$PG_INIT_SCRIPT")" == "$PG_INIT_COMMITTED_BLOB" ]]
+chmod 0555 "$PG_INIT_SCRIPT"
+[[ "$(stat -c '%a' "$PG_INIT_SCRIPT")" == '555' ]]
+[[ "$(git -C "$REPO" hash-object "$PG_INIT_SCRIPT")" == "$PG_INIT_COMMITTED_BLOB" ]]
+[[ -z "$(git -C "$REPO" status --porcelain)" ]]
 STAGING_RUN_ID="$(python3 - <<'PY'
 from uuid import uuid4
 print(uuid4())

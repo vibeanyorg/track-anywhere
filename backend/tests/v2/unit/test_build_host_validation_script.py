@@ -26,6 +26,13 @@ def test_build_host_validation_uses_the_existing_exact_git_checkout() -> None:
 def test_build_host_postgres_is_random_loopback_only_and_label_scoped() -> None:
     source = _source()
 
+    assert 'PG_INIT_MOUNT="$RUN_ROOT/001-v2-roles.sh"' in source
+    assert (
+        '-v "$PG_INIT_MOUNT:/docker-entrypoint-initdb.d/001-v2-roles.sh:ro"' in source
+    )
+    assert source.index("phase=isolated_staging") < source.index(
+        'chmod 0555 "$PG_INIT_SCRIPT"'
+    )
     assert (
         'docker network create --driver bridge --label "$LABEL_KEY=$LABEL_VALUE"'
         in source
