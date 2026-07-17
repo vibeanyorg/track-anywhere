@@ -12,6 +12,7 @@ from backend.tests.v2.fixtures.monthly import (
 )
 from track_anywhere.infrastructure.projections.monthly_summary import (
     cold_replay_monthly_summary,
+    read_monthly_summary,
 )
 from track_anywhere.infrastructure.projections.worker import AsyncProjectionWorker
 from track_anywhere.application.ledger_committer import BookWritePaused, LedgerCommitter
@@ -44,6 +45,47 @@ def test_online_monthly_summary_matches_cold_replay_and_emits_lag_metrics(
     assert snapshot.counters["projection.events_processed"] == 6
     assert snapshot.gauges["projection.lag"] == 0
     assert snapshot.counters["projection.dirty_periods"] >= 2
+
+
+def test_monthly_summary_uses_utc_periods_in_non_utc_database_session(
+    pg_engine,
+) -> None:
+    scenario = seed_monthly_scenario(pg_engine, actor_id="human:monthly-utc-period")
+    post_classified_expense(
+        pg_engine,
+        scenario,
+        # This is February 1 in Pacific/Auckland but January 31 in UTC.
+        effective_at=datetime(2026, 1, 31, 12, 30, tzinfo=UTC),
+        amount="5.00",
+    )
+
+    with pg_engine.connect() as connection:
+        connection.execute(text("set time zone 'Pacific/Auckland'"))
+        connection.commit()
+        factory = sessionmaker(connection, expire_on_commit=False)
+        metrics = LedgerMetrics()
+        worker = AsyncProjectionWorker(factory, metrics=metrics)
+        while worker.run_once(scenario.journal.book_id).processed_events:
+            pass
+
+        with Session(connection) as session:
+            january = read_monthly_summary(
+                session,
+                scenario.journal.book_id,
+                period_start=datetime(2026, 1, 1, tzinfo=UTC).date(),
+            )
+            february = read_monthly_summary(
+                session,
+                scenario.journal.book_id,
+                period_start=datetime(2026, 2, 1, tzinfo=UTC).date(),
+            )
+            cold = cold_replay_monthly_summary(session, scenario.journal.book_id)
+
+    assert january
+    assert february == ()
+    assert tuple(cold) == (datetime(2026, 1, 1, tzinfo=UTC).date(),)
+    assert january == cold[datetime(2026, 1, 1, tzinfo=UTC).date()]
+    assert metrics.snapshot().counters["projection.dirty_periods"] == 1
 
 
 def test_terminal_hash_mismatch_emits_p0_and_pauses_financial_writes(pg_engine) -> None:

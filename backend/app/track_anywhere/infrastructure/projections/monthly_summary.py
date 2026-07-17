@@ -26,7 +26,7 @@ from ..db.models.async_projection import ProjectionCheckpointRecord
 from ..db.models.event_store import LedgerEventRecord
 from ..db.models.monthly_summary import MonthlyCategorySummaryRecord
 from .checkpoints import PROJECTION_NAME, PROJECTOR_VERSION
-from .dirty_periods import month_start
+from .dirty_periods import month_start, utc_date
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -65,10 +65,10 @@ def cold_replay_monthly_summary(
             record.payload,
         )
         if type(payload) is JournalTransactionPosted:
-            transaction_times[payload.transaction_id] = record.effective_at.date()
+            transaction_times[payload.transaction_id] = utc_date(record.effective_at)
             transaction_reporting_signs[payload.transaction_id] = 1
         elif type(payload) is CreditCardTransactionRecorded:
-            transaction_times[payload.transaction_id] = record.effective_at.date()
+            transaction_times[payload.transaction_id] = utc_date(record.effective_at)
             transaction_card_intents[payload.transaction_id] = payload.intent
             transaction_reporting_signs[payload.transaction_id] = {
                 CreditCardIntent.CHARGE: 1,
@@ -77,10 +77,9 @@ def cold_replay_monthly_summary(
                 CreditCardIntent.REFUND: -1,
             }[payload.intent]
         elif type(payload) is JournalTransactionReversed:
-            transaction_times[payload.reversal_transaction_id] = (
-                record.effective_at.date()
-            )
-            reversals[payload.reverses_transaction_id] = record.effective_at.date()
+            effective_date = utc_date(record.effective_at)
+            transaction_times[payload.reversal_transaction_id] = effective_date
+            reversals[payload.reverses_transaction_id] = effective_date
             reversal_transaction_ids.add(payload.reversal_transaction_id)
         elif type(payload) is ReportingLinesAssigned:
             if payload.transaction_id in reversal_transaction_ids:

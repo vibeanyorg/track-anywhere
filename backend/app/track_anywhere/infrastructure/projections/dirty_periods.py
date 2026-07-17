@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
@@ -25,6 +25,19 @@ def next_month(value: date) -> date:
     return date(
         value.year + (value.month == 12), 1 if value.month == 12 else value.month + 1, 1
     )
+
+
+def utc_date(value: datetime) -> date:
+    """Return the UTC calendar date for an aware financial instant."""
+
+    if not isinstance(value, datetime):
+        raise TypeError("financial instant must be a datetime")
+    try:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError
+        return value.astimezone(UTC).date()
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("financial instant must be timezone-aware") from None
 
 
 def mark_dirty_periods(
@@ -81,7 +94,7 @@ def _affected_periods(
         event.payload,
     )
     if type(payload) not in {ReportingLinesAssigned, ReportingLinesCleared}:
-        return (month_start(event.effective_at.date()),)
+        return (month_start(utc_date(event.effective_at)),)
 
     transaction = session.get(
         JournalTransactionRecord,
@@ -89,7 +102,7 @@ def _affected_periods(
     )
     if transaction is None:
         raise RuntimeError("reporting event target transaction is unavailable")
-    periods = {month_start(transaction.effective_at.date())}
+    periods = {month_start(utc_date(transaction.effective_at))}
     reversal_id = session.scalar(
         select(TransactionReversalRecord.reversal_transaction_id).where(
             TransactionReversalRecord.book_id == event.book_id,
@@ -104,7 +117,7 @@ def _affected_periods(
         )
         if reversal is None:
             raise RuntimeError("reporting event reversal transaction is unavailable")
-        periods.add(month_start(reversal.effective_at.date()))
+        periods.add(month_start(utc_date(reversal.effective_at)))
     return tuple(sorted(periods))
 
 
@@ -126,4 +139,10 @@ def clear_dirty_periods(
     )
 
 
-__all__ = ["clear_dirty_periods", "mark_dirty_periods", "month_start", "next_month"]
+__all__ = [
+    "clear_dirty_periods",
+    "mark_dirty_periods",
+    "month_start",
+    "next_month",
+    "utc_date",
+]
