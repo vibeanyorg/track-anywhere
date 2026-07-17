@@ -843,6 +843,10 @@ def test_staging_preflights_postgres_and_disables_all_image_pulls(
         "content_digest": POSTGRES_IMAGE_ID,
         "reference": postgres_reference,
     }
+    assert report["roles"] == {
+        "migrator": "track_anywhere_migrator|track_anywhere_migrator",
+        "runtime": "track_anywhere_runtime|track_anywhere_runtime",
+    }
     assert "web" not in report["images"]
     assert report["checks"]["public_app_health"] == {
         "api_version": "v2",

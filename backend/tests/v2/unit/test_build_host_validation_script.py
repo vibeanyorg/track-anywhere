@@ -82,6 +82,8 @@ def test_build_host_candidate_and_failure_evidence_are_fail_closed() -> None:
     assert 'IFS= read -r IMAGE_ID <"$IMAGE_IID_FILE"' not in source
     assert "org.opencontainers.image.revision=$SOURCE_COMMIT" in source
     assert 'TRACK_ANYWHERE_E2E_API_IMAGE="$IMAGE_ID"' in source
+    assert '"migrator": f"{migrator_role}|{migrator_role}"' in source
+    assert '"runtime": f"{runtime_role}|{runtime_role}"' in source
     assert 'sed -e "s/$POSTGRES_PASSWORD/[REDACTED]/g"' in source
     assert 'chmod 600 "$PG_STATE_FILE" "$PG_LOG_FILE"' in source
     assert "TASK14_PASS=1" in source

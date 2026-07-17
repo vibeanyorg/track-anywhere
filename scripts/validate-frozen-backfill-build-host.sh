@@ -426,7 +426,10 @@ version = int(report["postgres_server_version_num"])
 assert 170000 <= version < 180000
 assert report["alembic_head"] == "v2_0013_frozen_import_fence"
 assert report["database_owner"] == owner_role
-assert report["roles"] == {"migrator": migrator_role, "runtime": runtime_role}
+assert report["roles"] == {
+    "migrator": f"{migrator_role}|{migrator_role}",
+    "runtime": f"{runtime_role}|{runtime_role}",
+}
 assert report["checks"]["runtime_cannot_update_events"] == "PASS"
 assert report["checks"]["runtime_cannot_disable_triggers"] == "PASS"
 assert report["checks"]["legacy_route_http_status"] == "404"
