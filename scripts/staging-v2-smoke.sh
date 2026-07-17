@@ -139,6 +139,8 @@ export TRACK_ANYWHERE_E2E_API_PORT="$(ta_pick_loopback_port)"
 export TRACK_ANYWHERE_E2E_POSTGRES_PORT="$(ta_pick_loopback_port)"
 export TRACK_ANYWHERE_E2E_NO_BUILD=1
 export TRACK_ANYWHERE_E2E_EXISTING_STACK=1
+POSTGRES_IMAGE_REFERENCE="${TRACK_ANYWHERE_POSTGRES_IMAGE:-postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
+export TRACK_ANYWHERE_POSTGRES_IMAGE="$POSTGRES_IMAGE_REFERENCE"
 
 OWNER_ROLE="${TRACK_ANYWHERE_OWNER_ROLE:-track_anywhere_owner}"
 MIGRATOR_ROLE="${TRACK_ANYWHERE_MIGRATOR_ROLE:-track_anywhere_migrator}"
@@ -162,6 +164,7 @@ PASS_WRITTEN=0
 MIGRATION_CONTAINER_CREATED=0
 API_IMAGE_ID=""
 POSTGRES_IMAGE_ID=""
+RUNNING_POSTGRES_IMAGE_ID=""
 API_REVISION=""
 API_REPO_DIGESTS=""
 POSTGRES_VERSION=""
@@ -184,6 +187,7 @@ write_verification() {
   python3 - \
     "$temporary" "$status" "$SOURCE_COMMIT" "$RUN_ID" "$STAGE" \
     "$API_IMAGE" "$API_IMAGE_ID" "$API_REVISION" "$API_REPO_DIGESTS" \
+    "$POSTGRES_IMAGE_REFERENCE" "$RUNNING_POSTGRES_IMAGE_ID" \
     "$POSTGRES_VERSION" "$RUNTIME_IDENTITY" "$MIGRATOR_IDENTITY" \
     "$DATABASE_OWNER" "$ALEMBIC_HEAD" "$E2E_RESULT" \
     "$PROJECTION_RESULT" "$VERIFIER_RESULT" "$APP_HEALTH_RESULT" \
@@ -203,6 +207,8 @@ from pathlib import Path
     api_image_id,
     api_revision,
     api_repo_digests,
+    postgres_image_reference,
+    postgres_image_id,
     postgres_version,
     runtime_identity,
     migrator_identity,
@@ -244,6 +250,10 @@ report = {
             "reference": api_image,
             "repo_digests": docker_json(api_repo_digests),
             "revision": api_revision or None,
+        },
+        "postgres": {
+            "content_digest": postgres_image_id or None,
+            "reference": postgres_image_reference,
         },
     },
     "checks": {
@@ -348,7 +358,7 @@ case "$DOCKER_ENDPOINT" in
 esac
 ta_run_with_timeout "$DOCKER_TIMEOUT" docker version --format '{{.Server.Version}}' >/dev/null
 API_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{.Id}}')"
-POSTGRES_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect postgres:17-alpine --format '{{.Id}}')"
+POSTGRES_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$POSTGRES_IMAGE_REFERENCE" --format '{{.Id}}')"
 API_REVISION="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
 API_REPO_DIGESTS="$(ta_run_with_timeout "$DOCKER_TIMEOUT" docker image inspect "$API_IMAGE" --format '{{json .RepoDigests}}')"
 for image_id in "$API_IMAGE_ID" "$POSTGRES_IMAGE_ID"; do
@@ -363,11 +373,23 @@ if [[ "$API_REVISION" != "$SOURCE_COMMIT" ]]; then
 fi
 CONFIG_IMAGES="$(ta_run_with_timeout "$DOCKER_TIMEOUT" "${COMPOSE[@]}" config --images)"
 grep -Fxq "$API_IMAGE" <<<"$CONFIG_IMAGES"
+grep -Fxq "$POSTGRES_IMAGE_REFERENCE" <<<"$CONFIG_IMAGES"
 
 STAGE=postgres_start
 COMPOSE_STARTED=1
 ta_run_with_timeout "$COMPOSE_TIMEOUT" \
   "${COMPOSE[@]}" up -d --no-build --pull never --wait postgres
+POSTGRES_CONTAINER="$("${COMPOSE[@]}" ps -q postgres)"
+[[ -n "$POSTGRES_CONTAINER" ]] || {
+  printf 'PostgreSQL container must be running\n' >&2
+  exit 1
+}
+RUNNING_POSTGRES_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_TIMEOUT" \
+  docker inspect "$POSTGRES_CONTAINER" --format '{{.Image}}')"
+if [[ "$RUNNING_POSTGRES_IMAGE_ID" != "$POSTGRES_IMAGE_ID" ]]; then
+  printf 'running PostgreSQL image ID differs from the validated image\n' >&2
+  exit 1
+fi
 ta_initialize_database_owner "$DOCKER_TIMEOUT" "$OWNER_ROLE" "${COMPOSE[@]}"
 
 STAGE=clean_migration

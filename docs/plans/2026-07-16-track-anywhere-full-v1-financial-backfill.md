@@ -937,6 +937,10 @@ a dump file. Script-structure tests must require:
 - Docker `--network` internal, no published ports, PGDATA on tmpfs;
 - pinned PG17 image digest used consistently by source and both targets;
 - source read-only role and transaction mode;
+- every executed helper, fixture, and PostgreSQL init file materialized from an
+  allowlisted `SOURCE_COMMIT` archive instead of mounted from the live checkout;
+- approved-review verification by its strict canonical content hash, and
+  candidate-image root-helper ownership setup with `--network none`;
 - plan stdout piped directly into the candidate-image runner stdin;
 - rehearsal-only keys in `/dev/shm` mode 0400;
 - A uses `TZ=UTC`, `LC_ALL=C`, seed 0, batch 37, worker 1;
@@ -945,6 +949,8 @@ a dump file. Script-structure tests must require:
 - exact second receipt replay creates zero rows;
 - trap cleanup proves zero run-scoped containers/networks/volumes remain before
   reporting PASS;
+- the canonical report pins the exact `source_manifest_sha256` and
+  `credit_card_review_sha256` contract values;
 - reports enforce an allowlist and contain no DSN, names, balances, purpose,
   memo, ciphertext, nonce, or key.
 
@@ -1166,6 +1172,15 @@ git archive --format=tar "$SHA" | docker build --pull \
   --label "org.opencontainers.image.revision=$SHA" \
   --target api-runtime \
   --tag "track-anywhere-api:v1-backfill-$SHA" -
+IMAGE_ID="$(
+  docker image inspect "track-anywhere-api:v1-backfill-$SHA" --format '{{.Id}}'
+)"
+IMAGE_REVISION="$(
+  docker image inspect "$IMAGE_ID" \
+    --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+)"
+[[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+test "$IMAGE_REVISION" = "$SHA"
 ```
 
 Read back image ID and revision label; require `sha256:*` and exact SHA. This is
@@ -1175,7 +1190,7 @@ the first application image build in this plan.
 
 ```bash
 TRACK_ANYWHERE_POSTGRES_IMAGE="$PINNED_PG17_IMAGE" \
-TRACK_ANYWHERE_E2E_API_IMAGE="track-anywhere-api:v1-backfill-$SHA" \
+TRACK_ANYWHERE_E2E_API_IMAGE="$IMAGE_ID" \
 bash scripts/staging-v2-smoke.sh \
   --source-commit "$SHA" --run-id "$STAGING_RUN_ID" \
   --report-dir "output/v2-staging-$SHA-$STAGING_RUN_ID"
@@ -1194,21 +1209,65 @@ and complete cleanup.
 **Step 1: Verify the dump locally and stream it once over SSH stdin**
 
 ```bash
+set -euo pipefail
 test "$(shasum -a 256 "$FIXED_DUMP" | awk '{print $1}')" = \
   a125b857a317e8c017d7028a26f78cf664ff6d57f6c0e698b3c229acf5d6cf9e
 
+IMAGE_ID="$(
+  ssh do-sfo3 \
+    "docker image inspect 'track-anywhere-api:v1-backfill-$SHA' --format '{{.Id}}'"
+)"
+[[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+REMOTE_REVIEW_DIR="/dev/shm/track-anywhere-review-$REHEARSAL_RUN_ID"
+REMOTE_REVIEW="$REMOTE_REVIEW_DIR/approved-card-review.json"
+REMOTE_REVIEW_TMP="${REMOTE_REVIEW}.tmp"
+cleanup_remote_review() {
+  ssh do-sfo3 "
+    rm -f -- '$REMOTE_REVIEW' '$REMOTE_REVIEW_TMP'
+    if test -d '$REMOTE_REVIEW_DIR'; then
+      rmdir -- '$REMOTE_REVIEW_DIR'
+    fi
+    test ! -e '$REMOTE_REVIEW_DIR'
+  "
+}
+trap cleanup_remote_review EXIT
 ssh do-sfo3 "
+  set -euo pipefail
+  umask 077
+  mkdir -m 0700 -- '$REMOTE_REVIEW_DIR'
+  test \"\$(stat -c '%u:%g:%a' '$REMOTE_REVIEW_DIR')\" = \
+    \"\$(id -u):\$(id -g):700\"
+  REVIEW_TMP='$REMOTE_REVIEW_TMP'
+  trap 'rm -f -- \"\$REVIEW_TMP\"' EXIT
+  cat > \"\$REVIEW_TMP\"
+  chmod 0400 \"\$REVIEW_TMP\"
+  test \"\$(stat -c '%u:%g:%a' \"\$REVIEW_TMP\")\" = \
+    \"\$(id -u):\$(id -g):400\"
+  mv -f -- \"\$REVIEW_TMP\" '$REMOTE_REVIEW'
+  trap - EXIT
+" < "$APPROVED_REVIEW"
+ssh do-sfo3 "
+  set -euo pipefail
   cd '$REMOTE_DIR'
-  TRACK_ANYWHERE_CANDIDATE_IMAGE='track-anywhere-api:v1-backfill-$SHA' \
-  TRACK_ANYWHERE_POSTGRES_IMAGE='$PINNED_PG17_IMAGE' \
+  chmod 0400 '$REMOTE_REVIEW'
+  test \"\$(stat -c '%u:%g:%a' '$REMOTE_REVIEW')\" = \
+    \"\$(id -u):\$(id -g):400\"
+  TRACK_ANYWHERE_CREDIT_CARD_REVIEW_FILE='$REMOTE_REVIEW' \
   bash scripts/rehearse-frozen-v1-history.sh \
+    --candidate-image '$IMAGE_ID' \
     --source-commit '$SHA' \
     --run-id '$REHEARSAL_RUN_ID' \
-    --book-id a682ddd2-f26a-5ad1-8f0a-f2fc1f75fa3d \
-    --report-dir 'output/v1-backfill-$SHA-$REHEARSAL_RUN_ID' \
-    --dump-stdin
+    --report-dir 'output/v1-backfill-$SHA-$REHEARSAL_RUN_ID'
 " < "$FIXED_DUMP"
+cleanup_remote_review
+trap - EXIT
 ```
+
+`APPROVED_REVIEW` is the local reviewed artifact. Its content is streamed over
+SSH stdin directly into the mode-`0400`, operator-owned run-scoped `/dev/shm`
+path above and never enters the repository, `output/`, or command logs. The
+outer trap removes the file and its mode-`0700` directory on success or failure and
+the cleanup command fails closed unless the remote path reads back absent.
 
 Expected: the dump is never persisted on DO; source and both targets use PG17
 tmpfs/internal networks/no host ports; target A and B independently import and
@@ -1237,7 +1296,10 @@ ssh do-sfo3 "
 ```
 
 Expected: PASS with only SHA, image identity, PG/Alembic versions, role names,
-counts, receipt state, hashes, quarantine count, and cleanup state.
+counts, receipt state, hashes, quarantine count, and cleanup state. The
+allowlist must include the exact pinned `source_manifest_sha256` and
+`credit_card_review_sha256` values rather than deriving them from prose or
+adjacent evidence.
 
 **Step 4: Stop before production**
 

@@ -60,7 +60,12 @@ def test_compose_declares_an_isolated_pinned_pg17_client_service() -> None:
         "\n  api:\n", maxsplit=1
     )[0]
 
-    assert "image: postgres:17-alpine" in client_block
+    pinned_image = (
+        "image: ${TRACK_ANYWHERE_POSTGRES_IMAGE:-postgres:17-alpine@sha256:"
+        "742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
+    )
+    assert pinned_image in client_block
+    assert content.count(pinned_image) == 2
     assert 'profiles: ["tools"]' in client_block
     assert "ports:" not in client_block
     assert "volumes:" not in client_block

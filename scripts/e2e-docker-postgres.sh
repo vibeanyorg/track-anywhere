@@ -143,6 +143,8 @@ get_json() {
 }
 
 ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker version --format '{{.Server.Version}}' >/dev/null
+POSTGRES_IMAGE_REFERENCE="${TRACK_ANYWHERE_POSTGRES_IMAGE:-postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}"
+export TRACK_ANYWHERE_POSTGRES_IMAGE="$POSTGRES_IMAGE_REFERENCE"
 if [[ "$EXISTING_STACK" == "1" ]]; then
   printf 'existing stack mode: refusing infrastructure mutation; running smoke checks only\n'
   ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
@@ -156,7 +158,7 @@ if [[ "$EXISTING_STACK" == "1" ]]; then
   EXPECTED_API_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
     docker image inspect "$TRACK_ANYWHERE_E2E_API_IMAGE" --format '{{.Id}}')"
   EXPECTED_POSTGRES_IMAGE_ID="$(ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" \
-    docker image inspect postgres:17-alpine --format '{{.Id}}')"
+    docker image inspect "$POSTGRES_IMAGE_REFERENCE" --format '{{.Id}}')"
   if [[ "$(ta_run_with_timeout "$DOCKER_CLI_TIMEOUT_SECONDS" docker inspect "$EXISTING_API_CONTAINER" --format '{{.Image}}')" != "$EXPECTED_API_IMAGE_ID" ]]; then
     printf 'existing stack API image mismatch\n' >&2
     exit 1

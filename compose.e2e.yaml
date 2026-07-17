@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17-alpine
+    image: ${TRACK_ANYWHERE_POSTGRES_IMAGE:-postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}
     environment:
       POSTGRES_DB: track_anywhere
       POSTGRES_USER: track_anywhere
@@ -16,13 +16,13 @@ services:
       - postgres17-data:/var/lib/postgresql/data
       - ./docker/postgres/init/001-v2-roles.sh:/docker-entrypoint-initdb.d/001-v2-roles.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U track_anywhere -d track_anywhere"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U track_anywhere -d track_anywhere"]
       interval: 5s
       timeout: 3s
       retries: 12
 
   pg17-client:
-    image: postgres:17-alpine
+    image: ${TRACK_ANYWHERE_POSTGRES_IMAGE:-postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193}
     profiles: ["tools"]
     command: ["psql", "--version"]
 

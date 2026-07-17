@@ -73,6 +73,8 @@ Inspect labels and digests without printing environment variables:
 test -z "$(git status --porcelain)"
 git rev-parse HEAD
 docker image inspect --format '{{json .RepoDigests}} {{json .Config.Labels}}' "$IMAGE"
+IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+[[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
 ```
 
 ### 2. Prove the frozen source without persisting it remotely
@@ -112,15 +114,29 @@ pinned PostgreSQL 17 digest, isolated internal networks, no published ports,
 and two independent targets A and B:
 
 ```bash
-TRACK_ANYWHERE_CANDIDATE_IMAGE="$IMAGE" \
-TRACK_ANYWHERE_POSTGRES_IMAGE="$PINNED_PG17_IMAGE" \
+TRACK_ANYWHERE_CREDIT_CARD_REVIEW_FILE="$APPROVED_REVIEW" \
 bash scripts/rehearse-frozen-v1-history.sh \
+  --candidate-image "$IMAGE_ID" \
   --source-commit "$SHA" \
   --run-id "$REHEARSAL_RUN_ID" \
-  --book-id a682ddd2-f26a-5ad1-8f0a-f2fc1f75fa3d \
   --report-dir "output/v1-backfill-$SHA-$REHEARSAL_RUN_ID" \
-  --dump-stdin < "$FIXED_DUMP"
+  < "$FIXED_DUMP"
 ```
+
+For a remote rehearsal, stage the approved review as a dedicated `0400` file
+owned by the remote operator under `/dev/shm`, pass only that path through
+`TRACK_ANYWHERE_CREDIT_CARD_REVIEW_FILE`, and use an outer cleanup trap that
+removes it and reads back that it no longer exists. Follow Task 15 in the
+implementation plan; the review content must never enter the repository,
+`output/`, shell arguments, or logs.
+
+The harness pins PostgreSQL internally. It verifies that the running harness
+matches `SOURCE_COMMIT`, materializes only its allowlisted tools, fixtures, and
+PostgreSQL init file from that exact Git object into a run-scoped read-only
+`/dev/shm` snapshot, and never executes or mounts the live checkout.
+The canonical PASS summary also pins the approved inputs directly as
+`source_manifest_sha256` and `credit_card_review_sha256`; either value must
+match the frozen contract exactly.
 
 Require:
 

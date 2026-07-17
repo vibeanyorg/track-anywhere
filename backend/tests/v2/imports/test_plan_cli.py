@@ -87,3 +87,27 @@ def test_cli_failure_is_stable_and_does_not_echo_exception_values(
     assert stdout.buffer.getvalue() == b""
     assert stderr.buffer.getvalue() == b'{"error":"plan_compilation_failed"}\n'
     assert b"sentinel-private-value" not in stderr.buffer.getvalue()
+
+
+def test_cli_runtime_failure_is_stable_and_does_not_echo_exception_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend.tools.frozen_v1_history import __main__ as cli
+
+    _configure_cli(monkeypatch, cli)
+    monkeypatch.setattr(
+        cli,
+        "compile_frozen_financial_history_plan",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("sentinel-runtime-secret")
+        ),
+    )
+    stdout = _BinaryTextSink()
+    stderr = _BinaryTextSink()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+
+    assert cli.main() == 2
+    assert stdout.buffer.getvalue() == b""
+    assert stderr.buffer.getvalue() == b'{"error":"plan_compilation_failed"}\n'
+    assert b"sentinel-runtime-secret" not in stderr.buffer.getvalue()

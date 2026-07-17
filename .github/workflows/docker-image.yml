@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
         env:
           POSTGRES_DB: postgres
           POSTGRES_USER: postgres
@@ -142,6 +142,72 @@ jobs:
           backend/tests/v2/unit/test_event_contracts.py
           backend/tests/v2/unit/test_event_hash.py -q
 
+  frozen-history-synthetic:
+    name: Synthetic frozen V1 history gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TRACK_ANYWHERE_ALLOW_EXTERNAL_TEST_DATABASE: "1"
+      TRACK_ANYWHERE_TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_MIGRATOR_BASE_URL: postgresql+psycopg://track_anywhere_migrator:track_anywhere_migrator_test@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_RUNTIME_BASE_URL: postgresql+psycopg://track_anywhere_runtime:track_anywhere_runtime_test@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Provision non-superuser frozen-history roles
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          create role track_anywhere_owner
+            nologin nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_migrator
+            login password 'track_anywhere_migrator_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_runtime
+            login password 'track_anywhere_runtime_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          grant track_anywhere_owner to track_anywhere_migrator
+            with admin false, inherit false, set true;
+          SQL
+      - run: uv sync --locked --extra postgres
+      - name: Validate disposable target provisioning
+        run: |
+          set -euo pipefail
+          SYNTHETIC_TARGET_URL="$(
+            uv run --extra postgres python backend/tests/v2/postgres_factory.py create \
+              --purpose ci-frozen-history --schema v2 --emit-role migrator
+          )"
+          cleanup() {
+            uv run --extra postgres python backend/tests/v2/postgres_factory.py drop \
+              --url "$SYNTHETIC_TARGET_URL" || true
+          }
+          trap cleanup EXIT
+          uv run --extra postgres python backend/tests/v2/postgres_factory.py \
+            role-name --kind runtime >/dev/null
+          cleanup
+          trap - EXIT
+      - name: Frozen-history synthetic import and verifier gate
+        run: uv run --extra postgres pytest backend/tests/v2/imports -q
+
   docker-postgres-e2e:
     name: Docker PostgreSQL 17 V2 E2E
     runs-on: ubuntu-latest
@@ -166,6 +232,7 @@ jobs:
       - v2-gates
       - hash-vectors
       - docker-postgres-e2e
+      - frozen-history-synthetic
     if: github.ref == 'refs/heads/main' || github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.channel == 'nightly')
     steps:
       - uses: actions/checkout@v4
@@ -198,6 +265,7 @@ jobs:
       - v2-gates
       - hash-vectors
       - docker-postgres-e2e
+      - frozen-history-synthetic
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.channel == 'stable')
     steps:
       - uses: actions/checkout@v4

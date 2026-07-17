@@ -20,9 +20,11 @@ def test_verify_v2_is_an_executable_strict_local_gate() -> None:
         "TRACK_ANYWHERE_TEST_POSTGRES_MIGRATOR_BASE_URL",
         "TRACK_ANYWHERE_TEST_POSTGRES_RUNTIME_BASE_URL",
     ):
-        assert f'${{{variable}:?required isolated PG17' in source
+        assert f"${{{variable}:?required isolated PG17" in source
     assert "export TRACK_ANYWHERE_ALLOW_EXTERNAL_TEST_DATABASE=1" in source
-    assert "unset TRACK_ANYWHERE_TEST_POSTGRES_URL TRACK_ANYWHERE_DATABASE_URL" in source
+    assert (
+        "unset TRACK_ANYWHERE_TEST_POSTGRES_URL TRACK_ANYWHERE_DATABASE_URL" in source
+    )
     assert "backend/tests/v2/postgres_factory.py create" in source
     assert "--emit-role migrator" in source
     assert "role-name --kind runtime" in source
@@ -48,6 +50,7 @@ def test_verify_v2_collects_each_required_v2_lane_without_legacy_tests() -> None
         "uv sync --locked --extra postgres",
         "pytest backend/tests/v2/unit -q",
         "pytest backend/tests/v2/postgres backend/tests/v2/concurrency -q",
+        "pytest backend/tests/v2/imports -q",
         "pytest backend/tests/v2/replay -q",
         "pytest backend/tests/v2/contract cli/tests contract_tests -q",
         "npm --prefix frontend ci",
@@ -60,3 +63,19 @@ def test_verify_v2_collects_each_required_v2_lane_without_legacy_tests() -> None
     assert "pytest backend/tests -q" not in source
     assert "backend/tests/v2/backfill" not in source
     assert "frozen_dump" not in source
+    assert "rehearse-frozen-v1-history.sh" not in source
+
+
+def test_verify_v2_synthetic_import_lane_never_requires_a_real_dump() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    imports_command = next(
+        line
+        for line in source.splitlines()
+        if "pytest backend/tests/v2/imports" in line
+    )
+    assert "--extra postgres" in imports_command
+    assert "TRACK_ANYWHERE_FROZEN_SOURCE_URL" not in source
+    assert "SOURCE_DUMP_SHA256" not in source
+    assert "pg_restore" not in source
+    assert "docker" not in source

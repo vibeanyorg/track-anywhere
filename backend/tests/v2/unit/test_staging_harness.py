@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -43,6 +44,7 @@ api_ref = os.environ.get("TRACK_ANYWHERE_E2E_API_IMAGE", "local-api:test")
 source_commit = os.environ.get("FAKE_SOURCE_COMMIT", "0" * 40)
 api_id = "sha256:" + "a" * 64
 postgres_id = "sha256:" + "c" * 64
+postgres_ref = os.environ.get("TRACK_ANYWHERE_POSTGRES_IMAGE", "postgres:17-alpine")
 
 
 def finish(code=0, output=""):
@@ -83,7 +85,7 @@ if args[:2] == ["image", "inspect"]:
     rendered = " ".join(args)
     if reference == api_ref:
         value = api_id
-    elif reference == "postgres:17-alpine":
+    elif reference == postgres_ref:
         value = postgres_id
     else:
         finish(1)
@@ -128,7 +130,7 @@ if command in {"build", "pull", "create", "start", "restart"}:
     finish(87)
 
 if command == "config":
-    finish(output="\n".join((api_ref, api_ref, "postgres:17-alpine")))
+    finish(output="\n".join((api_ref, api_ref, postgres_ref)))
 
 if command == "ps":
     if "-q" not in rest:
@@ -347,10 +349,20 @@ def _fake_environment(
         "TRACK_ANYWHERE_DOCKER_CLI_TIMEOUT_SECONDS": "5",
         "TRACK_ANYWHERE_DOCKER_COMPOSE_TIMEOUT_SECONDS": "5",
         "TRACK_ANYWHERE_E2E_API_IMAGE": "local-api:test",
+        "TRACK_ANYWHERE_POSTGRES_IMAGE": _compose_postgres_reference(),
     }
     environment.pop("DOCKER_CONTEXT", None)
     environment.pop("DOCKER_HOST", None)
     return environment
+
+
+def _compose_postgres_reference() -> str:
+    compose = _read("compose.e2e.yaml")
+    match = re.search(
+        r"TRACK_ANYWHERE_POSTGRES_IMAGE:-(?P<reference>postgres:17[^}]*)",
+        compose,
+    )
+    return match.group("reference") if match is not None else "postgres:17-alpine"
 
 
 def _run_staging(
@@ -433,7 +445,9 @@ def _compose_command(arguments: list[str]) -> str | None:
     return None
 
 
-def test_compose_uses_one_application_image_with_separate_migration_and_runtime_roles() -> None:
+def test_compose_uses_one_application_image_with_separate_migration_and_runtime_roles() -> (
+    None
+):
     compose = _read("compose.e2e.yaml")
 
     assert "TRACK_ANYWHERE_E2E_API_IMAGE" in compose
@@ -447,6 +461,23 @@ def test_compose_uses_one_application_image_with_separate_migration_and_runtime_
     assert "web-runtime" not in compose
     assert compose.count("127.0.0.1") >= 2
     assert "0.0.0.0:" not in compose
+
+
+def test_compose_postgres_healthcheck_waits_for_tcp_entrypoint_completion() -> None:
+    compose = _read("compose.e2e.yaml")
+
+    assert "pg_isready -h 127.0.0.1 -U track_anywhere -d track_anywhere" in compose
+
+
+def test_compose_pins_one_exact_postgres_17_digest_for_server_and_client() -> None:
+    compose = _read("compose.e2e.yaml")
+    references = re.findall(
+        r"image: \$\{TRACK_ANYWHERE_POSTGRES_IMAGE:-(postgres:17[^}]*@sha256:[0-9a-f]{64})\}",
+        compose,
+    )
+
+    assert len(references) == 2
+    assert len(set(references)) == 1
 
 
 def test_api_image_installs_python_dependencies_from_the_frozen_lock() -> None:
@@ -581,7 +612,12 @@ def test_run_contract_requires_unique_report_and_external_acceptance() -> None:
 
     assert "NOT RUN" in final
     assert "production untouched" in normalized_final
-    assert "current head contains no v1 import path" in normalized_final
+    assert (
+        "current head contains no v1 route, compatibility runtime, or general migration framework"
+        in normalized_final
+    )
+    assert "private, offline importer" in normalized_final
+    assert "not reachable from http, mcp, or cli" in normalized_final
     assert "has not been executed" in normalized_final
 
 
@@ -777,10 +813,11 @@ def test_staging_preflights_postgres_and_disables_all_image_pulls(
     assert result.returncode == 0, result.stderr
     assert not evidence["pull_violations"].exists()
     commands = _json_lines(evidence["docker_trace"])
+    postgres_reference = _compose_postgres_reference()
     postgres_preflight = next(
         index
         for index, command in enumerate(commands)
-        if command[:3] == ["image", "inspect", "postgres:17-alpine"]
+        if command[:3] == ["image", "inspect", postgres_reference]
     )
     resource_commands = [
         (index, command)
@@ -789,12 +826,23 @@ def test_staging_preflights_postgres_and_disables_all_image_pulls(
     ]
     assert resource_commands
     assert postgres_preflight < resource_commands[0][0]
+    postgres_runtime_inspection = next(
+        index
+        for index, command in enumerate(commands)
+        if command[:2] == ["inspect", "postgres-container"]
+        and "{{.Image}}" in " ".join(command)
+    )
+    assert resource_commands[0][0] < postgres_runtime_inspection
     for _, command in resource_commands:
         pull_index = command.index("--pull")
         assert command[pull_index + 1] == "never"
     report = json.loads((report_dir / "verification.json").read_text(encoding="utf-8"))
     assert report["status"] == "PASS"
     assert report["images"]["api"]["content_digest"] == API_IMAGE_ID
+    assert report["images"]["postgres"] == {
+        "content_digest": POSTGRES_IMAGE_ID,
+        "reference": postgres_reference,
+    }
     assert "web" not in report["images"]
     assert report["checks"]["public_app_health"] == {
         "api_version": "v2",
@@ -803,7 +851,9 @@ def test_staging_preflights_postgres_and_disables_all_image_pulls(
     assert "web_proxy_health" not in report["checks"]
 
 
-def test_public_app_health_redirect_is_not_followed_and_fails_closed(tmp_path: Path) -> None:
+def test_public_app_health_redirect_is_not_followed_and_fails_closed(
+    tmp_path: Path,
+) -> None:
     result, report_dir, evidence = _run_staging(tmp_path, curl_mode="redirect")
 
     assert result.returncode != 0
@@ -833,7 +883,9 @@ def test_public_app_health_html_cannot_be_reported_as_pass(tmp_path: Path) -> No
     assert report["stage"] == "app_smoke"
 
 
-def test_public_app_health_json_with_wrong_mime_type_cannot_pass(tmp_path: Path) -> None:
+def test_public_app_health_json_with_wrong_mime_type_cannot_pass(
+    tmp_path: Path,
+) -> None:
     result, report_dir, _ = _run_staging(
         tmp_path,
         curl_content_type="text/plain; charset=utf-8",
@@ -906,11 +958,19 @@ def test_final_verification_describes_only_the_current_v2_release_boundary() -> 
         _read("docs/operations/v2-final-verification.md").casefold().split()
     )
 
-    assert "current head contains no v1 import path" in final
+    assert (
+        "runtime source boundary: **v2 only; private frozen-import exception only**"
+        in final
+    )
+    assert (
+        "current head contains no v1 route, compatibility runtime, or general migration framework"
+        in final
+    )
+    assert "one hash-pinned, private, offline importer" in final
+    assert "not reachable from http, mcp, or cli" in final
     assert "exact-image isolated staging: **not run**" in final
     assert "production deploy/cutover: **not performed**" in final
-    assert "backfill" not in final
-    assert "frozen dump" not in final
+    assert "general migration framework" in final
 
 
 def test_checklist_scopes_no_registry_to_the_harness_invocation() -> None:
