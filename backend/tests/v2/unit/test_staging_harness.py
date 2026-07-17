@@ -10,6 +10,8 @@ import textwrap
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[4]
 
@@ -26,6 +28,19 @@ HARNESS_SOURCE_PATHS = (
 
 API_IMAGE_ID = "sha256:" + "a" * 64
 POSTGRES_IMAGE_ID = "sha256:" + "c" * 64
+FIXTURE_OWNER_ROLE = "fixture_owner"
+FIXTURE_MIGRATOR_ROLE = "fixture_migrator"
+FIXTURE_RUNTIME_ROLE = "fixture_runtime"
+FIXTURE_MIGRATOR_PASSWORD = "fixture_migrator_password"
+FIXTURE_RUNTIME_PASSWORD = "fixture_runtime_password"
+AMBIENT_DATABASE_ENVIRONMENT_VARIABLES = (
+    "TRACK_ANYWHERE_ALLOW_EXTERNAL_TEST_DATABASE",
+    "TRACK_ANYWHERE_DATABASE_URL",
+    "TRACK_ANYWHERE_TEST_POSTGRES_ADMIN_URL",
+    "TRACK_ANYWHERE_TEST_POSTGRES_MIGRATOR_BASE_URL",
+    "TRACK_ANYWHERE_TEST_POSTGRES_RUNTIME_BASE_URL",
+    "TRACK_ANYWHERE_TEST_POSTGRES_URL",
+)
 
 
 FAKE_DOCKER = r"""#!/usr/bin/env python3
@@ -337,22 +352,32 @@ def _install_fake_tools(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
 def _fake_environment(
     bin_dir: Path, evidence: dict[str, Path], source_commit: str
 ) -> dict[str, str]:
+    fake_home = bin_dir.parent / "fake-home"
+    fake_tmp = bin_dir.parent / "fake-tmp"
+    fake_home.mkdir(mode=0o700, exist_ok=True)
+    fake_tmp.mkdir(mode=0o700, exist_ok=True)
     environment = {
-        **os.environ,
         "FAKE_CURL_TRACE": str(evidence["curl_trace"]),
         "FAKE_DOCKER_MUTATIONS": str(evidence["mutations"]),
         "FAKE_DOCKER_PULL_VIOLATIONS": str(evidence["pull_violations"]),
         "FAKE_DOCKER_TRACE": str(evidence["docker_trace"]),
         "FAKE_EXTERNAL_CONTACT": str(evidence["external_contact"]),
         "FAKE_SOURCE_COMMIT": source_commit,
+        "HOME": str(fake_home),
+        "LANG": "C",
+        "LC_ALL": "C",
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "TMPDIR": str(fake_tmp),
         "TRACK_ANYWHERE_DOCKER_CLI_TIMEOUT_SECONDS": "5",
         "TRACK_ANYWHERE_DOCKER_COMPOSE_TIMEOUT_SECONDS": "5",
         "TRACK_ANYWHERE_E2E_API_IMAGE": "local-api:test",
+        "TRACK_ANYWHERE_OWNER_ROLE": FIXTURE_OWNER_ROLE,
+        "TRACK_ANYWHERE_MIGRATOR_ROLE": FIXTURE_MIGRATOR_ROLE,
+        "TRACK_ANYWHERE_MIGRATOR_PASSWORD": FIXTURE_MIGRATOR_PASSWORD,
         "TRACK_ANYWHERE_POSTGRES_IMAGE": _compose_postgres_reference(),
+        "TRACK_ANYWHERE_RUNTIME_ROLE": FIXTURE_RUNTIME_ROLE,
+        "TRACK_ANYWHERE_RUNTIME_PASSWORD": FIXTURE_RUNTIME_PASSWORD,
     }
-    environment.pop("DOCKER_CONTEXT", None)
-    environment.pop("DOCKER_HOST", None)
     return environment
 
 
@@ -363,6 +388,22 @@ def _compose_postgres_reference() -> str:
         compose,
     )
     return match.group("reference") if match is not None else "postgres:17-alpine"
+
+
+def test_fake_environment_drops_ambient_database_connections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in AMBIENT_DATABASE_ENVIRONMENT_VARIABLES:
+        monkeypatch.setenv(name, f"ambient-{name.casefold()}")
+    bin_dir, evidence = _install_fake_tools(tmp_path)
+
+    environment = _fake_environment(bin_dir, evidence, "0" * 40)
+
+    inherited_names = sorted(
+        name for name in AMBIENT_DATABASE_ENVIRONMENT_VARIABLES if name in environment
+    )
+    assert inherited_names == []
 
 
 def _run_staging(
@@ -807,7 +848,13 @@ def test_staging_rejects_a_remote_docker_endpoint_before_mutation(
 
 def test_staging_preflights_postgres_and_disables_all_image_pulls(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("TRACK_ANYWHERE_OWNER_ROLE", "ambient_owner")
+    monkeypatch.setenv("TRACK_ANYWHERE_MIGRATOR_ROLE", "ambient_migrator")
+    monkeypatch.setenv("TRACK_ANYWHERE_RUNTIME_ROLE", "ambient_runtime")
+    monkeypatch.setenv("TRACK_ANYWHERE_MIGRATOR_PASSWORD", "ambient_migrator_secret")
+    monkeypatch.setenv("TRACK_ANYWHERE_RUNTIME_PASSWORD", "ambient_runtime_secret")
     result, report_dir, evidence = _run_staging(tmp_path, enforce_pull=True)
 
     assert result.returncode == 0, result.stderr
@@ -844,9 +891,20 @@ def test_staging_preflights_postgres_and_disables_all_image_pulls(
         "reference": postgres_reference,
     }
     assert report["roles"] == {
-        "migrator": "track_anywhere_migrator|track_anywhere_migrator",
-        "runtime": "track_anywhere_runtime|track_anywhere_runtime",
+        "migrator": f"{FIXTURE_MIGRATOR_ROLE}|{FIXTURE_MIGRATOR_ROLE}",
+        "runtime": f"{FIXTURE_RUNTIME_ROLE}|{FIXTURE_RUNTIME_ROLE}",
     }
+    report_text = (report_dir / "verification.json").read_text(encoding="utf-8")
+    trace_text = evidence["docker_trace"].read_text(encoding="utf-8")
+    for ambient_marker in (
+        "ambient_owner",
+        "ambient_migrator",
+        "ambient_runtime",
+        "ambient_migrator_secret",
+        "ambient_runtime_secret",
+    ):
+        assert ambient_marker not in report_text
+        assert ambient_marker not in trace_text
     assert "web" not in report["images"]
     assert report["checks"]["public_app_health"] == {
         "api_version": "v2",
