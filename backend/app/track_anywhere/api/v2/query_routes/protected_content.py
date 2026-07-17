@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from ....infrastructure.crypto import ProtectedContentCipher
 from ....queries.protected_content import (
-    ImportArchiveExport,
     ImportArchiveMetadata,
     ProtectedContentErased,
     ProtectedContentUnavailable,
