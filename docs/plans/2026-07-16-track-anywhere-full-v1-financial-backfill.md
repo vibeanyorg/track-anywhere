@@ -1134,7 +1134,8 @@ Expected: push exits 0 and divergence is `0 0`.
 
 **Files:**
 
-- Remote clean clone only; do not edit source on the server.
+- Add: `scripts/validate-frozen-backfill-build-host.sh`
+- Remote clean checkout only; do not edit source on the server.
 
 **Step 1: Create a fresh clean checkout for the exact pushed SHA**
 
@@ -1144,61 +1145,53 @@ From local, calculate `SHA=$(git rev-parse HEAD)` and a new run ID. On `do-sfo3`
 gh repo clone vibeanyorg/track-anywhere "$REMOTE_DIR" -- \
   --branch codex/full-v1-history-backfill --single-branch
 cd "$REMOTE_DIR"
+git fetch origin codex/full-v1-history-backfill
+git switch --detach "$SHA"
 test "$(git rev-parse HEAD)" = "$SHA"
 test -z "$(git status --porcelain)"
-uv sync --locked --extra postgres
 ```
 
-Expected: exact SHA, clean tree, locked dependency sync.
+Expected: the server only reads the pushed Git branch, then checks out the exact
+SHA with a clean tracked tree. No project source or runner is copied with
+`scp`; the tracked runner bootstraps its pinned, run-scoped toolchain.
 
 **Step 2: Run source/PG17 gates before building**
 
-Start only run-scoped, loopback/internal PG17 resources and run:
+Run the committed build-host harness with a fresh canonical UUID:
 
 ```bash
-bash scripts/verify-v2.sh
+bash scripts/validate-frozen-backfill-build-host.sh "$SHA" "$RUN_ID"
 ```
 
-Expected: all unit, contract, PG17, concurrency, replay, CLI, frontend,
-Alembic, and synthetic backfill lanes PASS. Always tear down the run-scoped
-project and prove zero containers/volumes remain.
+The harness creates a uniquely labelled bridge network and publishes PostgreSQL
+only on a random `127.0.0.1` port, because the host-side test factory rejects
+non-loopback databases and Docker 29 does not publish ports from an internal
+network. It runs all unit, contract, PG17, concurrency, replay, CLI, frontend,
+Alembic, and synthetic backfill lanes, then performs Steps 3 and 4 below. It
+always tears down its exact run label/Compose project and proves zero
+containers, networks, and volumes remain.
 
-**Step 3: Build an immutable application image from the commit object**
+On PASS it writes a mode-`0600`, secret-free handoff at
+`$HOME/.cache/track-anywhere-validation/$RUN_ID/task14-state.env`. Task 15 must
+read the exact `IMAGE_ID` from that file; it must not rediscover the image from
+a mutable tag.
 
-Only on `do-sfo3`:
+**Step 3: Harness-internal immutable image build contract**
 
-```bash
-git archive --format=tar "$SHA" | docker build --pull \
-  --label "org.opencontainers.image.revision=$SHA" \
-  --target api-runtime \
-  --tag "track-anywhere-api:v1-backfill-$SHA" -
-IMAGE_ID="$(
-  docker image inspect "track-anywhere-api:v1-backfill-$SHA" --format '{{.Id}}'
-)"
-IMAGE_REVISION="$(
-  docker image inspect "$IMAGE_ID" \
-    --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
-)"
-[[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
-test "$IMAGE_REVISION" = "$SHA"
-```
+The tracked harness, not a second operator command, runs `git archive` for the
+exact commit through `docker build --pull --target api-runtime`. It captures the
+result through a run-scoped `--iidfile`, uses a run-unique diagnostic tag, and
+requires the image revision label to equal the full source SHA. The resulting
+exact image ID is written to `task14-state.env`.
 
-Read back image ID and revision label; require `sha256:*` and exact SHA. This is
-the first application image build in this plan.
+**Step 4: Harness-internal exact-image staging contract**
 
-**Step 4: Run exact-image staging**
-
-```bash
-TRACK_ANYWHERE_POSTGRES_IMAGE="$PINNED_PG17_IMAGE" \
-TRACK_ANYWHERE_E2E_API_IMAGE="$IMAGE_ID" \
-bash scripts/staging-v2-smoke.sh \
-  --source-commit "$SHA" --run-id "$STAGING_RUN_ID" \
-  --report-dir "output/v2-staging-$SHA-$STAGING_RUN_ID"
-```
-
-Expected: secret-free `verification.json` reports PASS, exact revision, PG 17,
-Alembic head, separated roles, verifier PASS, zero projection lag, legacy 404,
-and complete cleanup.
+The same harness passes that exact image ID to `staging-v2-smoke.sh` with the
+pinned PG17 digest and a fresh internal staging UUID. The secret-free
+`verification.json` must report PASS, exact revision, PG 17, Alembic head,
+separated roles, verifier PASS, zero projection lag, legacy 404, and complete
+cleanup. Steps 3 and 4 are evidence contracts for the tracked runner, not
+commands to repeat in a parent shell.
 
 ## Task 15: Fixed-dump double rehearsal and stop gate
 
@@ -1213,10 +1206,20 @@ set -euo pipefail
 test "$(shasum -a 256 "$FIXED_DUMP" | awk '{print $1}')" = \
   a125b857a317e8c017d7028a26f78cf664ff6d57f6c0e698b3c229acf5d6cf9e
 
-IMAGE_ID="$(
-  ssh do-sfo3 \
-    "docker image inspect 'track-anywhere-api:v1-backfill-$SHA' --format '{{.Id}}'"
-)"
+TASK14_STATE_REL=".cache/track-anywhere-validation/$TASK14_RUN_ID/task14-state.env"
+IMAGE_ID="$(ssh do-sfo3 "
+  set -euo pipefail
+  state=\"\$HOME/$TASK14_STATE_REL\"
+  test \"\$(stat -c '%u:%g:%a' \"\$state\")\" = \
+    \"\$(id -u):\$(id -g):600\"
+  . \"\$state\"
+  test \"\$SOURCE_COMMIT\" = '$SHA'
+  test \"\$REPO\" = '$REMOTE_DIR'
+  revision=\$(docker image inspect \"\$IMAGE_ID\" \
+    --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}')
+  test \"\$revision\" = '$SHA'
+  printf '%s\\n' \"\$IMAGE_ID\"
+")"
 [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
 REMOTE_REVIEW_DIR="/dev/shm/track-anywhere-review-$REHEARSAL_RUN_ID"
 REMOTE_REVIEW="$REMOTE_REVIEW_DIR/approved-card-review.json"
@@ -1289,8 +1292,12 @@ unchanged Book head/terminal hash.
 
 ```bash
 ssh do-sfo3 "
-  cd '$REMOTE_DIR'
-  uv run python -m backend.tools.frozen_v1_history verify-report \
+  set -euo pipefail
+  state=\"\$HOME/$TASK14_STATE_REL\"
+  . \"\$state\"
+  test \"\$SOURCE_COMMIT\" = '$SHA'
+  cd \"\$REPO\"
+  \"\$RUN_ROOT/venv/bin/python\" -m backend.tools.frozen_v1_history verify-report \
     'output/v1-backfill-$SHA-$REHEARSAL_RUN_ID/summary.json'
 "
 ```
