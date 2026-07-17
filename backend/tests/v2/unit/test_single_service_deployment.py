@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-
-from setuptools import find_packages
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -29,9 +28,15 @@ def test_runtime_image_contains_the_static_export_without_a_node_server() -> Non
 
 def test_image_and_package_contain_the_private_offline_runner() -> None:
     dockerfile = _read("Dockerfile")
-    packages = set(find_packages(where=ROOT / "backend/app"))
+    project = tomllib.loads(_read("pyproject.toml"))
+    package_discovery = project["tool"]["setuptools"]["packages"]["find"]
 
-    assert "track_anywhere.offline" in packages
+    assert "backend/app" in package_discovery["where"]
+    assert any(
+        pattern in {"track_anywhere*", "track_anywhere.*"}
+        for pattern in package_discovery["include"]
+    )
+    assert (ROOT / "backend/app/track_anywhere/offline/__init__.py").is_file()
     assert (
         ROOT / "backend/app/track_anywhere/offline/import_frozen_financial_history.py"
     ).is_file()
