@@ -344,10 +344,22 @@ assert_control_plane_idle
     --tag "$IMAGE_TAG" -
 )
 chmod 600 "$IMAGE_IID_FILE"
-IFS= read -r IMAGE_ID <"$IMAGE_IID_FILE"
+IMAGE_IID_SIZE="$(wc -c <"$IMAGE_IID_FILE" | tr -d ' ')"
+if [[ "$IMAGE_IID_SIZE" != '71' && "$IMAGE_IID_SIZE" != '72' ]]; then
+  printf 'invalid candidate image id file length\n' >&2
+  exit 1
+fi
+IMAGE_ID="$(<"$IMAGE_IID_FILE")"
+if [[ ! "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  printf 'invalid candidate image id\n' >&2
+  exit 1
+fi
 IMAGE_REVISION="$(docker image inspect "$IMAGE_ID" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
 TAG_ID="$(docker image inspect "$IMAGE_TAG" --format '{{.Id}}')"
-[[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "$IMAGE_REVISION" == "$SOURCE_COMMIT" && "$TAG_ID" == "$IMAGE_ID" ]]
+if [[ "$IMAGE_REVISION" != "$SOURCE_COMMIT" || "$TAG_ID" != "$IMAGE_ID" ]]; then
+  printf 'candidate image provenance mismatch\n' >&2
+  exit 1
+fi
 
 printf 'phase=isolated_staging\n'
 # Compose bind-mounts the checkout path. All mutation tests have completed, so
