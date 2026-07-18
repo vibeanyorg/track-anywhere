@@ -111,6 +111,7 @@ TRACK_ANYWHERE_DATABASE_URL=postgresql+psycopg://track_anywhere_runtime:<url-enc
 TRACK_ANYWHERE_PUBLIC_BASE_URL=https://ledger.example.com
 TRACK_ANYWHERE_ALLOWED_ORIGINS=https://ledger.example.com
 TRACK_ANYWHERE_PROJECTION_POLL_SECONDS=2
+TRACK_ANYWHERE_MAX_REQUEST_BODY_BYTES=1048576
 TRACK_ANYWHERE_PROTECTED_CONTENT_KEYRING_FILE=/run/secrets/track-anywhere-protected-content-keyring.json
 ```
 

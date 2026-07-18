@@ -9,7 +9,7 @@ from typing import Any
 import anyio
 from fastapi import FastAPI
 from starlette.datastructures import MutableHeaders
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -22,6 +22,10 @@ from .mcp.server import McpRuntime, create_mcp_runtime
 
 STATIC_DIRECTORY_ENV = "TRACK_ANYWHERE_STATIC_DIRECTORY"
 PROJECTION_POLL_SECONDS_ENV = "TRACK_ANYWHERE_PROJECTION_POLL_SECONDS"
+MAX_REQUEST_BODY_BYTES_ENV = "TRACK_ANYWHERE_MAX_REQUEST_BODY_BYTES"
+DEFAULT_MAX_REQUEST_BODY_BYTES = 1_048_576
+MAX_CONFIGURED_REQUEST_BODY_BYTES = 16_777_216
+_BODY_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 class StaticExportFiles(StaticFiles):
@@ -51,13 +55,24 @@ class ProtocolApplication:
         mcp_runtime: McpRuntime | None,
         web_application: ASGIApp | None = None,
         projection_runtime: ProjectionRuntime | None = None,
+        max_request_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES,
     ) -> None:
+        if (
+            type(max_request_body_bytes) is not int
+            or not 1 <= max_request_body_bytes <= MAX_CONFIGURED_REQUEST_BODY_BYTES
+        ):
+            raise ValueError(
+                "max_request_body_bytes must be a positive integer no greater than "
+                f"{MAX_CONFIGURED_REQUEST_BODY_BYTES}"
+            )
         self.rest_application = rest_application
         self.discovery_application = discovery_application
         self.mcp_runtime = mcp_runtime
         self.web_application = web_application
         self.projection_runtime = projection_runtime
+        self.max_request_body_bytes = max_request_body_bytes
         self.state = rest_application.state
+        self.state.max_request_body_bytes = max_request_body_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":
@@ -65,6 +80,16 @@ class ProtocolApplication:
             return
 
         path = str(scope.get("path", ""))
+        bounded_receive = await _bounded_request_receive(
+            scope,
+            receive,
+            send,
+            max_bytes=self.max_request_body_bytes,
+        )
+        if bounded_receive is None:
+            return
+        receive = bounded_receive
+
         if path.startswith("/.well-known/"):
             if (
                 self.mcp_runtime is not None
@@ -116,6 +141,7 @@ def create_server(
     dependencies: RuntimeDependencies | None = None,
     public_base_url: str | None = None,
     static_directory: str | Path | None = None,
+    max_request_body_bytes: int | None = None,
     **api_options: Any,
 ) -> ProtocolApplication:
     base = public_base_url or configured_public_base_url()
@@ -136,12 +162,18 @@ def create_server(
     )
     discovery = _create_discovery_application(base, mcp_runtime is not None)
     web_application = _create_web_application(static_directory)
+    body_limit = (
+        _max_request_body_bytes_from_env()
+        if max_request_body_bytes is None
+        else max_request_body_bytes
+    )
     return ProtocolApplication(
         rest_application=rest,
         discovery_application=discovery,
         mcp_runtime=mcp_runtime,
         web_application=web_application,
         projection_runtime=projection_runtime,
+        max_request_body_bytes=body_limit,
     )
 
 
@@ -158,6 +190,122 @@ def _projection_poll_seconds() -> float:
             f"{PROJECTION_POLL_SECONDS_ENV} must be between 0.1 and 300 seconds"
         )
     return value
+
+
+def _max_request_body_bytes_from_env() -> int:
+    raw_value = os.environ.get(
+        MAX_REQUEST_BODY_BYTES_ENV,
+        str(DEFAULT_MAX_REQUEST_BODY_BYTES),
+    )
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"{MAX_REQUEST_BODY_BYTES_ENV} must be between 1024 and "
+            f"{MAX_CONFIGURED_REQUEST_BODY_BYTES} bytes"
+        ) from None
+    if not 1_024 <= value <= MAX_CONFIGURED_REQUEST_BODY_BYTES:
+        raise ValueError(
+            f"{MAX_REQUEST_BODY_BYTES_ENV} must be between 1024 and "
+            f"{MAX_CONFIGURED_REQUEST_BODY_BYTES} bytes"
+        )
+    return value
+
+
+async def _bounded_request_receive(
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+    *,
+    max_bytes: int,
+) -> Receive | None:
+    if not _is_body_limited_request(scope):
+        return receive
+
+    declared_length = _content_length(scope)
+    if declared_length is not None and declared_length > max_bytes:
+        await _send_request_too_large(scope, receive, send)
+        return None
+
+    body = bytearray()
+    disconnected = False
+    while True:
+        message = await receive()
+        if message["type"] == "http.request":
+            body.extend(message.get("body", b""))
+            if len(body) > max_bytes:
+                await _send_request_too_large(scope, receive, send)
+                return None
+            if not message.get("more_body", False):
+                break
+        elif message["type"] == "http.disconnect":
+            disconnected = True
+            break
+
+    replayed = False
+    replay_message: Message = (
+        {"type": "http.disconnect"}
+        if disconnected
+        else {"type": "http.request", "body": bytes(body), "more_body": False}
+    )
+
+    async def replay_receive() -> Message:
+        nonlocal replayed
+        if not replayed:
+            replayed = True
+            return replay_message
+        return await receive()
+
+    return replay_receive
+
+
+def _is_body_limited_request(scope: Scope) -> bool:
+    if scope["type"] != "http":
+        return False
+    if str(scope.get("method", "")).upper() not in _BODY_METHODS:
+        return False
+    path = str(scope.get("path", ""))
+    candidate_paths = {path}
+    root_path = str(scope.get("root_path", "")).rstrip("/")
+    if root_path and (path == root_path or path.startswith(f"{root_path}/")):
+        candidate_paths.add(path[len(root_path):] or "/")
+    return any(
+        candidate == "/api"
+        or candidate.startswith("/api/")
+        or candidate in {"/mcp", "/mcp/"}
+        for candidate in candidate_paths
+    )
+
+
+def _content_length(scope: Scope) -> int | None:
+    values = [
+        value
+        for name, value in scope.get("headers", ())
+        if name.lower() == b"content-length"
+    ]
+    if len(values) != 1:
+        return None
+    try:
+        value = int(values[0].decode("ascii"))
+    except (UnicodeDecodeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+async def _send_request_too_large(
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+) -> None:
+    response = JSONResponse(
+        status_code=413,
+        content={"detail": "Request body is too large"},
+        headers={
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+        },
+    )
+    await response(scope, receive, send)
 
 
 def _create_web_application(
@@ -241,6 +389,9 @@ app = create_server()
 
 
 __all__ = [
+    "DEFAULT_MAX_REQUEST_BODY_BYTES",
+    "MAX_CONFIGURED_REQUEST_BODY_BYTES",
+    "MAX_REQUEST_BODY_BYTES_ENV",
     "ProtocolApplication",
     "PROJECTION_POLL_SECONDS_ENV",
     "STATIC_DIRECTORY_ENV",
