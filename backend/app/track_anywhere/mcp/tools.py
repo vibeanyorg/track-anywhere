@@ -67,6 +67,10 @@ from ..application.idempotency import (
     IdempotencyConflict,
 )
 from ..application.journal.post_transaction import CreditCardSemanticWriteRequired
+from ..application.journal.record_adjustment import (
+    RecordAdjustmentCommand,
+    execute_record_adjustment,
+)
 from ..application.journal.record_simple import (
     RecordExpenseCommand,
     RecordTransferCommand,
@@ -760,6 +764,64 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
                     effective_at=effective_at,
                 ),
                 raw_key=f"mcp:ledger_record_transfer:{request_id}",
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+                ledger_committer=dependencies.ledger_committer,
+            ),
+            request_id=request_id,
+        )
+        return _write_response(
+            dependencies,
+            book_id,
+            request_id,
+            transaction_id,
+            outcome,
+        )
+
+    @mcp.tool(
+        name="ledger_record_adjustment",
+        title="Reconcile an asset account balance",
+        description=(
+            "Use this when the user has explicitly confirmed an asset account's "
+            "current ledger balance and actual counted balance. Balance values are "
+            "human-readable decimal amounts such as 90.00, never integer ledger "
+            "units. The service records the difference as an adjustment against "
+            "the Book's system adjustment account; it never edits a balance field "
+            "directly. Reuse request_id only for an exact retry."
+        ),
+        annotations=WRITE_ANNOTATIONS,
+        meta=WRITE_TOOL_META,
+    )
+    def ledger_record_adjustment(
+        book_id: UUID,
+        request_id: UUID,
+        account_id: UUID,
+        asset_code: AssetCode,
+        expected_balance: PlainDecimal,
+        actual_balance: PlainDecimal,
+        effective_at: AwareDatetime,
+    ) -> LedgerWriteResponse:
+        token = _require_write_book(dependencies, book_id, request_id)
+        command_id, transaction_id = _write_ids(
+            token.subject or "",
+            book_id,
+            "ledger_record_adjustment",
+            request_id,
+        )
+        outcome = _call_write(
+            lambda: execute_record_adjustment(
+                RecordAdjustmentCommand(
+                    book_id=book_id,
+                    command_id=command_id,
+                    transaction_id=transaction_id,
+                    expected_stream_version=0,
+                    account_id=account_id,
+                    asset_code=asset_code,
+                    expected_balance=expected_balance,
+                    actual_balance=actual_balance,
+                    effective_at=effective_at,
+                ),
+                raw_key=f"mcp:ledger_record_adjustment:{request_id}",
                 actor=CommandActor(token.subject or ""),
                 uow_factory=dependencies.uow_factory,
                 ledger_committer=dependencies.ledger_committer,

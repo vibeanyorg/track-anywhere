@@ -93,6 +93,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_list_transactions",
     }
     write_tools = {
+        "ledger_record_adjustment",
         "ledger_record_credit_card_charge",
         "ledger_record_credit_card_payment",
         "ledger_record_expense",
@@ -129,6 +130,19 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
             assert "request_id" in tool.inputSchema["required"]
     account_tool = next(tool for tool in tools if tool.name == "ledger_create_account")
     assert "system_role" not in account_tool.inputSchema["properties"]
+    adjustment_tool = next(
+        tool for tool in tools if tool.name == "ledger_record_adjustment"
+    )
+    assert {
+        "account_id",
+        "actual_balance",
+        "asset_code",
+        "book_id",
+        "effective_at",
+        "expected_balance",
+        "request_id",
+    } == set(adjustment_tool.inputSchema["required"])
+    assert "adjustment_account_id" not in adjustment_tool.inputSchema["properties"]
 
 
 def test_mcp_transaction_reads_cannot_request_or_return_protected_content() -> None:

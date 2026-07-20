@@ -25,6 +25,13 @@ from .post_transaction import (
     PostTransactionPosting,
     execute_post_transaction,
 )
+from .record_adjustment import (
+    AdjustmentAccountUnavailable,
+    AdjustmentBalanceMismatch,
+    AdjustmentProjectionMismatch,
+    RecordAdjustmentCommand,
+    execute_record_adjustment,
+)
 from .record_fx import RecordFxCommand, execute_record_fx
 from .correct_transaction import (
     CorrectTransactionCommand,
@@ -41,6 +48,9 @@ from .reverse_transaction import (
 
 __all__ = [
     "AccountClosed",
+    "AdjustmentAccountUnavailable",
+    "AdjustmentBalanceMismatch",
+    "AdjustmentProjectionMismatch",
     "AssignReportingLinesCommand",
     "AssetUnavailable",
     "ClearReportingLinesCommand",
@@ -54,6 +64,7 @@ __all__ = [
     "ReportingAllocationExceeded",
     "ReportingLineInput",
     "RecordFxCommand",
+    "RecordAdjustmentCommand",
     "ReverseTransactionCommand",
     "TransactionAlreadyReversed",
     "TransactionIdAlreadyExists",
@@ -64,6 +75,7 @@ __all__ = [
     "execute_correct_external_reference",
     "execute_correct_transaction",
     "execute_post_transaction",
+    "execute_record_adjustment",
     "execute_record_fx",
     "execute_reverse_transaction",
 ]

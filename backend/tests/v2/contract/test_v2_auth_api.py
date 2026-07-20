@@ -1787,7 +1787,7 @@ def test_dcr_book_write_grant_bootstraps_a_book_through_mcp(pg_engine) -> None:
 
     assert initialize.status_code == 200
     assert tools.status_code == 200
-    assert len(tools.json()["result"]["tools"]) == 15
+    assert len(tools.json()["result"]["tools"]) == 16
     assert books.status_code == 200
     assert books.json()["result"]["structuredContent"] == {"items": []}
     assert created_book.status_code == 200
