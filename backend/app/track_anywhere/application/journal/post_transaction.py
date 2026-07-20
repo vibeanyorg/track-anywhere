@@ -295,10 +295,15 @@ def build_post_transaction_plan(
     locked_head: LockedBookHead,
     *,
     actor: CommandActor,
+    allow_credit_card_adjustment: bool = False,
 ) -> LedgerWritePlan:
     if locked_head.book_id != command.book_id:
         raise IdempotencyValidationError("locked Book does not match command")
-    payload = _build_posted_payload(command, uow)
+    payload = _build_posted_payload(
+        command,
+        uow,
+        allow_credit_card_adjustment=allow_credit_card_adjustment,
+    )
     pending = _build_posted_pending(command, payload, actor=actor)
     return LedgerWritePlan(
         expected_stream_versions={
@@ -319,6 +324,8 @@ def build_post_transaction_plan(
 def _build_posted_payload(
     command: PostTransactionCommand,
     uow: UnitOfWork,
+    *,
+    allow_credit_card_adjustment: bool = False,
 ) -> JournalTransactionPosted:
     catalogs = CatalogRepository(uow.session)
 
@@ -338,7 +345,11 @@ def _build_posted_payload(
             # cross-Book lookup to disclose another Book's catalog.
             continue
 
-    _reject_credit_card_accounts(db_accounts.values())
+    if not (
+        allow_credit_card_adjustment
+        and command.kind is TransactionKind.ADJUSTMENT
+    ):
+        _reject_credit_card_accounts(db_accounts.values())
 
     asset_policies: dict[str, AssetPolicy] = {}
     for asset_code in sorted({posting.asset_code for posting in command.postings}):

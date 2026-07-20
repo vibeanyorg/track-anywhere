@@ -140,6 +140,7 @@ def execute_record_adjustment(
             uow,
             locked_head,
             actor=actor,
+            allow_credit_card_adjustment=True,
         )
 
     return execute_financial(
@@ -170,9 +171,14 @@ def _journal_command(
     )
     if account.status != "active":
         raise AdjustmentAccountUnavailable("account must be active")
-    if account.account_type != AccountType.ASSET.value:
+    is_asset = account.account_type == AccountType.ASSET.value
+    is_credit_card = (
+        account.account_type == AccountType.LIABILITY.value
+        and account.account_subtype == "credit_card"
+    )
+    if not (is_asset or is_credit_card):
         raise AdjustmentAccountUnavailable(
-            "balance reconciliation currently requires an asset account"
+            "balance reconciliation requires an asset or credit-card account"
         )
     if account.system_role not in {None, "standard"}:
         raise AdjustmentAccountUnavailable(
@@ -192,10 +198,13 @@ def _journal_command(
     )
     expected_units = _parse_non_negative_balance(command.expected_balance, policy)
     actual_units = _parse_non_negative_balance(command.actual_balance, policy)
-    current_units = _current_asset_units(command, uow)
+    current_accounting_units = _current_accounting_units(command, uow)
+    current_units = (
+        current_accounting_units if is_asset else -current_accounting_units
+    )
     if current_units < 0:
         raise AdjustmentBalanceMismatch(
-            "a negative asset balance requires a general journal correction"
+            "a negative natural balance requires a general journal correction"
         )
     if current_units != expected_units:
         raise AdjustmentBalanceMismatch(
@@ -212,7 +221,7 @@ def _journal_command(
         units=abs(difference),
         scale=asset.ledger_scale,
     ).decode()
-    if difference > 0:
+    if (difference > 0) is is_asset:
         debit_account_id = command.account_id
         credit_account_id = adjustment_account.account_id
     else:
@@ -251,7 +260,7 @@ def _parse_non_negative_balance(raw: str, policy: AssetPolicy) -> int:
     return policy.parse_online(raw).units
 
 
-def _current_asset_units(
+def _current_accounting_units(
     command: RecordAdjustmentCommand,
     uow: UnitOfWork,
 ) -> int:

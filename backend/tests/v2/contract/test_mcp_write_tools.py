@@ -682,6 +682,127 @@ def test_mcp_adjustment_reconciles_decimal_balances_with_stale_write_protection(
     assert _book_head(pg_engine, scenario) == 2
 
 
+def test_mcp_adjustment_reconciles_credit_card_outstanding_balance(
+    pg_engine,
+) -> None:
+    scenario = JournalScenario.create()
+    seed_journal_scenario(
+        pg_engine,
+        scenario,
+        credit_account_type="expense",
+    )
+    card_account_id = uuid4()
+    adjustment_account_id = uuid4()
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                'update book_members set scopes=\'["ledger:read","ledger:write"]\' '
+                "where book_id=:book_id and user_id=:user_id"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "user_id": scenario.actor_subject_id,
+            },
+        )
+        connection.execute(
+            text(
+                "insert into accounts (book_id, account_id, asset_code, "
+                "account_type, account_subtype, current_name, status) values "
+                "(:book_id, :card_id, 'USD', 'liability', 'credit_card', "
+                "'Credit card', 'active'), "
+                "(:book_id, :adjustment_id, 'USD', 'system', "
+                "'system_adjustment', 'System balance adjustments USD', 'active')"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "card_id": card_account_id,
+                "adjustment_id": adjustment_account_id,
+            },
+        )
+    write_token = "ta_mcp_card_adjustment_write"
+    _seed_oauth_tokens(
+        pg_engine,
+        scenario,
+        write_token,
+        "ta_mcp_card_adjustment_read",
+    )
+    runtime = create_mcp_runtime(
+        build_engine_dependencies(
+            pg_engine,
+            expected_runtime_role=pg_engine.url.username,
+        ),
+        "http://testserver",
+    )
+    adjustment_request_id = str(uuid4())
+
+    with TestClient(runtime.application) as client:
+        charge = _call_tool(
+            client,
+            write_token,
+            "ledger_record_credit_card_charge",
+            {
+                "book_id": str(scenario.book_id),
+                "request_id": str(uuid4()),
+                "card_account_id": str(card_account_id),
+                "expense_account_id": str(scenario.credit_account_id),
+                "asset_code": "USD",
+                "amount": "2.62",
+                "effective_at": EFFECTIVE_AT,
+            },
+        )
+        increase_arguments = {
+            "book_id": str(scenario.book_id),
+            "request_id": adjustment_request_id,
+            "account_id": str(card_account_id),
+            "asset_code": "USD",
+            "expected_balance": "2.62",
+            "actual_balance": "35.60",
+            "effective_at": "2026-07-16T09:31:00+00:00",
+        }
+        increase = _call_tool(
+            client,
+            write_token,
+            "ledger_record_adjustment",
+            increase_arguments,
+        )
+        replay = _call_tool(
+            client,
+            write_token,
+            "ledger_record_adjustment",
+            increase_arguments,
+        )
+        decrease = _call_tool(
+            client,
+            write_token,
+            "ledger_record_adjustment",
+            {
+                **increase_arguments,
+                "request_id": str(uuid4()),
+                "expected_balance": "35.60",
+                "actual_balance": "0.00",
+                "effective_at": "2026-07-16T09:32:00+00:00",
+            },
+        )
+
+    assert charge["isError"] is False, charge
+    assert increase["isError"] is False, increase
+    assert _posting_pairs(increase["structuredContent"]) == [
+        (str(adjustment_account_id), "debit", "3298"),
+        (str(card_account_id), "credit", "3298"),
+    ]
+    assert replay["isError"] is False
+    assert replay["structuredContent"]["replayed"] is True
+    assert replay["structuredContent"]["transaction"] == (
+        increase["structuredContent"]["transaction"]
+    )
+    assert decrease["isError"] is False, decrease
+    assert _posting_pairs(decrease["structuredContent"]) == [
+        (str(card_account_id), "debit", "3560"),
+        (str(adjustment_account_id), "credit", "3560"),
+    ]
+    assert _book_head(pg_engine, scenario) == 3
+
+
 @pytest.mark.parametrize(
     ("tool_name", "system_account_argument"),
     [

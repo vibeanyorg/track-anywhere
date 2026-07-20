@@ -780,14 +780,15 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
 
     @mcp.tool(
         name="ledger_record_adjustment",
-        title="Reconcile an asset account balance",
+        title="Reconcile an account balance",
         description=(
-            "Use this when the user has explicitly confirmed an asset account's "
-            "current ledger balance and actual counted balance. Balance values are "
-            "human-readable decimal amounts such as 90.00, never integer ledger "
-            "units. The service records the difference as an adjustment against "
-            "the Book's system adjustment account; it never edits a balance field "
-            "directly. Reuse request_id only for an exact retry."
+            "Use this when the user has explicitly confirmed a standard asset "
+            "account's current ledger balance and actual counted balance, or a "
+            "standard credit-card account's current and actual outstanding balance. "
+            "Balance values are human-readable decimal amounts such as 90.00, never "
+            "integer ledger units. The service records the difference as an "
+            "adjustment against the Book's system adjustment account; it never edits "
+            "a balance field directly. Reuse request_id only for an exact retry."
         ),
         annotations=WRITE_ANNOTATIONS,
         meta=WRITE_TOOL_META,
