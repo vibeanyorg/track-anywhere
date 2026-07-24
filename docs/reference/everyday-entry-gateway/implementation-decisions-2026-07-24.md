@@ -103,3 +103,23 @@ The prepared canonical payload stores only validated, resolved, non-sensitive
 compiler inputs. Commit may recompile from those frozen values but must not
 invent a replacement source-text marker or silently discard the original audit
 fact.
+
+## D008: Duplicate detection uses a separate stable secret
+
+**Status:** Accepted
+**Date:** 2026-07-24
+
+Duplicate HMACs use a dedicated stable secret loaded from
+`TRACK_ANYWHERE_DUPLICATE_DETECTION_KEY_FILE` through a narrow provider. The
+provider exposes only domain-separated external-reference and source-fingerprint
+digest operations; adapters do not receive or log raw key bytes.
+
+The secret is not derived from the protected-content active key because content
+key rotation would make existing duplicate evidence unsearchable. Secret files
+must reject symlinks, non-regular files, unsafe group/other permissions,
+non-canonical encoding, undersized keys, and oversized input. Missing or invalid
+configuration fails closed.
+
+This version does not support in-place duplicate-key rotation. Future rotation
+requires a persisted key reference plus a reviewed dual-read/backfill/dual-write
+migration.
