@@ -93,8 +93,11 @@ def create_mcp_runtime(
         instructions=(
             "Read verified Track Anywhere V2 ledger data. After explicit user "
             "confirmation, bootstrap Books, assets, and standard accounts or record "
-            "semantic ledger entries. Integer units are exact; use asset scale "
-            "metadata before presenting decimal amounts."
+            "supported ledger entries. Read responses expose exact integer `units`; "
+            "use asset scale metadata before presenting them as decimals. Write "
+            "parameters named `amount`, `expected_balance`, or `actual_balance` are "
+            "decimal strings in the asset's major unit, never integer ledger units. "
+            "For example, CNY amount `660` means CNY 660.00, not CNY 6.60."
         ),
         token_verifier=DatabaseTokenVerifier(
             dependencies.session_factory,

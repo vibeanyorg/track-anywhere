@@ -141,6 +141,18 @@ def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
                 "current_name": "Everyday checking",
             },
         )
+        rejected_expense_account = _call_tool(
+            client,
+            write_token,
+            "ledger_create_account",
+            {
+                "book_id": book_id,
+                "request_id": str(uuid4()),
+                "asset_code": "MCPUSD",
+                "account_type": "expense",
+                "current_name": "Dining is a category, not an account",
+            },
+        )
         books = _call_tool(client, write_token, "ledger_list_books", {})
         accounts = _call_tool(
             client,
@@ -169,6 +181,9 @@ def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
     assert conflicting_asset["isError"] is True
     assert "idempotency key" in conflicting_asset["content"][0]["text"]
     assert created_account["isError"] is False
+    assert rejected_expense_account["isError"] is True
+    assert "asset" in rejected_expense_account["content"][0]["text"]
+    assert "liability" in rejected_expense_account["content"][0]["text"]
     account_body = created_account["structuredContent"]["account"]
     assert account_body["current_name"] == "Everyday checking"
     assert account_body["system_role"] is None
@@ -358,64 +373,52 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
         "http://testserver",
     )
     with TestClient(membership_runtime.application) as client:
-        expense_request_id = uuid4()
-        expense = _call_tool(
-            client,
-            write_token,
-            "ledger_record_expense",
-            {
-                "book_id": str(scenario.book_id),
-                "request_id": str(expense_request_id),
-                "source_account_id": str(scenario.debit_account_id),
-                "expense_account_id": str(scenario.credit_account_id),
-                "asset_code": "USD",
-                "amount": "12.34",
-                "effective_at": EFFECTIVE_AT,
-            },
-        )
-        replay = _call_tool(
-            client,
-            write_token,
-            "ledger_record_expense",
-            {
-                "book_id": str(scenario.book_id),
-                "request_id": str(expense_request_id),
-                "source_account_id": str(scenario.debit_account_id),
-                "expense_account_id": str(scenario.credit_account_id),
-                "asset_code": "USD",
-                "amount": "12.34",
-                "effective_at": EFFECTIVE_AT,
-            },
-        )
-        conflict = _call_tool(
-            client,
-            write_token,
-            "ledger_record_expense",
-            {
-                "book_id": str(scenario.book_id),
-                "request_id": str(expense_request_id),
-                "source_account_id": str(scenario.debit_account_id),
-                "expense_account_id": str(scenario.credit_account_id),
-                "asset_code": "USD",
-                "amount": "99.99",
-                "effective_at": EFFECTIVE_AT,
-            },
-        )
+        transfer_request_id = uuid4()
+        transfer_arguments = {
+            "book_id": str(scenario.book_id),
+            "request_id": str(transfer_request_id),
+            "source_account_id": str(scenario.debit_account_id),
+            "target_account_id": str(target_account_id),
+            "asset_code": "USD",
+            "amount": "660",
+            "effective_at": EFFECTIVE_AT,
+        }
         transfer = _call_tool(
             client,
             write_token,
             "ledger_record_transfer",
+            transfer_arguments,
+        )
+        replay = _call_tool(
+            client,
+            write_token,
+            "ledger_record_transfer",
+            transfer_arguments,
+        )
+        conflict = _call_tool(
+            client,
+            write_token,
+            "ledger_record_transfer",
+            {
+                **transfer_arguments,
+                "amount": "999.99",
+            },
+        )
+        hidden_expense = _call_tool(
+            client,
+            write_token,
+            "ledger_record_expense",
             {
                 "book_id": str(scenario.book_id),
                 "request_id": str(uuid4()),
                 "source_account_id": str(scenario.debit_account_id),
-                "target_account_id": str(target_account_id),
+                "expense_account_id": str(scenario.credit_account_id),
                 "asset_code": "USD",
-                "amount": "2.00",
+                "amount": "1.00",
                 "effective_at": "2026-07-16T09:31:00+00:00",
             },
         )
-        charge = _call_tool(
+        hidden_charge = _call_tool(
             client,
             write_token,
             "ledger_record_credit_card_charge",
@@ -425,7 +428,7 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
                 "card_account_id": str(card_account_id),
                 "expense_account_id": str(scenario.credit_account_id),
                 "asset_code": "USD",
-                "amount": "10.00",
+                "amount": "1.00",
                 "effective_at": "2026-07-16T09:32:00+00:00",
             },
         )
@@ -446,12 +449,12 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
         read_only_attempt = _call_tool(
             client,
             read_token,
-            "ledger_record_expense",
+            "ledger_record_transfer",
             {
                 "book_id": str(scenario.book_id),
                 "request_id": str(uuid4()),
                 "source_account_id": str(scenario.debit_account_id),
-                "expense_account_id": str(scenario.credit_account_id),
+                "target_account_id": str(target_account_id),
                 "asset_code": "USD",
                 "amount": "1.00",
                 "effective_at": "2026-07-16T09:34:00+00:00",
@@ -460,47 +463,36 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
         wrong_account_type = _call_tool(
             client,
             write_token,
-            "ledger_record_expense",
+            "ledger_record_transfer",
             {
                 "book_id": str(scenario.book_id),
                 "request_id": str(uuid4()),
-                "source_account_id": str(scenario.debit_account_id),
-                "expense_account_id": str(target_account_id),
+                "source_account_id": str(scenario.credit_account_id),
+                "target_account_id": str(target_account_id),
                 "asset_code": "USD",
                 "amount": "1.00",
                 "effective_at": "2026-07-16T09:34:00+00:00",
             },
         )
 
-    assert expense["isError"] is False
-    expense_body = expense["structuredContent"]
-    assert expense_body["replayed"] is False
-    assert expense_body["first_book_position"] == 1
-    assert _posting_pairs(expense_body) == [
-        (str(scenario.credit_account_id), "debit", "1234"),
-        (str(scenario.debit_account_id), "credit", "1234"),
+    assert transfer["isError"] is False
+    transfer_body = transfer["structuredContent"]
+    assert transfer_body["replayed"] is False
+    assert transfer_body["first_book_position"] == 1
+    assert _posting_pairs(transfer_body) == [
+        (str(target_account_id), "debit", "66000"),
+        (str(scenario.debit_account_id), "credit", "66000"),
     ]
     assert replay["isError"] is False
     assert replay["structuredContent"]["replayed"] is True
-    assert replay["structuredContent"]["transaction"] == expense_body["transaction"]
+    assert replay["structuredContent"]["transaction"] == transfer_body["transaction"]
     assert conflict["isError"] is True
     assert "idempotency key" in conflict["content"][0]["text"]
     assert "outcome is unknown" not in conflict["content"][0]["text"]
-
-    assert transfer["isError"] is False
-    assert _posting_pairs(transfer["structuredContent"]) == [
-        (str(target_account_id), "debit", "200"),
-        (str(scenario.debit_account_id), "credit", "200"),
-    ]
-    assert charge["isError"] is False
-    assert _posting_pairs(charge["structuredContent"]) == [
-        (str(scenario.credit_account_id), "debit", "1000"),
-        (str(card_account_id), "credit", "1000"),
-    ]
-    assert (
-        charge["structuredContent"]["transaction"]["credit_card_relation"]["intent"]
-        == "charge"
-    )
+    assert hidden_expense["isError"] is True
+    assert "Unknown tool" in hidden_expense["content"][0]["text"]
+    assert hidden_charge["isError"] is True
+    assert "Unknown tool" in hidden_charge["content"][0]["text"]
     assert payment["isError"] is False
     assert _posting_pairs(payment["structuredContent"]) == [
         (str(card_account_id), "debit", "400"),
@@ -517,8 +509,8 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
     assert 'error_description="' in challenge
     assert 'scope="ledger:read ledger:write"' in challenge
     assert wrong_account_type["isError"] is True
-    assert "expense account" in wrong_account_type["content"][0]["text"]
-    assert _book_head(pg_engine, scenario) == 4
+    assert "asset account" in wrong_account_type["content"][0]["text"]
+    assert _book_head(pg_engine, scenario) == 2
 
     with pg_engine.begin() as connection:
         connection.execute(
@@ -535,12 +527,12 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
         membership_denied = _call_tool(
             client,
             write_token,
-            "ledger_record_expense",
+            "ledger_record_transfer",
             {
                 "book_id": str(scenario.book_id),
                 "request_id": str(uuid4()),
                 "source_account_id": str(scenario.debit_account_id),
-                "expense_account_id": str(scenario.credit_account_id),
+                "target_account_id": str(target_account_id),
                 "asset_code": "USD",
                 "amount": "1.00",
                 "effective_at": "2026-07-16T09:35:00+00:00",
@@ -549,7 +541,7 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
     assert membership_denied["isError"] is True
     assert "not writable" in membership_denied["content"][0]["text"]
     assert "outcome is unknown" not in membership_denied["content"][0]["text"]
-    assert _book_head(pg_engine, scenario) == 4
+    assert _book_head(pg_engine, scenario) == 2
 
 
 def test_mcp_adjustment_reconciles_decimal_balances_with_stale_write_protection(
@@ -736,26 +728,12 @@ def test_mcp_adjustment_reconciles_credit_card_outstanding_balance(
     adjustment_request_id = str(uuid4())
 
     with TestClient(runtime.application) as client:
-        charge = _call_tool(
-            client,
-            write_token,
-            "ledger_record_credit_card_charge",
-            {
-                "book_id": str(scenario.book_id),
-                "request_id": str(uuid4()),
-                "card_account_id": str(card_account_id),
-                "expense_account_id": str(scenario.credit_account_id),
-                "asset_code": "USD",
-                "amount": "2.62",
-                "effective_at": EFFECTIVE_AT,
-            },
-        )
         increase_arguments = {
             "book_id": str(scenario.book_id),
             "request_id": adjustment_request_id,
             "account_id": str(card_account_id),
             "asset_code": "USD",
-            "expected_balance": "2.62",
+            "expected_balance": "0",
             "actual_balance": "35.60",
             "effective_at": "2026-07-16T09:31:00+00:00",
         }
@@ -784,11 +762,10 @@ def test_mcp_adjustment_reconciles_credit_card_outstanding_balance(
             },
         )
 
-    assert charge["isError"] is False, charge
     assert increase["isError"] is False, increase
     assert _posting_pairs(increase["structuredContent"]) == [
-        (str(adjustment_account_id), "debit", "3298"),
-        (str(card_account_id), "credit", "3298"),
+        (str(adjustment_account_id), "debit", "3560"),
+        (str(card_account_id), "credit", "3560"),
     ]
     assert replay["isError"] is False
     assert replay["structuredContent"]["replayed"] is True
@@ -800,18 +777,14 @@ def test_mcp_adjustment_reconciles_credit_card_outstanding_balance(
         (str(card_account_id), "debit", "3560"),
         (str(adjustment_account_id), "credit", "3560"),
     ]
-    assert _book_head(pg_engine, scenario) == 3
+    assert _book_head(pg_engine, scenario) == 2
 
 
 @pytest.mark.parametrize(
     ("tool_name", "system_account_argument"),
     [
-        ("ledger_record_expense", "source_account_id"),
-        ("ledger_record_expense", "expense_account_id"),
         ("ledger_record_transfer", "source_account_id"),
         ("ledger_record_transfer", "target_account_id"),
-        ("ledger_record_credit_card_charge", "card_account_id"),
-        ("ledger_record_credit_card_charge", "expense_account_id"),
         ("ledger_record_credit_card_payment", "source_account_id"),
         ("ledger_record_credit_card_payment", "card_account_id"),
     ],
@@ -846,8 +819,6 @@ def test_mcp_semantic_writes_reject_system_managed_accounts(
     system_account_type = (
         "liability"
         if system_account_argument == "card_account_id"
-        else "expense"
-        if system_account_argument == "expense_account_id"
         else "asset"
     )
     system_account_subtype = (
@@ -869,29 +840,11 @@ def test_mcp_semantic_writes_reject_system_managed_accounts(
             },
         )
     arguments_by_tool = {
-        "ledger_record_expense": {
-            "book_id": str(scenario.book_id),
-            "request_id": str(uuid4()),
-            "source_account_id": str(scenario.debit_account_id),
-            "expense_account_id": str(scenario.credit_account_id),
-            "asset_code": "USD",
-            "amount": "1.00",
-            "effective_at": EFFECTIVE_AT,
-        },
         "ledger_record_transfer": {
             "book_id": str(scenario.book_id),
             "request_id": str(uuid4()),
             "source_account_id": str(scenario.debit_account_id),
             "target_account_id": str(target_account_id),
-            "asset_code": "USD",
-            "amount": "1.00",
-            "effective_at": EFFECTIVE_AT,
-        },
-        "ledger_record_credit_card_charge": {
-            "book_id": str(scenario.book_id),
-            "request_id": str(uuid4()),
-            "card_account_id": str(card_account_id),
-            "expense_account_id": str(scenario.credit_account_id),
             "asset_code": "USD",
             "amount": "1.00",
             "effective_at": EFFECTIVE_AT,
@@ -935,10 +888,11 @@ def test_committed_write_survives_fresh_session_readback_failure_and_replays_onc
         scenario,
         credit_account_type="expense",
     )
+    target_account_id = uuid4()
     _seed_write_surface(
         pg_engine,
         scenario,
-        target_account_id=uuid4(),
+        target_account_id=target_account_id,
         card_account_id=uuid4(),
     )
     write_token = "ta_mcp_readback_failure"
@@ -956,7 +910,7 @@ def test_committed_write_survives_fresh_session_readback_failure_and_replays_onc
         "http://testserver",
     )
     request_id = uuid4()
-    arguments = _expense_arguments(scenario, request_id)
+    arguments = _transfer_arguments(scenario, target_account_id, request_id)
     original_readback = mcp_tools.get_journal_transaction
     sensitive_detail = "SELECT secret_sql FROM private_ledger WHERE amount=1234"
 
@@ -969,13 +923,13 @@ def test_committed_write_survives_fresh_session_readback_failure_and_replays_onc
         first = _call_tool(
             client,
             write_token,
-            "ledger_record_expense",
+            "ledger_record_transfer",
             arguments,
         )
         replay_while_pending = _call_tool(
             client,
             write_token,
-            "ledger_record_expense",
+            "ledger_record_transfer",
             arguments,
         )
         monkeypatch.setattr(
@@ -986,7 +940,7 @@ def test_committed_write_survives_fresh_session_readback_failure_and_replays_onc
         verified_replay = _call_tool(
             client,
             write_token,
-            "ledger_record_expense",
+            "ledger_record_transfer",
             arguments,
         )
 
@@ -1038,10 +992,11 @@ def test_post_commit_failure_is_redacted_and_exact_retry_does_not_duplicate(
         scenario,
         credit_account_type="expense",
     )
+    target_account_id = uuid4()
     _seed_write_surface(
         pg_engine,
         scenario,
-        target_account_id=uuid4(),
+        target_account_id=target_account_id,
         card_account_id=uuid4(),
     )
     write_token = f"ta_mcp_unknown_{failure_kind}"
@@ -1059,8 +1014,8 @@ def test_post_commit_failure_is_redacted_and_exact_retry_does_not_duplicate(
         "http://testserver",
     )
     request_id = uuid4()
-    arguments = _expense_arguments(scenario, request_id)
-    original_execute = mcp_tools.execute_record_expense
+    arguments = _transfer_arguments(scenario, target_account_id, request_id)
+    original_execute = mcp_tools.execute_record_transfer
     sensitive_detail = (
         f"{failure_kind} SELECT secret_sql FROM private_ledger amount=1234"
     )
@@ -1074,25 +1029,25 @@ def test_post_commit_failure_is_redacted_and_exact_retry_does_not_duplicate(
     caplog.set_level("ERROR", logger="track_anywhere.mcp.tools")
     monkeypatch.setattr(
         mcp_tools,
-        "execute_record_expense",
+        "execute_record_transfer",
         commit_then_lose_response,
     )
     with TestClient(runtime.application) as client:
         uncertain = _call_tool(
             client,
             write_token,
-            "ledger_record_expense",
+            "ledger_record_transfer",
             arguments,
         )
         monkeypatch.setattr(
             mcp_tools,
-            "execute_record_expense",
+            "execute_record_transfer",
             original_execute,
         )
         replay = _call_tool(
             client,
             write_token,
-            "ledger_record_expense",
+            "ledger_record_transfer",
             arguments,
         )
 
@@ -1279,15 +1234,16 @@ def _seed_catalog_oauth_tokens(
             )
 
 
-def _expense_arguments(
+def _transfer_arguments(
     scenario: JournalScenario,
+    target_account_id,
     request_id,
 ) -> dict[str, str]:
     return {
         "book_id": str(scenario.book_id),
         "request_id": str(request_id),
         "source_account_id": str(scenario.debit_account_id),
-        "expense_account_id": str(scenario.credit_account_id),
+        "target_account_id": str(target_account_id),
         "asset_code": "USD",
         "amount": "12.34",
         "effective_at": EFFECTIVE_AT,

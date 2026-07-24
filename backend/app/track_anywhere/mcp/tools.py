@@ -44,9 +44,7 @@ from ..queries.catalogs import (
 )
 from ..queries.journal import get_journal_transaction, list_journal
 from ..application.credit_cards.record import (
-    ChargeCreditCardCommand,
     PaymentCreditCardCommand,
-    execute_charge_credit_card,
     execute_payment_credit_card,
 )
 from ..application.catalogs.create_account import (
@@ -72,9 +70,7 @@ from ..application.journal.record_adjustment import (
     execute_record_adjustment,
 )
 from ..application.journal.record_simple import (
-    RecordExpenseCommand,
     RecordTransferCommand,
-    execute_record_expense,
     execute_record_transfer,
 )
 from ..infrastructure.db.event_store import StreamVersionConflict
@@ -373,9 +369,11 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         title="Create a standard account",
         description=(
             "Use this when the user has explicitly confirmed a Book, an existing "
-            "asset definition, account type, optional subtype, and account name. "
-            "This tool creates only user-owned standard accounts and never "
-            "system-managed accounts. Reuse request_id only for an exact retry."
+            "asset definition, asset or liability account type, optional subtype, "
+            "and account name. This ordinary Agent tool cannot create expense, "
+            "income, equity, fund, investment, or system-managed accounts. Those "
+            "remain available only through their dedicated or administrative "
+            "workflows. Reuse request_id only for an exact retry."
         ),
         annotations=CATALOG_WRITE_ANNOTATIONS,
         meta=CATALOG_WRITE_TOOL_META,
@@ -384,14 +382,7 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         book_id: UUID,
         request_id: UUID,
         asset_code: AssetCode,
-        account_type: Literal[
-            "asset",
-            "liability",
-            "equity",
-            "income",
-            "expense",
-            "fund",
-        ],
+        account_type: Literal["asset", "liability"],
         current_name: Annotated[str, Field(min_length=1, max_length=512)],
         account_subtype: Annotated[
             str | None,
@@ -666,70 +657,15 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         )
 
     @mcp.tool(
-        name="ledger_record_expense",
-        title="Record an expense",
-        description=(
-            "Use this when the user has explicitly confirmed the Book, asset "
-            "account, expense account, exact amount, and effective time for a "
-            "non-credit-card expense. Both accounts must be standard user accounts, "
-            "never system-managed accounts. Reuse request_id only to retry the "
-            "exact same expense."
-        ),
-        annotations=WRITE_ANNOTATIONS,
-        meta=WRITE_TOOL_META,
-    )
-    def ledger_record_expense(
-        book_id: UUID,
-        request_id: UUID,
-        source_account_id: UUID,
-        expense_account_id: UUID,
-        asset_code: AssetCode,
-        amount: PlainDecimal,
-        effective_at: AwareDatetime,
-    ) -> LedgerWriteResponse:
-        token = _require_write_book(dependencies, book_id, request_id)
-        command_id, transaction_id = _write_ids(
-            token.subject or "",
-            book_id,
-            "ledger_record_expense",
-            request_id,
-        )
-        outcome = _call_write(
-            lambda: execute_record_expense(
-                RecordExpenseCommand(
-                    book_id=book_id,
-                    command_id=command_id,
-                    transaction_id=transaction_id,
-                    expected_stream_version=0,
-                    source_account_id=source_account_id,
-                    expense_account_id=expense_account_id,
-                    asset_code=asset_code,
-                    amount=amount,
-                    effective_at=effective_at,
-                ),
-                raw_key=f"mcp:ledger_record_expense:{request_id}",
-                actor=CommandActor(token.subject or ""),
-                uow_factory=dependencies.uow_factory,
-                ledger_committer=dependencies.ledger_committer,
-            ),
-            request_id=request_id,
-        )
-        return _write_response(
-            dependencies,
-            book_id,
-            request_id,
-            transaction_id,
-            outcome,
-        )
-
-    @mcp.tool(
         name="ledger_record_transfer",
         title="Record an asset transfer",
         description=(
             "Use this when the user has explicitly confirmed a same-asset transfer "
             "between two standard user, non-credit-card asset accounts, including "
-            "the exact amount and effective time. Never select a system-managed "
-            "account. Reuse request_id only for an exact retry."
+            "the exact amount and effective time. amount is a decimal string in the "
+            "asset's major unit, never integer ledger units; `660` means 660.00 for "
+            "a scale-2 asset. Never select a system-managed account. Reuse "
+            "request_id only for an exact retry."
         ),
         annotations=WRITE_ANNOTATIONS,
         meta=WRITE_TOOL_META,
@@ -838,68 +774,15 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         )
 
     @mcp.tool(
-        name="ledger_record_credit_card_charge",
-        title="Record a credit-card charge",
-        description=(
-            "Use this when the user has explicitly confirmed a credit-card charge, "
-            "including the card, expense account, exact amount, asset, and effective "
-            "time. Reuse request_id only for an exact retry."
-        ),
-        annotations=WRITE_ANNOTATIONS,
-        meta=WRITE_TOOL_META,
-    )
-    def ledger_record_credit_card_charge(
-        book_id: UUID,
-        request_id: UUID,
-        card_account_id: UUID,
-        expense_account_id: UUID,
-        asset_code: AssetCode,
-        amount: PlainDecimal,
-        effective_at: AwareDatetime,
-    ) -> LedgerWriteResponse:
-        token = _require_write_book(dependencies, book_id, request_id)
-        command_id, transaction_id = _write_ids(
-            token.subject or "",
-            book_id,
-            "ledger_record_credit_card_charge",
-            request_id,
-        )
-        outcome = _call_write(
-            lambda: execute_charge_credit_card(
-                ChargeCreditCardCommand(
-                    book_id=book_id,
-                    command_id=command_id,
-                    transaction_id=transaction_id,
-                    expected_stream_version=0,
-                    card_account_id=card_account_id,
-                    expense_account_id=expense_account_id,
-                    asset_code=asset_code,
-                    amount=amount,
-                    effective_at=effective_at,
-                ),
-                raw_key=f"mcp:ledger_record_credit_card_charge:{request_id}",
-                actor=CommandActor(token.subject or ""),
-                uow_factory=dependencies.uow_factory,
-                ledger_committer=dependencies.ledger_committer,
-            ),
-            request_id=request_id,
-        )
-        return _write_response(
-            dependencies,
-            book_id,
-            request_id,
-            transaction_id,
-            outcome,
-        )
-
-    @mcp.tool(
         name="ledger_record_credit_card_payment",
         title="Record a credit-card payment",
         description=(
             "Use this when the user has explicitly confirmed a payment from a "
             "standard user asset account to a standard credit-card account, including "
-            "the exact amount, asset, and effective time. Never select a "
-            "system-managed account. Reuse request_id only for an exact retry."
+            "the exact amount, asset, and effective time. amount is a decimal string "
+            "in the asset's major unit, never integer ledger units; `660` means "
+            "660.00 for a scale-2 asset. Never select a system-managed account. "
+            "Reuse request_id only for an exact retry."
         ),
         annotations=WRITE_ANNOTATIONS,
         meta=WRITE_TOOL_META,
