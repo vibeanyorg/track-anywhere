@@ -40,3 +40,16 @@ The core lane owns the domain/compiler and event serialization contract; the
 storage lane owns the PostgreSQL projection constraints and migration support.
 
 Credit-card refunds continue to use the existing typed credit-card relation.
+
+## D004: Refund reporting sign is defined by semantic transaction kind
+
+**Status:** Accepted
+**Date:** 2026-07-24
+
+The monthly reporting projection treats a non-card journal transaction whose
+kind is `refund` as a negative expense contribution. The core lane has an
+approved ownership exception for the focused monthly-summary projection and
+replay tests needed to enforce this behavior.
+
+Typed `credit_card_refund` keeps its existing relation-based negative sign. The
+implementation must not apply both mechanisms to the same event.
