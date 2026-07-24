@@ -140,3 +140,20 @@ An installation without the secret can still start and serve existing non-
 Gateway APIs, but Everyday Entry prepare fails closed with a stable unavailable
 response. If the environment variable is present but its secret file is
 invalid, runtime construction fails closed without exposing the path or key.
+
+## D010: Last-four hints derive from the account display name
+
+**Status:** Accepted
+**Date:** 2026-07-24
+
+The initial Gateway derives an account's optional `last4` resolver hint from an
+independent trailing four-ASCII-digit token in the account display name, such as
+`工商银行信用卡 1242`. This makes the frozen `AccountRef.last4` contract usable
+without adding an unpopulated accounting column or a premature identifier
+catalog.
+
+The derived value is only a resolver filter and is not an accounting identity or
+uniqueness guarantee. Missing or colliding hints still produce the existing
+not-found or structured-clarification results. A future first-class institution
+identifier catalog may replace this derivation through a separate reviewed
+migration.
