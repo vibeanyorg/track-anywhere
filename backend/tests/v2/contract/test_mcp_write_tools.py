@@ -13,6 +13,11 @@ from sqlalchemy.orm import sessionmaker
 from backend.tests.v2.fixtures.synchronous import JournalScenario, seed_journal_scenario
 from track_anywhere.api.dependencies import build_engine_dependencies
 from track_anywhere.application.idempotency import CommandOutcome, CommandResult
+from track_anywhere.infrastructure.crypto import (
+    DuplicateDetectionKeyProvider,
+    ProtectedContentCipher,
+    ProtectedContentKeyring,
+)
 from track_anywhere.infrastructure.db.models.auth import (
     BookMemberRecord,
     CredentialRecord,
@@ -542,6 +547,158 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
     assert "not writable" in membership_denied["content"][0]["text"]
     assert "outcome is unknown" not in membership_denied["content"][0]["text"]
     assert _book_head(pg_engine, scenario) == 2
+
+
+def test_mcp_shadow_expense_is_write_visible_prepare_only_and_treats_660_as_major(
+    pg_engine,
+) -> None:
+    scenario = JournalScenario.create()
+    seed_journal_scenario(pg_engine, scenario)
+    category_id = uuid4()
+    category_version_id = uuid4()
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "update book_members set scopes="
+                "'[\"ledger:read\",\"ledger:write\"]'::jsonb "
+                "where book_id=:book_id and user_id=:user_id"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "user_id": scenario.actor_subject_id,
+            },
+        )
+        connection.execute(
+            text(
+                "insert into accounts ("
+                "book_id, account_id, asset_code, account_type, system_role, "
+                "current_name, status) values ("
+                ":book_id, :account_id, 'USD', 'expense', "
+                "'expense_clearing', 'Expense clearing', 'active')"
+            ),
+            {"book_id": scenario.book_id, "account_id": uuid4()},
+        )
+        connection.execute(
+            text(
+                "insert into categories ("
+                "book_id, category_id, parent_category_id, current_name, "
+                "current_version_id, status) values ("
+                ":book_id, :category_id, null, 'Dining', null, 'active')"
+            ),
+            {"book_id": scenario.book_id, "category_id": category_id},
+        )
+        connection.execute(
+            text(
+                "insert into category_versions ("
+                "book_id, category_id, category_version_id, parent_category_id, "
+                "name, status, usage_kind, change_reason_code) values ("
+                ":book_id, :category_id, :version_id, null, 'Dining', "
+                "'active', 'expense', 'created')"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "category_id": category_id,
+                "version_id": category_version_id,
+            },
+        )
+        connection.execute(
+            text(
+                "update categories set current_version_id=:version_id "
+                "where book_id=:book_id and category_id=:category_id"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "category_id": category_id,
+                "version_id": category_version_id,
+            },
+        )
+    write_token = "ta_mcp_shadow_write"
+    read_token = "ta_mcp_shadow_read"
+    _seed_oauth_tokens(pg_engine, scenario, write_token, read_token)
+    missing_runtime = create_mcp_runtime(
+        build_engine_dependencies(
+            pg_engine,
+            expected_runtime_role=pg_engine.url.username,
+        ),
+        "http://testserver",
+    )
+    configured_runtime = create_mcp_runtime(
+        build_engine_dependencies(
+            pg_engine,
+            expected_runtime_role=pg_engine.url.username,
+            protected_content_cipher=ProtectedContentCipher(
+                ProtectedContentKeyring.from_mapping(
+                    active_key_ref="mcp-shadow-v1",
+                    keys={"mcp-shadow-v1": b"p" * 32},
+                )
+            ),
+            duplicate_detection_key_provider=DuplicateDetectionKeyProvider(
+                bytes(range(32))
+            ),
+        ),
+        "http://testserver",
+    )
+    arguments = {
+        "book_id": str(scenario.book_id),
+        "amount": {
+            "value": "660",
+            "denomination": "asset_unit",
+            "asset_code": "USD",
+            "source_text": "private source 660",
+        },
+        "source_account": {
+            "account_id": str(scenario.debit_account_id),
+        },
+        "occurred_at": "2026-07-24T12:30:00Z",
+        "category": {"category_id": str(category_id)},
+    }
+
+    with TestClient(missing_runtime.application) as client:
+        unavailable = _call_tool(
+            client,
+            write_token,
+            "ledger_prepare_expense",
+            arguments,
+        )
+    with TestClient(configured_runtime.application) as client:
+        read_names = _list_tool_names(client, read_token)
+        write_names = _list_tool_names(client, write_token)
+        denied = _call_tool(
+            client,
+            read_token,
+            "ledger_prepare_expense",
+            arguments,
+        )
+        prepared = _call_tool(
+            client,
+            write_token,
+            "ledger_prepare_expense",
+            arguments,
+        )
+
+    assert unavailable["isError"] is True
+    assert "entry_unsupported" in unavailable["content"][0]["text"]
+    assert not any(name.startswith("ledger_prepare_") for name in read_names)
+    assert {
+        "ledger_prepare_expense",
+        "ledger_prepare_income",
+        "ledger_prepare_transfer",
+        "ledger_prepare_credit_card_payment",
+        "ledger_prepare_refund",
+        "ledger_prepare_adjustment",
+    }.issubset(write_names)
+    assert denied["isError"] is True
+    assert "ledger:write" in denied["content"][0]["text"]
+    assert prepared["isError"] is False, prepared
+    body = prepared["structuredContent"]
+    assert body["mode"] == "shadow_preview"
+    assert body["status"] == "ready"
+    assert body["preview"]["amount"]["value"] == "660"
+    assert body["preview"]["amount"]["asset_code"] == "USD"
+    assert "6.60" not in body["preview"]["amount"]["display"]
+    assert "commit_token" not in body
+    assert "private source 660" not in str(prepared)
+    assert _book_head(pg_engine, scenario) == 0
 
 
 def test_mcp_adjustment_reconciles_decimal_balances_with_stale_write_protection(
@@ -1170,6 +1327,24 @@ def _call_tool(client, token: str, name: str, arguments: dict[str, object]):
     )
     assert response.status_code == 200
     return response.json()["result"]
+
+
+def _list_tool_names(client, token: str) -> set[str]:
+    response = client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": str(uuid4()),
+            "method": "tools/list",
+        },
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": "2025-11-25",
+        },
+    )
+    assert response.status_code == 200
+    return {tool["name"] for tool in response.json()["result"]["tools"]}
 
 
 def _seed_catalog_oauth_tokens(

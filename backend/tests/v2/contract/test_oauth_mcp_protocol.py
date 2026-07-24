@@ -8,6 +8,9 @@ from uuid import uuid4
 from xml.etree import ElementTree
 
 from fastapi.testclient import TestClient
+from mcp.server.auth.middleware.auth_context import auth_context_var
+from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+from mcp.server.auth.provider import AccessToken
 
 from track_anywhere.api.v2.query_routes.journal import serialize_journal_item
 from track_anywhere.auth.security import redirect_uri_matches, validate_redirect_uri
@@ -101,16 +104,24 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_record_credit_card_payment",
         "ledger_record_transfer",
     }
+    shadow_prepare_tools = {
+        "ledger_prepare_adjustment",
+        "ledger_prepare_credit_card_payment",
+        "ledger_prepare_expense",
+        "ledger_prepare_income",
+        "ledger_prepare_refund",
+        "ledger_prepare_transfer",
+    }
     catalog_write_tools = {
         "ledger_create_account",
         "ledger_create_asset",
         "ledger_create_book",
     }
     assert {tool.name for tool in tools} == (
-        read_tools | write_tools | catalog_write_tools
+        read_tools | write_tools | shadow_prepare_tools | catalog_write_tools
     )
     for tool in tools:
-        if tool.name in write_tools:
+        if tool.name in write_tools | shadow_prepare_tools:
             expected_scopes = ["ledger:read", "ledger:write"]
         elif tool.name in catalog_write_tools:
             expected_scopes = ["book:read", "book:write", "ledger:read"]
@@ -124,12 +135,18 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         assert tool.description.startswith("Use this when")
         assert tool.annotations.readOnlyHint is (tool.name in read_tools)
         assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.idempotentHint is (
+            tool.name not in shadow_prepare_tools
+        )
         assert tool.annotations.openWorldHint is False
         assert tool.outputSchema is not None
         if tool.name in write_tools | catalog_write_tools:
             assert "request_id" in tool.inputSchema["properties"]
             assert "request_id" in tool.inputSchema["required"]
+        if tool.name in shadow_prepare_tools:
+            assert tool.meta["track_anywhere/mode"] == "shadow_prepare_only"
+            assert "request_id" not in tool.inputSchema["properties"]
+            assert "commit_token" not in _schema_property_names(tool.outputSchema)
     account_tool = next(tool for tool in tools if tool.name == "ledger_create_account")
     assert "system_role" not in account_tool.inputSchema["properties"]
     assert set(account_tool.inputSchema["properties"]["account_type"]["enum"]) == {
@@ -161,6 +178,52 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "request_id",
     } == set(adjustment_tool.inputSchema["required"])
     assert "adjustment_account_id" not in adjustment_tool.inputSchema["properties"]
+
+
+def test_shadow_prepare_tools_are_hidden_without_write_scope_and_still_guard_calls(
+) -> None:
+    runtime = create_mcp_runtime(
+        SimpleNamespace(session_factory=lambda: None),
+        "http://testserver",
+    )
+    token = AccessToken(
+        token="read-only",
+        client_id="mcp-shadow-read-contract",
+        scopes=["ledger:read"],
+        subject="human:mcp-shadow-read",
+        claims={"actor_type": "human", "book_id": None},
+    )
+    context = auth_context_var.set(AuthenticatedUser(token))
+    try:
+        names = {
+            tool.name for tool in asyncio.run(runtime.server.list_tools())
+        }
+        result = asyncio.run(
+            runtime.server.call_tool(
+                "ledger_prepare_expense",
+                {
+                    "book_id": str(uuid4()),
+                    "amount": {
+                        "value": "660",
+                        "denomination": "asset_unit",
+                        "asset_code": "CNY",
+                        "source_text": "660",
+                    },
+                    "source_account": {"query": "微信零钱通"},
+                    "occurred_at": "2026-07-24T12:00:00Z",
+                    "category": {"path": ["食品", "饮料"]},
+                },
+            )
+        )
+    finally:
+        auth_context_var.reset(context)
+
+    assert not any(name.startswith("ledger_prepare_") for name in names)
+    assert result.isError is True
+    assert "ledger:write" in result.content[0].text
+    assert 'scope="ledger:read ledger:write"' in (
+        result.meta["mcp/www_authenticate"][0]
+    )
 
 
 def test_mcp_transaction_reads_cannot_request_or_return_protected_content() -> None:
