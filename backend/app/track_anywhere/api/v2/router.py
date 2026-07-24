@@ -5,11 +5,15 @@ from typing import Protocol
 from fastapi import APIRouter, FastAPI
 from sqlalchemy import Engine
 
-from ...infrastructure.crypto import ProtectedContentCipher
+from ...infrastructure.crypto import (
+    DuplicateDetectionKeyProvider,
+    ProtectedContentCipher,
+)
 from ..dependencies import SessionDependency, build_engine_dependencies
 from .auth import create_auth_router
 from .catalogs import create_catalog_router
 from .credit_cards import create_credit_card_router
+from .entries import create_entry_router
 from .investments import create_investment_router
 from .journal import create_journal_router
 from .queries import create_query_router
@@ -44,6 +48,7 @@ def create_v2_router(
     system_router_factory: SystemRouterFactory | None = None,
     auth_router_factory: AuthRouterFactory | None = None,
     protected_content_cipher: ProtectedContentCipher | None = None,
+    duplicate_key_provider: DuplicateDetectionKeyProvider | None = None,
 ) -> APIRouter:
     system_factory = system_router_factory or create_system_router
     auth_factory = auth_router_factory or create_auth_router
@@ -94,6 +99,15 @@ def create_v2_router(
                 get_session=get_session,
                 uow_factory=runtime.uow_factory,
                 ledger_committer=runtime.ledger_committer,
+            )
+        )
+        versioned_router.include_router(
+            create_entry_router(
+                get_session=get_session,
+                uow_factory=runtime.uow_factory,
+                ledger_committer=runtime.ledger_committer,
+                protected_content_cipher=protected_content_cipher,
+                duplicate_key_provider=duplicate_key_provider,
             )
         )
     router.include_router(versioned_router)
