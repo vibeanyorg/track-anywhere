@@ -81,6 +81,10 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "http://testserver",
     )
     tools = asyncio.run(runtime.server.list_tools())
+    assert "Read responses expose exact integer `units`" in runtime.server.instructions
+    assert "CNY amount `660` means CNY 660.00, not CNY 6.60" in (
+        runtime.server.instructions
+    )
 
     read_tools = {
         "ledger_get_account",
@@ -94,9 +98,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
     }
     write_tools = {
         "ledger_record_adjustment",
-        "ledger_record_credit_card_charge",
         "ledger_record_credit_card_payment",
-        "ledger_record_expense",
         "ledger_record_transfer",
     }
     catalog_write_tools = {
@@ -130,6 +132,22 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
             assert "request_id" in tool.inputSchema["required"]
     account_tool = next(tool for tool in tools if tool.name == "ledger_create_account")
     assert "system_role" not in account_tool.inputSchema["properties"]
+    assert set(account_tool.inputSchema["properties"]["account_type"]["enum"]) == {
+        "asset",
+        "liability",
+    }
+    assert "investment" in account_tool.description
+    assert {
+        "ledger_record_expense",
+        "ledger_record_credit_card_charge",
+    }.isdisjoint({tool.name for tool in tools})
+    for tool_name in (
+        "ledger_record_transfer",
+        "ledger_record_credit_card_payment",
+    ):
+        description = next(tool for tool in tools if tool.name == tool_name).description
+        assert "major unit" in description
+        assert "`660` means 660.00" in description
     adjustment_tool = next(
         tool for tool in tools if tool.name == "ledger_record_adjustment"
     )
