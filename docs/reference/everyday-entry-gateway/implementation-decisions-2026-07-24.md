@@ -123,3 +123,17 @@ configuration fails closed.
 This version does not support in-place duplicate-key rotation. Future rotation
 requires a persisted key reference plus a reviewed dual-read/backfill/dual-write
 migration.
+
+## D009: Duplicate provider is optional at app composition, required by Gateway
+
+**Status:** Accepted
+**Date:** 2026-07-24
+
+`RuntimeDependencies` carries an optional `DuplicateDetectionKeyProvider`.
+Runtime composition loads it only when the dedicated environment variable is
+present and passes the provider through the app and V2 router composition roots.
+
+An installation without the secret can still start and serve existing non-
+Gateway APIs, but Everyday Entry prepare fails closed with a stable unavailable
+response. If the environment variable is present but its secret file is
+invalid, runtime construction fails closed without exposing the path or key.
