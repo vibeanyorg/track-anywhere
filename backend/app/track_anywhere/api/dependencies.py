@@ -8,7 +8,12 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from ..application.ledger_committer import LedgerCommitter
-from ..infrastructure.crypto import ProtectedContentCipher, ProtectedContentKeyring
+from ..infrastructure.crypto import (
+    DuplicateDetectionConfigurationError,
+    DuplicateDetectionKeyProvider,
+    ProtectedContentCipher,
+    ProtectedContentKeyring,
+)
 from ..infrastructure.db.engine import create_v2_engine
 from ..infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
 
@@ -17,6 +22,7 @@ DATABASE_URL_ENV = "TRACK_ANYWHERE_DATABASE_URL"
 PROTECTED_CONTENT_KEYRING_FILE_ENV = (
     "TRACK_ANYWHERE_PROTECTED_CONTENT_KEYRING_FILE"
 )
+DUPLICATE_DETECTION_KEY_FILE_ENV = "TRACK_ANYWHERE_DUPLICATE_DETECTION_KEY_FILE"
 
 SessionFactory = Callable[[], Session]
 SessionDependency = Callable[[], Iterator[Session]]
@@ -32,6 +38,7 @@ class RuntimeDependencies:
     uow_factory: UnitOfWorkFactory
     ledger_committer: LedgerCommitter
     protected_content_cipher: ProtectedContentCipher | None
+    duplicate_detection_key_provider: DuplicateDetectionKeyProvider | None
 
 
 def create_session_dependency(
@@ -55,6 +62,9 @@ def build_runtime_dependencies(database_url: str) -> RuntimeDependencies:
     return build_engine_dependencies(
         create_v2_engine(database_url),
         protected_content_cipher=_configured_protected_content_cipher(),
+        duplicate_detection_key_provider=(
+            _configured_duplicate_detection_key_provider()
+        ),
     )
 
 
@@ -64,11 +74,24 @@ def _configured_protected_content_cipher() -> ProtectedContentCipher | None:
     return ProtectedContentCipher(ProtectedContentKeyring.from_environment())
 
 
+def _configured_duplicate_detection_key_provider(
+) -> DuplicateDetectionKeyProvider | None:
+    if os.environ.get(DUPLICATE_DETECTION_KEY_FILE_ENV) is None:
+        return None
+    try:
+        return DuplicateDetectionKeyProvider.from_environment()
+    except DuplicateDetectionConfigurationError:
+        # Runtime remains available for unrelated APIs while entry writes fail
+        # closed at the application boundary.
+        return None
+
+
 def build_engine_dependencies(
     engine: Engine,
     *,
     expected_runtime_role: str | None = None,
     protected_content_cipher: ProtectedContentCipher | None = None,
+    duplicate_detection_key_provider: DuplicateDetectionKeyProvider | None = None,
 ) -> RuntimeDependencies:
     runtime_role = expected_runtime_role or engine.url.username
     if not runtime_role:
@@ -94,11 +117,13 @@ def build_engine_dependencies(
         uow_factory=create_unit_of_work,
         ledger_committer=LedgerCommitter(),
         protected_content_cipher=protected_content_cipher,
+        duplicate_detection_key_provider=duplicate_detection_key_provider,
     )
 
 
 __all__ = [
     "DATABASE_URL_ENV",
+    "DUPLICATE_DETECTION_KEY_FILE_ENV",
     "PROTECTED_CONTENT_KEYRING_FILE_ENV",
     "RuntimeDependencies",
     "SessionDependency",

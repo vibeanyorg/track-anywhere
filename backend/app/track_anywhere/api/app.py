@@ -9,7 +9,10 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from ..auth.resources import configured_public_base_url
-from ..infrastructure.crypto import ProtectedContentCipher
+from ..infrastructure.crypto import (
+    DuplicateDetectionKeyProvider,
+    ProtectedContentCipher,
+)
 from .dependencies import (
     DATABASE_URL_ENV,
     RuntimeDependencies,
@@ -36,14 +39,16 @@ def create_app(
     cookie_secure: bool | None = None,
     public_base_url: str | None = None,
     protected_content_cipher: ProtectedContentCipher | None = None,
+    duplicate_detection_key_provider: DuplicateDetectionKeyProvider | None = None,
 ) -> FastAPI:
     if dependencies is not None and (
         engine is not None
         or get_session is not None
         or protected_content_cipher is not None
+        or duplicate_detection_key_provider is not None
     ):
         raise ValueError(
-            "dependencies cannot be combined with engine or get_session overrides"
+            "dependencies cannot be combined with runtime dependency overrides"
         )
     runtime = dependencies
     if runtime is None and engine is not None:
@@ -51,6 +56,7 @@ def create_app(
             engine,
             expected_runtime_role=expected_runtime_role,
             protected_content_cipher=protected_content_cipher,
+            duplicate_detection_key_provider=duplicate_detection_key_provider,
         )
     if runtime is None and engine is None and get_session is None:
         database_url = os.environ.get(DATABASE_URL_ENV)
@@ -63,6 +69,11 @@ def create_app(
         protected_content_cipher
         if runtime is None
         else runtime.protected_content_cipher
+    )
+    composed_duplicate_detection_key_provider = (
+        duplicate_detection_key_provider
+        if runtime is None
+        else runtime.duplicate_detection_key_provider
     )
     composed_role = (
         expected_runtime_role
@@ -123,6 +134,7 @@ def create_app(
             system_router_factory=system_router_factory,
             auth_router_factory=composed_auth_factory,
             protected_content_cipher=composed_protected_content_cipher,
+            duplicate_key_provider=composed_duplicate_detection_key_provider,
         )
     )
     install_error_handlers(application)
