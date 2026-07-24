@@ -94,10 +94,7 @@ def resolve_account(
         and account.asset_code == asset_code
         and account.status == "active"
         and _is_eligible(account, use=use)
-        and (
-            query == _normalize(account.display_name)
-            or query in {_normalize(alias) for alias in account.aliases}
-        )
+        and query in _account_query_names(account)
         and (reference.last4 is None or account.last4 == reference.last4)
         and (
             reference.subtype is None
@@ -196,8 +193,65 @@ def _normalize(value: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
+def derive_account_last4(current_name: str) -> str | None:
+    """Derive a terminal ASCII last4 without treating longer numbers as suffixes.
+
+    Outer whitespace is ignored. Bare ``1234`` and compact ``(1234)`` suffixes
+    are accepted; spaces inside the parentheses are intentionally unsupported.
+    A digit immediately before a bare suffix, including a Unicode digit,
+    rejects the candidate.
+    """
+
+    value = current_name.strip()
+    parenthesized = (
+        len(value) >= 6
+        and value.endswith(")")
+        and value[-6] == "("
+    )
+    start = len(value) - (5 if parenthesized else 4)
+    end = len(value) - 1 if parenthesized else len(value)
+    if start < 0:
+        return None
+    candidate = value[start:end]
+    if (
+        len(candidate) != 4
+        or not candidate.isascii()
+        or not candidate.isdigit()
+    ):
+        return None
+    if start > 0 and value[start - 1].isdigit():
+        return None
+    return candidate
+
+
+def _account_query_names(account: EntryAccount) -> frozenset[str]:
+    names = {
+        _normalize(account.display_name),
+        *(_normalize(alias) for alias in account.aliases),
+    }
+    if account.last4 == derive_account_last4(account.display_name):
+        base_name = _display_name_without_last4(account.display_name)
+        if base_name:
+            names.add(_normalize(base_name))
+    return frozenset(names)
+
+
+def _display_name_without_last4(current_name: str) -> str:
+    value = current_name.strip()
+    if derive_account_last4(value) is None:
+        return value
+    if len(value) >= 6 and value.endswith(")") and value[-6] == "(":
+        return value[:-6].rstrip()
+    return value[:-4].rstrip()
+
+
 def _choice_label(account: EntryAccount) -> str:
-    suffix = f" ••••{account.last4}" if account.last4 is not None else ""
+    suffix = (
+        f" ••••{account.last4}"
+        if account.last4 is not None
+        and derive_account_last4(account.display_name) != account.last4
+        else ""
+    )
     return f"{account.display_name}{suffix}"
 
 
@@ -205,6 +259,7 @@ __all__ = [
     "AccountResolution",
     "AccountUse",
     "EntryAccount",
+    "derive_account_last4",
     "resolve_account",
     "resolve_internal_account",
 ]

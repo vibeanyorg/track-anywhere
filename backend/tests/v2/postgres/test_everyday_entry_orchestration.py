@@ -214,6 +214,124 @@ def _entry(scenario: JournalScenario, category_id: UUID) -> ExpenseEntryInput:
     )
 
 
+def test_prepare_derives_account_last4_from_current_names(pg_engine) -> None:
+    scenario, category_id = _seed(pg_engine)
+    savings_id = uuid4()
+    other_savings_id = uuid4()
+    card_id = uuid4()
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "insert into accounts ("
+                "book_id, account_id, asset_code, account_type, account_subtype, "
+                "current_name, status) values "
+                "(:book_id, :savings_id, 'USD', 'asset', 'debit_card', "
+                "'工商银行 6184', 'active'), "
+                "(:book_id, :other_savings_id, 'USD', 'asset', 'debit_card', "
+                "'工商银行 (9988)', 'active'), "
+                "(:book_id, :card_id, 'USD', 'liability', 'credit_card', "
+                "'工商银行信用卡 1242', 'active')"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "savings_id": savings_id,
+                "other_savings_id": other_savings_id,
+                "card_id": card_id,
+            },
+        )
+    prepare_runtime, _ = _runtime(pg_engine, scenario)
+
+    def expense(
+        source_account: AccountRef,
+        *,
+        minute: int,
+    ) -> ExpenseEntryInput:
+        return ExpenseEntryInput(
+            amount=MoneyInput(
+                value=str(20 + minute),
+                denomination="asset_unit",
+                asset_code="USD",
+                source_text=f"{20 + minute} USD",
+            ),
+            source_account=source_account,
+            category=CategoryRef(category_id=category_id),
+            occurred_at=OCCURRED_AT + timedelta(minutes=minute),
+        )
+
+    resolved_base = prepare_entry(
+        book_id=scenario.book_id,
+        entry=expense(
+            AccountRef(
+                query="工商银行",
+                last4="6184",
+                subtype="debit_card",
+            ),
+            minute=1,
+        ),
+        runtime=prepare_runtime,
+    )
+    assert resolved_base.status is PreparedEntryStatus.READY
+    assert resolved_base.resolved.source_account_id == savings_id
+
+    resolved_full_name = prepare_entry(
+        book_id=scenario.book_id,
+        entry=expense(
+            AccountRef(query="工商银行 6184", last4="6184"),
+            minute=2,
+        ),
+        runtime=prepare_runtime,
+    )
+    assert resolved_full_name.status is PreparedEntryStatus.READY
+    assert resolved_full_name.resolved.source_account_id == savings_id
+
+    resolved_card = prepare_entry(
+        book_id=scenario.book_id,
+        entry=expense(
+            AccountRef(
+                query="工商银行信用卡",
+                last4="1242",
+                subtype="credit_card",
+            ),
+            minute=3,
+        ),
+        runtime=prepare_runtime,
+    )
+    assert resolved_card.status is PreparedEntryStatus.READY
+    assert resolved_card.resolved.source_account_id == card_id
+
+    ambiguous = prepare_entry(
+        book_id=scenario.book_id,
+        entry=expense(AccountRef(query="工商银行"), minute=4),
+        runtime=prepare_runtime,
+    )
+    assert ambiguous.status is PreparedEntryStatus.NEEDS_CLARIFICATION
+    assert ambiguous.commit_token is None
+    assert len(ambiguous.clarifications) == 1
+    assert ambiguous.clarifications[0].field == "source_account"
+    assert {
+        choice.resolved_id for choice in ambiguous.clarifications[0].choices
+    } == {savings_id, other_savings_id}
+
+    with pytest.raises(EntryGatewayError) as raised:
+        prepare_entry(
+            book_id=scenario.book_id,
+            entry=expense(
+                AccountRef(query="工商银行", last4="0000"),
+                minute=5,
+            ),
+            runtime=prepare_runtime,
+        )
+    assert raised.value.code is EntryErrorCode.ACCOUNT_NOT_FOUND
+
+    direct = prepare_entry(
+        book_id=scenario.book_id,
+        entry=expense(AccountRef(account_id=card_id), minute=6),
+        runtime=prepare_runtime,
+    )
+    assert direct.status is PreparedEntryStatus.READY
+    assert direct.resolved.source_account_id == card_id
+
+
 def test_prepare_commit_is_atomic_and_idempotent(pg_engine) -> None:
     scenario, category_id = _seed(pg_engine)
     prepare_runtime, commit_runtime = _runtime(pg_engine, scenario)

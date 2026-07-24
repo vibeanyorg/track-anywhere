@@ -9,6 +9,7 @@ import pytest
 from track_anywhere.application.entries.account_resolver import (
     AccountUse,
     EntryAccount,
+    derive_account_last4,
     resolve_account,
 )
 from track_anywhere.application.entries.amounts import EntryAsset, normalize_amount
@@ -258,6 +259,129 @@ def test_account_query_ambiguity_returns_structured_choices() -> None:
     assert tuple(choice.resolved_id for choice in resolution.choices) == tuple(
         sorted((WALLET_ID, duplicate.account_id), key=str)
     )
+
+
+@pytest.mark.parametrize(
+    ("current_name", "expected"),
+    (
+        ("工商银行 6184", "6184"),
+        ("  工商银行信用卡 (1242)  ", "1242"),
+        ("Card6184", "6184"),
+        ("6184", "6184"),
+        ("工商银行 12345", None),
+        ("工商银行 １1234", None),
+        ("工商银行 １２３４", None),
+        ("工商银行 ١٢٣٤", None),
+        ("工商银行 ( 1242 )", None),
+        ("工商银行 (1242) extra", None),
+        ("工商银行", None),
+    ),
+)
+def test_derives_only_an_independent_terminal_ascii_last4(
+    current_name: str,
+    expected: str | None,
+) -> None:
+    assert derive_account_last4(current_name) == expected
+
+
+def test_account_base_name_query_applies_last4_and_subtype_filters() -> None:
+    savings_id = UUID("00000000-0000-0000-0000-000000000041")
+    other_savings_id = UUID("00000000-0000-0000-0000-000000000042")
+    same_last4_card_id = UUID("00000000-0000-0000-0000-000000000043")
+    named_card_id = UUID("00000000-0000-0000-0000-000000000044")
+    accounts = (
+        _account(
+            savings_id,
+            "工商银行 6184",
+            AccountType.ASSET,
+            subtype="debit_card",
+            last4="6184",
+        ),
+        _account(
+            other_savings_id,
+            "工商银行 (9988)",
+            AccountType.ASSET,
+            subtype="debit_card",
+            last4="9988",
+        ),
+        _account(
+            same_last4_card_id,
+            "工商银行 (6184)",
+            AccountType.LIABILITY,
+            subtype="credit_card",
+            last4="6184",
+        ),
+        _account(
+            named_card_id,
+            "工商银行信用卡 1242",
+            AccountType.LIABILITY,
+            subtype="credit_card",
+            last4="1242",
+        ),
+    )
+
+    ambiguous = resolve_account(
+        AccountRef(query="工商银行"),
+        accounts=accounts,
+        book_id=BOOK_ID,
+        asset_code="CNY",
+        use=AccountUse.EXPENSE_SOURCE,
+    )
+    assert ambiguous.account is None
+    assert {choice.resolved_id for choice in ambiguous.choices} == {
+        savings_id,
+        other_savings_id,
+        same_last4_card_id,
+    }
+    assert all("••••" not in choice.label for choice in ambiguous.choices)
+
+    savings = resolve_account(
+        AccountRef(
+            query="工商银行",
+            last4="6184",
+            subtype="debit_card",
+        ),
+        accounts=accounts,
+        book_id=BOOK_ID,
+        asset_code="CNY",
+        use=AccountUse.EXPENSE_SOURCE,
+    )
+    assert savings.account is not None
+    assert savings.account.account_id == savings_id
+
+    card = resolve_account(
+        AccountRef(
+            query="工商银行信用卡",
+            last4="1242",
+            subtype="credit_card",
+        ),
+        accounts=accounts,
+        book_id=BOOK_ID,
+        asset_code="CNY",
+        use=AccountUse.EXPENSE_SOURCE,
+    )
+    assert card.account is not None
+    assert card.account.account_id == named_card_id
+
+    with pytest.raises(EntryGatewayError) as raised:
+        resolve_account(
+            AccountRef(query="工商银行", last4="0000"),
+            accounts=accounts,
+            book_id=BOOK_ID,
+            asset_code="CNY",
+            use=AccountUse.EXPENSE_SOURCE,
+        )
+    assert raised.value.code is EntryErrorCode.ACCOUNT_NOT_FOUND
+
+    direct = resolve_account(
+        AccountRef(account_id=named_card_id),
+        accounts=accounts,
+        book_id=BOOK_ID,
+        asset_code="CNY",
+        use=AccountUse.EXPENSE_SOURCE,
+    )
+    assert direct.account is not None
+    assert direct.account.account_id == named_card_id
 
 
 def test_compiler_preserves_structured_account_clarification() -> None:
