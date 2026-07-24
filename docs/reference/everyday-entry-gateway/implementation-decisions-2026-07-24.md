@@ -68,3 +68,19 @@ provider reference, and other narrative data remain excluded.
 
 The read model derives the non-card refund link from the stored source event.
 No mutable ORM relationship column is required.
+
+## D006: REST prepare and commit paths
+
+**Status:** Accepted
+**Date:** 2026-07-24
+
+The adapter contract uses:
+
+- `POST /api/v2/books/{book_id}/entries/prepare`, whose body is the
+  discriminated entry input;
+- `POST /api/v2/books/{book_id}/entries/commit`, whose body is exactly
+  `intent_id + commit_token + request_id`.
+
+Commit also sends the same `request_id` as the existing idempotency header.
+Prepare does not invent a second request identifier outside the frozen entry
+contract.
