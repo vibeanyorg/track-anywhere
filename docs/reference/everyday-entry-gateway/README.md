@@ -15,6 +15,8 @@ task:
 
 The integration branch owns these reference documents. Feature branches may
 propose corrections, but must not independently redefine the contract.
+`REFERENCE_SHA256SUMS` records the frozen Wave 0 content hashes. Integration
+reviews should verify it before accepting a feature branch.
 
 ## Non-negotiable invariants
 
@@ -28,4 +30,3 @@ propose corrections, but must not independently redefine the contract.
 - Refunds preserve an auditable relationship to the original transaction.
 - Sensitive narrative remains in encrypted protected-content storage.
 - Corrections use reversal and replacement; immutable history is not edited.
-
