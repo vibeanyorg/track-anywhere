@@ -117,7 +117,7 @@ def golden_accounts() -> tuple[EntryAccount, ...]:
         EntryAccount(
             account_id=ICBC_DEBIT_ID,
             book_id=BOOK_ID,
-            display_name="工商银行",
+            display_name="工商银行 6184",
             asset_code="CNY",
             account_type=AccountType.ASSET,
             account_subtype="debit_card",
@@ -126,7 +126,7 @@ def golden_accounts() -> tuple[EntryAccount, ...]:
         EntryAccount(
             account_id=ICBC_CARD_ID,
             book_id=BOOK_ID,
-            display_name="工商银行",
+            display_name="工商银行 1242",
             asset_code="CNY",
             account_type=AccountType.LIABILITY,
             account_subtype="credit_card",
