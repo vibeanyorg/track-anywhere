@@ -743,9 +743,7 @@ read_tools = {
 }
 ledger_write_tools = {
     "ledger_record_adjustment",
-    "ledger_record_credit_card_charge",
     "ledger_record_credit_card_payment",
-    "ledger_record_expense",
     "ledger_record_transfer",
 }
 catalog_write_tools = {
