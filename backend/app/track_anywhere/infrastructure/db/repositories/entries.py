@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -13,6 +12,10 @@ from sqlalchemy import Select, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from ...crypto.duplicate_detection import (
+    _hmac_external_reference,
+    _hmac_source_fingerprint,
+)
 from ..models.entries import (
     EverydayEntryExternalReferenceRecord,
     EverydayEntrySourceFingerprintRecord,
@@ -454,10 +457,11 @@ def hmac_external_reference(
     reference_kind: str,
     reference: str,
 ) -> bytes:
-    return _keyed_digest(
+    return _hmac_external_reference(
         key=key,
-        purpose=b"external-reference",
-        parts=(provider_code, reference_kind, reference),
+        provider_code=provider_code,
+        reference_kind=reference_kind,
+        reference=reference,
     )
 
 
@@ -466,34 +470,10 @@ def hmac_source_fingerprint(
     key: bytes,
     normalized_parts: tuple[str, ...],
 ) -> bytes:
-    if not normalized_parts:
-        raise ValueError("source fingerprint inputs are invalid")
-    return _keyed_digest(
+    return _hmac_source_fingerprint(
         key=key,
-        purpose=b"source-fingerprint",
-        parts=normalized_parts,
+        normalized_parts=normalized_parts,
     )
-
-
-def _keyed_digest(
-    *,
-    key: bytes,
-    purpose: bytes,
-    parts: tuple[str, ...],
-) -> bytes:
-    if type(key) is not bytes or len(key) < 32:
-        raise ValueError("duplicate-detection key is invalid")
-    if any(type(part) is not str or not part for part in parts):
-        raise ValueError("duplicate-detection inputs are invalid")
-    digest = hmac.new(key, digestmod=hashlib.sha256)
-    digest.update(b"track-anywhere:eeg:")
-    digest.update(purpose)
-    digest.update(b":v1")
-    for part in parts:
-        encoded = part.encode("utf-8")
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-    return digest.digest()
 
 
 def _validate_scope(book_id: UUID, actor_id: str, intent_id: UUID) -> None:

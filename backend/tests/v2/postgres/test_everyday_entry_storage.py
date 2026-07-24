@@ -435,6 +435,7 @@ def test_transaction_narrative_v2_round_trips_through_encrypted_persistence(
     sidecar_id = uuid4()
     legacy_sidecar_id = uuid4()
     narrative = TransactionNarrativeV2(
+        source_text="I spent $10.00",
         merchant="Encrypted Merchant",
         note="encrypted note",
         net_amount=NarrativeMoney(value="10.00", asset_code="USD"),
@@ -461,6 +462,7 @@ def test_transaction_narrative_v2_round_trips_through_encrypted_persistence(
             canonical_plaintext=plaintext,
         )
         assert persisted.kind == "transaction_narrative_v2"
+        assert b"I spent $10.00" not in (persisted.ciphertext or b"")
         assert b"Encrypted Merchant" not in (persisted.ciphertext or b"")
         ProtectedContentService(
             cipher=cipher,
@@ -520,6 +522,7 @@ def test_transaction_narrative_v2_round_trips_through_encrypted_persistence(
             repository=repository,
         )
         assert decoded[sidecar_id].merchant == "Encrypted Merchant"
+        assert decoded[sidecar_id].source_text == "I spent $10.00"
         assert decoded[sidecar_id].net_amount == NarrativeMoney(
             value="10.00",
             asset_code="USD",

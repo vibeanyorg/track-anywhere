@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, TypeAlias
 
-from pydantic import Field, StrictBytes, StrictStr
+from pydantic import Field, StrictBytes, StrictStr, field_validator
 
 from ...domain.privacy import AssetCode, FrozenContract
 
@@ -47,6 +47,11 @@ class TransactionNarrativeV2(FrozenContract):
     """Canonical encrypted narrative contract; every optional key is explicit."""
 
     contract_version: Literal[2] = 2
+    source_text: StrictStr = Field(
+        min_length=1,
+        max_length=256,
+        repr=False,
+    )
     purpose: StrictStr | None = Field(default=None, repr=False)
     transaction_memo: StrictStr | None = Field(default=None, repr=False)
     line_memos: tuple[StrictStr | None, ...] = Field(default=(), repr=False)
@@ -75,11 +80,24 @@ class TransactionNarrativeV2(FrozenContract):
     gross_amount: NarrativeMoney | None = Field(default=None, repr=False)
     discount_amount: NarrativeMoney | None = Field(default=None, repr=False)
     net_amount: NarrativeMoney | None = Field(default=None, repr=False)
+
+    @field_validator("source_text")
+    @classmethod
+    def validate_source_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("source_text must be nonblank")
+        return value
 
 
 class TransactionNarrative(FrozenContract):
     """Version-neutral query shape produced by v1/v2 upcasting."""
 
+    source_text: StrictStr | None = Field(
+        default=None,
+        min_length=1,
+        max_length=256,
+        repr=False,
+    )
     purpose: StrictStr | None = Field(default=None, repr=False)
     transaction_memo: StrictStr | None = Field(default=None, repr=False)
     line_memos: tuple[StrictStr | None, ...] = Field(default=(), repr=False)
@@ -108,6 +126,13 @@ class TransactionNarrative(FrozenContract):
     gross_amount: NarrativeMoney | None = Field(default=None, repr=False)
     discount_amount: NarrativeMoney | None = Field(default=None, repr=False)
     net_amount: NarrativeMoney | None = Field(default=None, repr=False)
+
+    @field_validator("source_text")
+    @classmethod
+    def validate_source_text(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("source_text must be nonblank")
+        return value
 
 
 def upcast_transaction_description(
@@ -115,12 +140,14 @@ def upcast_transaction_description(
 ) -> TransactionNarrative:
     if type(value) is TransactionDescription:
         return TransactionNarrative(
+            source_text=None,
             purpose=value.purpose,
             transaction_memo=value.transaction_memo,
             line_memos=value.line_memos,
         )
     if type(value) is TransactionNarrativeV2:
         return TransactionNarrative(
+            source_text=value.source_text,
             purpose=value.purpose,
             transaction_memo=value.transaction_memo,
             line_memos=value.line_memos,

@@ -164,6 +164,7 @@ def test_narrative_v1_and_v2_upcast_to_one_private_shape() -> None:
         )
     )
     current_contract = TransactionNarrativeV2(
+        source_text="我花了4.55元",
         merchant="Private Merchant",
         channel="private-channel",
         note="private note",
@@ -179,12 +180,15 @@ def test_narrative_v1_and_v2_upcast_to_one_private_shape() -> None:
     current = upcast_transaction_description(current_contract)
 
     assert legacy.purpose == "legacy purpose"
+    assert legacy.source_text is None
     assert legacy.merchant is None
+    assert current.source_text == "我花了4.55元"
     assert current.merchant == "Private Merchant"
     assert current.net_amount == NarrativeMoney(value="4.05", asset_code="CNY")
     representation = repr(current_contract)
     for private_value in (
         "Private Merchant",
+        "我花了4.55元",
         "private-channel",
         "private note",
         "private-order-123",
@@ -192,6 +196,17 @@ def test_narrative_v1_and_v2_upcast_to_one_private_shape() -> None:
         assert private_value not in representation
     with pytest.raises((FrozenInstanceError, TypeError, ValidationError)):
         current.note = "changed"  # type: ignore[misc]
+
+
+@pytest.mark.parametrize("source_text", (" ", "private-source-" * 20))
+def test_narrative_source_text_validation_is_bounded_and_redacted(
+    source_text: str,
+) -> None:
+    with pytest.raises(ValidationError) as error:
+        TransactionNarrativeV2(source_text=source_text)
+
+    assert "input_value" not in str(error.value)
+    assert "private-source-" not in str(error.value)
 
 
 def test_refund_reporting_signs_do_not_double_invert_card_refunds() -> None:
@@ -289,6 +304,7 @@ def test_strict_v1_v2_decoder_boundary_upcasts_without_plaintext_errors() -> Non
         ).model_dump(mode="json")
     )
     current_contract = TransactionNarrativeV2(
+        source_text="I spent $10.00",
         merchant="current private",
         net_amount=NarrativeMoney(value="10.00", asset_code="USD"),
     )
@@ -327,7 +343,9 @@ def test_strict_v1_v2_decoder_boundary_upcasts_without_plaintext_errors() -> Non
         repository=repository,  # type: ignore[arg-type]
     )
     assert narratives[legacy_id].purpose == "legacy private"
+    assert narratives[legacy_id].source_text is None
     assert narratives[legacy_id].merchant is None
+    assert narratives[current_id].source_text == "I spent $10.00"
     assert narratives[current_id].merchant == "current private"
     assert narratives[current_id].net_amount == NarrativeMoney(
         value="10.00",
