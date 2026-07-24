@@ -1,0 +1,159 @@
+{
+  "entries": [
+    {
+      "kind": "expense",
+      "amount": {
+        "value": "53",
+        "denomination": "asset_unit",
+        "asset_code": "CNY",
+        "source_text": "53"
+      },
+      "source_account": {
+        "query": "微信零钱通"
+      },
+      "category": {
+        "path": ["食品", "外卖"]
+      },
+      "occurred_at": "2026-07-24T12:00:00Z",
+      "narrative": {
+        "merchant": "外卖"
+      }
+    },
+    {
+      "kind": "income",
+      "amount": {
+        "value": "12000",
+        "denomination": "asset_unit",
+        "asset_code": "CNY",
+        "source_text": "12000"
+      },
+      "destination_account": {
+        "query": "工商银行",
+        "last4": "6184",
+        "subtype": "debit_card"
+      },
+      "category": {
+        "path": ["工资", "heyrevia"]
+      },
+      "occurred_at": "2026-07-24T12:01:00Z"
+    },
+    {
+      "kind": "transfer",
+      "amount": {
+        "value": "1000",
+        "denomination": "asset_unit",
+        "asset_code": "CNY",
+        "source_text": "1000"
+      },
+      "source_account": {
+        "query": "中国银行",
+        "last4": "2950"
+      },
+      "destination_account": {
+        "query": "微信零钱通"
+      },
+      "occurred_at": "2026-07-24T12:02:00Z"
+    },
+    {
+      "kind": "credit_card_payment",
+      "amount": {
+        "value": "2000",
+        "denomination": "asset_unit",
+        "asset_code": "CNY",
+        "source_text": "2000"
+      },
+      "funding_account": {
+        "query": "工商银行",
+        "last4": "6184",
+        "subtype": "debit_card"
+      },
+      "card_account": {
+        "query": "工商银行信用卡",
+        "last4": "1242",
+        "subtype": "credit_card"
+      },
+      "occurred_at": "2026-07-24T12:03:00Z"
+    },
+    {
+      "kind": "refund",
+      "original_transaction_id": "00000000-0000-4000-8000-000000000041",
+      "amount": {
+        "value": "10",
+        "denomination": "asset_unit",
+        "asset_code": "CNY",
+        "source_text": "退款10元"
+      },
+      "occurred_at": "2026-07-24T12:04:00Z"
+    },
+    {
+      "kind": "adjustment",
+      "account": {
+        "query": "微信零钱通"
+      },
+      "actual_balance": {
+        "value": "1250.60",
+        "denomination": "asset_unit",
+        "asset_code": "CNY",
+        "source_text": "1250.60"
+      },
+      "occurred_at": "2026-07-24T12:05:00Z"
+    }
+  ],
+  "minor_unit_expense": {
+    "kind": "expense",
+    "amount": {
+      "value": "660",
+      "denomination": "minor_unit",
+      "asset_code": "CNY",
+      "source_text": "660分"
+    },
+    "source_account": {
+      "query": "微信零钱通"
+    },
+    "category": {
+      "query": "饮料"
+    },
+    "occurred_at": "2026-07-24T12:06:00Z"
+  },
+  "ready_prepared_entry": {
+    "intent_id": "00000000-0000-4000-8000-000000000051",
+    "status": "ready",
+    "commit_token": "opaque-commit-token-with-at-least-32-characters",
+    "expires_at": "2026-07-24T12:15:00Z",
+    "preview": {
+      "kind": "expense",
+      "summary": "从微信零钱通支出 CNY 53.00，分类为食品/外卖",
+      "amount": {
+        "value": "53.00",
+        "asset_code": "CNY",
+        "display": "¥53.00"
+      },
+      "occurred_at": "2026-07-24T12:00:00Z",
+      "accounts": [
+        {
+          "role": "source",
+          "display_name": "微信零钱通"
+        }
+      ],
+      "category_paths": [
+        ["食品", "外卖"]
+      ]
+    },
+    "resolved": {
+      "source_account_id": "00000000-0000-4000-8000-000000000052",
+      "category_ids": [
+        "00000000-0000-4000-8000-000000000053"
+      ],
+      "category_version_ids": [
+        "00000000-0000-4000-8000-000000000054"
+      ]
+    },
+    "warnings": [],
+    "clarifications": []
+  },
+  "commit": {
+    "intent_id": "00000000-0000-4000-8000-000000000051",
+    "commit_token": "opaque-commit-token-with-at-least-32-characters",
+    "request_id": "00000000-0000-4000-8000-000000000055"
+  }
+}
