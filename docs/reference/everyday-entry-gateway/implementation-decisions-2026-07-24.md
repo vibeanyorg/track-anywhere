@@ -94,15 +94,18 @@ contract.
 **Status:** Accepted
 **Date:** 2026-07-24
 
-The original `MoneyInput.source_text` is retained for consistency audit inside
-encrypted `transaction_narrative_v2`. It is private, redacted from `repr`, and
-never stored in the prepared intent's canonical JSON, immutable ledger events,
-logs, errors, or tokens.
+Every original `MoneyInput.source_text` and `BalanceInput.source_text` is
+retained for consistency audit inside encrypted `transaction_narrative_v2` as a
+typed, deterministic field-path-to-text tuple. Text is private and redacted from
+`repr`; field paths are bounded non-sensitive schema coordinates. Neither is
+stored in the prepared intent's canonical JSON, immutable ledger events, logs,
+errors, or tokens.
 
 The prepared canonical payload stores only validated, resolved, non-sensitive
-compiler inputs. Commit may recompile from those frozen values but must not
-invent a replacement source-text marker or silently discard the original audit
-fact.
+compiler inputs. Commit restores each exact source text to its matching field
+path before recompilation. It must reject a missing, duplicate, or unexpected
+path and must not copy one primary text across split allocations, invent a
+replacement marker, or silently discard an original audit fact.
 
 ## D008: Duplicate detection uses a separate stable secret
 
