@@ -69,6 +69,7 @@ class CategoryVersionSnapshot:
     parent_category_id: UUID | None
     name: str
     status: str
+    usage_kind: str
     change_reason_code: str
 
 
@@ -203,6 +204,7 @@ class CatalogRepository:
             parent_category_id=record.parent_category_id,
             name=record.name,
             status=record.status,
+            usage_kind=record.usage_kind,
             change_reason_code=record.change_reason_code,
         )
 

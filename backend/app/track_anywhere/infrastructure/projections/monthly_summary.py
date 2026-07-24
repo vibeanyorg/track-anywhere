@@ -66,16 +66,15 @@ def cold_replay_monthly_summary(
         )
         if type(payload) is JournalTransactionPosted:
             transaction_times[payload.transaction_id] = utc_date(record.effective_at)
-            transaction_reporting_signs[payload.transaction_id] = 1
+            transaction_reporting_signs[payload.transaction_id] = (
+                _journal_reporting_sign(payload.kind.value)
+            )
         elif type(payload) is CreditCardTransactionRecorded:
             transaction_times[payload.transaction_id] = utc_date(record.effective_at)
             transaction_card_intents[payload.transaction_id] = payload.intent
-            transaction_reporting_signs[payload.transaction_id] = {
-                CreditCardIntent.CHARGE: 1,
-                CreditCardIntent.FEE: 1,
-                CreditCardIntent.PAYMENT: 0,
-                CreditCardIntent.REFUND: -1,
-            }[payload.intent]
+            transaction_reporting_signs[payload.transaction_id] = (
+                _credit_card_reporting_sign(payload.intent)
+            )
         elif type(payload) is JournalTransactionReversed:
             effective_date = utc_date(record.effective_at)
             transaction_times[payload.reversal_transaction_id] = effective_date
@@ -147,6 +146,19 @@ def cold_replay_monthly_summary(
     return {
         period: tuple(sorted(values)) for period, values in sorted(by_period.items())
     }
+
+
+def _journal_reporting_sign(transaction_kind: str) -> int:
+    return -1 if transaction_kind == "refund" else 1
+
+
+def _credit_card_reporting_sign(intent: CreditCardIntent) -> int:
+    return {
+        CreditCardIntent.CHARGE: 1,
+        CreditCardIntent.FEE: 1,
+        CreditCardIntent.PAYMENT: 0,
+        CreditCardIntent.REFUND: -1,
+    }[intent]
 
 
 def _add_lines(
