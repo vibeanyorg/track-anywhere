@@ -6,7 +6,7 @@ replace either locked reference document.
 
 ## D001: Prepared intent actor scope
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-07-24
 
 Prepared intents and source references are repository-scoped by
@@ -19,7 +19,7 @@ prepared by one actor cannot be observed, cancelled, or committed by another.
 
 ## D002: Everyday source references are a separate persistence concept
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-07-24
 
 Strong provider/order/import deduplication uses an Everyday Entry source
@@ -29,3 +29,14 @@ existing immutable-ledger financial external-reference semantics.
 The dedicated source-reference uniqueness scope is Book, provider, reference
 kind, and normalized protected value/digest as defined by the storage lane.
 
+## D003: Non-card refunds remain an explicit transaction kind
+
+**Status:** Accepted
+**Date:** 2026-07-24
+
+The implementation retains the design requirement for an explicit non-credit-
+card `refund` transaction kind. It is not downgraded to an unsupported result.
+The core lane owns the domain/compiler and event serialization contract; the
+storage lane owns the PostgreSQL projection constraints and migration support.
+
+Credit-card refunds continue to use the existing typed credit-card relation.
