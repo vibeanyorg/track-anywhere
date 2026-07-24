@@ -29,6 +29,32 @@ class NarrativeMoney(FrozenContract):
     asset_code: AssetCode
 
 
+class NarrativeAmountSource(FrozenContract):
+    """Private input text bound to one deterministic Money/Balance field."""
+
+    field_path: StrictStr = Field(
+        pattern=(
+            r"^(?:amount|actual_balance|"
+            r"narrative\.(?:gross_amount|discount_amount)|"
+            r"category_allocations\.(?:[0-9]|[1-5][0-9]|6[0-3])\.amount)$"
+        ),
+        min_length=1,
+        max_length=128,
+    )
+    source_text: StrictStr = Field(
+        min_length=1,
+        max_length=256,
+        repr=False,
+    )
+
+    @field_validator("source_text")
+    @classmethod
+    def validate_source_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("source_text must be nonblank")
+        return value
+
+
 class NarrativeExternalReference(FrozenContract):
     provider_code: StrictStr = Field(
         pattern=r"^[a-z][a-z0-9_-]{0,31}$",
@@ -47,9 +73,8 @@ class TransactionNarrativeV2(FrozenContract):
     """Canonical encrypted narrative contract; every optional key is explicit."""
 
     contract_version: Literal[2] = 2
-    source_text: StrictStr = Field(
-        min_length=1,
-        max_length=256,
+    amount_sources: tuple[NarrativeAmountSource, ...] = Field(
+        max_length=67,
         repr=False,
     )
     purpose: StrictStr | None = Field(default=None, repr=False)
@@ -81,21 +106,24 @@ class TransactionNarrativeV2(FrozenContract):
     discount_amount: NarrativeMoney | None = Field(default=None, repr=False)
     net_amount: NarrativeMoney | None = Field(default=None, repr=False)
 
-    @field_validator("source_text")
+    @field_validator("amount_sources")
     @classmethod
-    def validate_source_text(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("source_text must be nonblank")
+    def validate_amount_sources(
+        cls,
+        value: tuple[NarrativeAmountSource, ...],
+    ) -> tuple[NarrativeAmountSource, ...]:
+        paths = tuple(source.field_path for source in value)
+        if len(paths) != len(set(paths)):
+            raise ValueError("amount source field paths must be unique")
         return value
 
 
 class TransactionNarrative(FrozenContract):
     """Version-neutral query shape produced by v1/v2 upcasting."""
 
-    source_text: StrictStr | None = Field(
-        default=None,
-        min_length=1,
-        max_length=256,
+    amount_sources: tuple[NarrativeAmountSource, ...] = Field(
+        default=(),
+        max_length=67,
         repr=False,
     )
     purpose: StrictStr | None = Field(default=None, repr=False)
@@ -127,11 +155,15 @@ class TransactionNarrative(FrozenContract):
     discount_amount: NarrativeMoney | None = Field(default=None, repr=False)
     net_amount: NarrativeMoney | None = Field(default=None, repr=False)
 
-    @field_validator("source_text")
+    @field_validator("amount_sources")
     @classmethod
-    def validate_source_text(cls, value: str | None) -> str | None:
-        if value is not None and not value.strip():
-            raise ValueError("source_text must be nonblank")
+    def validate_amount_sources(
+        cls,
+        value: tuple[NarrativeAmountSource, ...],
+    ) -> tuple[NarrativeAmountSource, ...]:
+        paths = tuple(source.field_path for source in value)
+        if len(paths) != len(set(paths)):
+            raise ValueError("amount source field paths must be unique")
         return value
 
 
@@ -140,14 +172,14 @@ def upcast_transaction_description(
 ) -> TransactionNarrative:
     if type(value) is TransactionDescription:
         return TransactionNarrative(
-            source_text=None,
+            amount_sources=(),
             purpose=value.purpose,
             transaction_memo=value.transaction_memo,
             line_memos=value.line_memos,
         )
     if type(value) is TransactionNarrativeV2:
         return TransactionNarrative(
-            source_text=value.source_text,
+            amount_sources=value.amount_sources,
             purpose=value.purpose,
             transaction_memo=value.transaction_memo,
             line_memos=value.line_memos,
@@ -170,6 +202,7 @@ class ProtectedContentEnvelope(FrozenContract):
 __all__ = [
     "ProtectedContentEnvelope",
     "ProtectedContentKind",
+    "NarrativeAmountSource",
     "NarrativeExternalReference",
     "NarrativeMoney",
     "TransactionNarrative",

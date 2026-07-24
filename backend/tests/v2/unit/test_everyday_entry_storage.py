@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from track_anywhere.application.privacy import (
+    NarrativeAmountSource,
     NarrativeExternalReference,
     NarrativeMoney,
     TransactionDescription,
@@ -164,7 +165,24 @@ def test_narrative_v1_and_v2_upcast_to_one_private_shape() -> None:
         )
     )
     current_contract = TransactionNarrativeV2(
-        source_text="我花了4.55元",
+        amount_sources=(
+            NarrativeAmountSource(
+                field_path="amount",
+                source_text="我花了4.55元",
+            ),
+            NarrativeAmountSource(
+                field_path="category_allocations.0.amount",
+                source_text="咖啡4.05元",
+            ),
+            NarrativeAmountSource(
+                field_path="narrative.gross_amount",
+                source_text="原价4.55元",
+            ),
+            NarrativeAmountSource(
+                field_path="narrative.discount_amount",
+                source_text="优惠0.50元",
+            ),
+        ),
         merchant="Private Merchant",
         channel="private-channel",
         note="private note",
@@ -180,33 +198,79 @@ def test_narrative_v1_and_v2_upcast_to_one_private_shape() -> None:
     current = upcast_transaction_description(current_contract)
 
     assert legacy.purpose == "legacy purpose"
-    assert legacy.source_text is None
+    assert legacy.amount_sources == ()
     assert legacy.merchant is None
-    assert current.source_text == "我花了4.55元"
+    assert tuple(source.field_path for source in current.amount_sources) == (
+        "amount",
+        "category_allocations.0.amount",
+        "narrative.gross_amount",
+        "narrative.discount_amount",
+    )
+    assert current.amount_sources[0].source_text == "我花了4.55元"
     assert current.merchant == "Private Merchant"
     assert current.net_amount == NarrativeMoney(value="4.05", asset_code="CNY")
-    representation = repr(current_contract)
+    representations = (repr(current_contract), repr(current))
     for private_value in (
         "Private Merchant",
         "我花了4.55元",
+        "咖啡4.05元",
+        "原价4.55元",
+        "优惠0.50元",
         "private-channel",
         "private note",
         "private-order-123",
     ):
-        assert private_value not in representation
+        assert all(private_value not in value for value in representations)
+    source_representation = repr(current_contract.amount_sources[0])
+    assert "field_path='amount'" in source_representation
+    assert "我花了4.55元" not in source_representation
     with pytest.raises((FrozenInstanceError, TypeError, ValidationError)):
         current.note = "changed"  # type: ignore[misc]
 
 
 @pytest.mark.parametrize("source_text", (" ", "private-source-" * 20))
-def test_narrative_source_text_validation_is_bounded_and_redacted(
+def test_narrative_amount_source_text_is_bounded_and_redacted(
     source_text: str,
 ) -> None:
     with pytest.raises(ValidationError) as error:
-        TransactionNarrativeV2(source_text=source_text)
+        NarrativeAmountSource(field_path="amount", source_text=source_text)
 
     assert "input_value" not in str(error.value)
     assert "private-source-" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "field_path",
+    (
+        "category_allocations.00.amount",
+        "category_allocations.64.amount",
+        "narrative.net_amount",
+        "Amount",
+        "amount.source_text",
+    ),
+)
+def test_narrative_amount_source_paths_are_strict_and_errors_are_redacted(
+    field_path: str,
+) -> None:
+    source_text = "must-not-escape"
+    with pytest.raises(ValidationError) as error:
+        NarrativeAmountSource(field_path=field_path, source_text=source_text)
+
+    assert source_text not in str(error.value)
+
+
+def test_narrative_amount_source_paths_must_be_unique() -> None:
+    source = NarrativeAmountSource(
+        field_path="amount",
+        source_text="private amount",
+    )
+    with pytest.raises(
+        ValidationError,
+        match="amount source field paths must be unique",
+    ) as error:
+        TransactionNarrativeV2(amount_sources=(source, source))
+
+    assert "private amount" not in str(error.value)
 
 
 def test_refund_reporting_signs_do_not_double_invert_card_refunds() -> None:
@@ -291,11 +355,40 @@ def _narrative_snapshot(
     )
 
 
+def test_full_refund_empty_amount_sources_upcast_through_canonical_codec() -> None:
+    book_id = uuid4()
+    sidecar_id = uuid4()
+    full_refund = TransactionNarrativeV2(amount_sources=())
+    canonical = canonical_json_bytes(full_refund.model_dump(mode="json"))
+
+    assert b'"amount_sources":[]' in canonical
+    decoded = get_transaction_narratives(
+        cast(Session, object()),
+        book_id,
+        narrative_refs=(sidecar_id,),
+        cipher=_narrative_cipher(),
+        repository=_NarrativeRepository(
+            {
+                sidecar_id: _narrative_snapshot(
+                    book_id=book_id,
+                    sidecar_id=sidecar_id,
+                    kind="transaction_narrative_v2",
+                    plaintext=canonical,
+                )
+            }
+        ),  # type: ignore[arg-type]
+    )
+
+    assert decoded[sidecar_id].amount_sources == ()
+    assert upcast_transaction_description(full_refund).amount_sources == ()
+
+
 def test_strict_v1_v2_decoder_boundary_upcasts_without_plaintext_errors() -> None:
     book_id = uuid4()
     legacy_id = uuid4()
     current_id = uuid4()
     malformed_id = uuid4()
+    noncanonical_id = uuid4()
     legacy_plaintext = canonical_json_bytes(
         TransactionDescription(
             purpose="legacy private",
@@ -304,14 +397,33 @@ def test_strict_v1_v2_decoder_boundary_upcasts_without_plaintext_errors() -> Non
         ).model_dump(mode="json")
     )
     current_contract = TransactionNarrativeV2(
-        source_text="I spent $10.00",
+        amount_sources=(
+            NarrativeAmountSource(
+                field_path="amount",
+                source_text="I spent $10.00",
+            ),
+            NarrativeAmountSource(
+                field_path="narrative.gross_amount",
+                source_text="gross was $12.00",
+            ),
+        ),
         merchant="current private",
         net_amount=NarrativeMoney(value="10.00", asset_code="USD"),
     )
     current_plaintext = canonical_json_bytes(
         current_contract.model_dump(mode="json")
     )
-    private_malformed = b'{"contract_version":2,"merchant":"must-not-escape"}'
+    private_malformed = canonical_json_bytes(
+        {
+            **current_contract.model_dump(mode="json"),
+            "amount_sources": [
+                {
+                    "field_path": "narrative.net_amount",
+                    "source_text": "must-not-escape",
+                }
+            ],
+        }
+    )
     repository = _NarrativeRepository(
         {
             legacy_id: _narrative_snapshot(
@@ -332,6 +444,12 @@ def test_strict_v1_v2_decoder_boundary_upcasts_without_plaintext_errors() -> Non
                 kind="transaction_narrative_v2",
                 plaintext=private_malformed,
             ),
+            noncanonical_id: _narrative_snapshot(
+                book_id=book_id,
+                sidecar_id=noncanonical_id,
+                kind="transaction_narrative_v2",
+                plaintext=b" " + current_plaintext,
+            ),
         }
     )
 
@@ -343,24 +461,26 @@ def test_strict_v1_v2_decoder_boundary_upcasts_without_plaintext_errors() -> Non
         repository=repository,  # type: ignore[arg-type]
     )
     assert narratives[legacy_id].purpose == "legacy private"
-    assert narratives[legacy_id].source_text is None
+    assert narratives[legacy_id].amount_sources == ()
     assert narratives[legacy_id].merchant is None
-    assert narratives[current_id].source_text == "I spent $10.00"
+    assert narratives[current_id].amount_sources == current_contract.amount_sources
     assert narratives[current_id].merchant == "current private"
     assert narratives[current_id].net_amount == NarrativeMoney(
         value="10.00",
         asset_code="USD",
     )
 
-    with pytest.raises(
-        ProtectedContentUnavailable,
-        match="^protected content is unavailable$",
-    ) as error:
-        get_transaction_narratives(
-            cast(Session, object()),
-            book_id,
-            narrative_refs=(malformed_id,),
-            cipher=_narrative_cipher(),
-            repository=repository,  # type: ignore[arg-type]
-        )
-    assert "must-not-escape" not in str(error.value)
+    for invalid_id in (malformed_id, noncanonical_id):
+        with pytest.raises(
+            ProtectedContentUnavailable,
+            match="^protected content is unavailable$",
+        ) as error:
+            get_transaction_narratives(
+                cast(Session, object()),
+                book_id,
+                narrative_refs=(invalid_id,),
+                cipher=_narrative_cipher(),
+                repository=repository,  # type: ignore[arg-type]
+            )
+        assert "must-not-escape" not in str(error.value)
+        assert "I spent $10.00" not in str(error.value)
