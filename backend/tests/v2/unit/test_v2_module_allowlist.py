@@ -64,3 +64,16 @@ def test_approved_runtime_packages_do_not_import_root_legacy_modules() -> None:
                 if prefix in source:
                     findings.append(f"{path.relative_to(ROOT)}: {prefix}")
     assert not findings, "legacy imports remain:\n" + "\n".join(findings)
+
+
+def test_mcp_entry_adapter_uses_shared_service_not_business_implementations() -> None:
+    source = (
+        RUNTIME_ROOT / "mcp" / "entry_tools.py"
+    ).read_text(encoding="utf-8")
+
+    assert "application.entries.service import" in source
+    assert "RequestScopedEverydayEntryService" in source
+    assert "application.entries.compiler import" not in source
+    assert "application.entries.amounts import" not in source
+    assert "application.entries.account_resolver import" not in source
+    assert "application.entries.category_resolver import" not in source

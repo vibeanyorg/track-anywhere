@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -27,7 +29,10 @@ from track_anywhere.application.entries.errors import (
     EntryGatewayError,
 )
 from track_anywhere.mcp import entry_tools
-from track_anywhere.mcp.entry_tools import register_entry_prepare_tools
+from track_anywhere.mcp.entry_tools import (
+    create_runtime_entry_service_provider,
+    register_entry_prepare_tools,
+)
 from track_anywhere.mcp.server import ChatGptFastMCP
 
 
@@ -287,6 +292,48 @@ def test_shadow_descriptors_are_small_business_fact_schemas() -> None:
     assert "actual_balance" in by_name[
         "ledger_prepare_adjustment"
     ].inputSchema["required"]
+
+
+def test_runtime_provider_reuses_book_guard_and_injects_actor_scoped_dependencies(
+    monkeypatch,
+) -> None:
+    session = object()
+    uow_factory = object()
+    ledger_committer = object()
+    calls: list[tuple[object, AccessToken, UUID]] = []
+    token = _token()
+    dependencies = SimpleNamespace(
+        session_factory=lambda: nullcontext(session),
+        uow_factory=uow_factory,
+        ledger_committer=ledger_committer,
+        protected_content_cipher=None,
+        duplicate_detection_key_provider=None,
+    )
+    monkeypatch.setattr(
+        entry_tools,
+        "require_book_write_access",
+        lambda actual_session, actual_token, book_id: calls.append(
+            (actual_session, actual_token, book_id)
+        ),
+    )
+
+    provider = create_runtime_entry_service_provider(dependencies)
+    service = provider(token, BOOK_ID)
+
+    assert calls == [(session, token, BOOK_ID)]
+    assert service.actor.subject_id == token.subject
+    assert service.uow_factory is uow_factory
+    assert service.ledger_committer is ledger_committer
+    assert service.protected_content_service is None
+    assert service.duplicate_key_provider is None
+
+
+def test_runtime_provider_construction_does_not_require_entry_secrets() -> None:
+    provider = create_runtime_entry_service_provider(
+        SimpleNamespace(session_factory=lambda: None)
+    )
+
+    assert callable(provider)
 
 
 @pytest.mark.parametrize(

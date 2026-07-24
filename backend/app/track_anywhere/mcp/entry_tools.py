@@ -32,7 +32,12 @@ from ..application.entries.contracts import (
     TransferEntryInput,
 )
 from ..application.entries.errors import EntryGatewayError
-from .auth import require_write_access_token
+from ..application.entries.service import RequestScopedEverydayEntryService
+from ..application.idempotency import CommandActor
+from ..application.privacy.service import ProtectedContentService
+from ..api.dependencies import RuntimeDependencies
+from ..infrastructure.db.repositories.privacy import ProtectedContentRepository
+from .auth import require_book_write_access, require_write_access_token
 
 
 ENTRY_PREPARE_SECURITY_SCHEMES = [
@@ -69,6 +74,43 @@ class EntryServiceProvider(Protocol):
         token: AccessToken,
         book_id: UUID,
     ) -> EverydayEntryService: ...
+
+
+def create_runtime_entry_service_provider(
+    dependencies: RuntimeDependencies,
+) -> EntryServiceProvider:
+    """Compose the shared entry facade lazily for an authenticated MCP call."""
+
+    def provide(
+        token: AccessToken,
+        book_id: UUID,
+    ) -> RequestScopedEverydayEntryService:
+        subject = token.subject
+        if subject is None:
+            raise ToolError(
+                "Authentication is required. Reconnect the Track Anywhere app."
+            )
+        with dependencies.session_factory() as session:
+            require_book_write_access(session, token, book_id)
+
+        cipher = dependencies.protected_content_cipher
+        protected_service = (
+            None
+            if cipher is None
+            else ProtectedContentService(
+                cipher=cipher,
+                repository=ProtectedContentRepository(),
+            )
+        )
+        return RequestScopedEverydayEntryService(
+            actor=CommandActor(subject),
+            uow_factory=dependencies.uow_factory,
+            ledger_committer=dependencies.ledger_committer,
+            protected_content_service=protected_service,
+            duplicate_key_provider=dependencies.duplicate_detection_key_provider,
+        )
+
+    return provide
 
 
 class ShadowPreparedEntry(BaseModel):
@@ -339,5 +381,6 @@ __all__ = [
     "ENTRY_PREPARE_TOOL_META",
     "EntryServiceProvider",
     "ShadowPreparedEntry",
+    "create_runtime_entry_service_provider",
     "register_entry_prepare_tools",
 ]
