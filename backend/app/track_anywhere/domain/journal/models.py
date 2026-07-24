@@ -19,12 +19,16 @@ class TransactionKind(str, Enum):
     OPENING = "opening"
     ADJUSTMENT = "adjustment"
     TRANSFER = "transfer"
+    REFUND = "refund"
     FX = "fx"
     INVESTMENT_CASH = "investment_cash"
 
 
 class AccountSystemRole(str, Enum):
     STANDARD = "standard"
+    EXPENSE_CLEARING = "expense_clearing"
+    INCOME_CLEARING = "income_clearing"
+    BALANCE_ADJUSTMENT = "balance_adjustment"
     FX_TRADING = "fx_trading"
 
 

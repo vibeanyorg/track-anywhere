@@ -362,6 +362,7 @@ def test_transaction_kind_contract_has_only_the_approved_values() -> None:
         "opening",
         "adjustment",
         "transfer",
+        "refund",
         "fx",
         "investment_cash",
     }
