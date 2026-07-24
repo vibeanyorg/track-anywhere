@@ -1,4 +1,5 @@
 from .protected_content import (
+    NarrativeAmountSource,
     NarrativeExternalReference,
     NarrativeMoney,
     ProtectedContentEnvelope,
@@ -18,6 +19,7 @@ from .service import (
 __all__ = [
     "ProtectedContentEnvelope",
     "ProtectedContentKind",
+    "NarrativeAmountSource",
     "NarrativeExternalReference",
     "NarrativeMoney",
     "TransactionDescription",

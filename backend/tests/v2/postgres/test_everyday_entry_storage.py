@@ -36,7 +36,11 @@ from track_anywhere.infrastructure.db.repositories.entries import (
     hmac_external_reference,
     hmac_source_fingerprint,
 )
-from track_anywhere.application.privacy import NarrativeMoney, TransactionNarrativeV2
+from track_anywhere.application.privacy import (
+    NarrativeAmountSource,
+    NarrativeMoney,
+    TransactionNarrativeV2,
+)
 from track_anywhere.application.privacy.service import ProtectedContentService
 from track_anywhere.infrastructure.crypto import (
     ProtectedContentCipher,
@@ -435,7 +439,16 @@ def test_transaction_narrative_v2_round_trips_through_encrypted_persistence(
     sidecar_id = uuid4()
     legacy_sidecar_id = uuid4()
     narrative = TransactionNarrativeV2(
-        source_text="I spent $10.00",
+        amount_sources=(
+            NarrativeAmountSource(
+                field_path="amount",
+                source_text="I spent $10.00",
+            ),
+            NarrativeAmountSource(
+                field_path="narrative.gross_amount",
+                source_text="gross was $12.00",
+            ),
+        ),
         merchant="Encrypted Merchant",
         note="encrypted note",
         net_amount=NarrativeMoney(value="10.00", asset_code="USD"),
@@ -463,6 +476,7 @@ def test_transaction_narrative_v2_round_trips_through_encrypted_persistence(
         )
         assert persisted.kind == "transaction_narrative_v2"
         assert b"I spent $10.00" not in (persisted.ciphertext or b"")
+        assert b"gross was $12.00" not in (persisted.ciphertext or b"")
         assert b"Encrypted Merchant" not in (persisted.ciphertext or b"")
         ProtectedContentService(
             cipher=cipher,
@@ -522,7 +536,7 @@ def test_transaction_narrative_v2_round_trips_through_encrypted_persistence(
             repository=repository,
         )
         assert decoded[sidecar_id].merchant == "Encrypted Merchant"
-        assert decoded[sidecar_id].source_text == "I spent $10.00"
+        assert decoded[sidecar_id].amount_sources == narrative.amount_sources
         assert decoded[sidecar_id].net_amount == NarrativeMoney(
             value="10.00",
             asset_code="USD",
