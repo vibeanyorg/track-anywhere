@@ -30,6 +30,7 @@ Status meanings:
 | OAuth status, logout, refresh, device, and PKCE login | Implemented | OAuth discovery first; authorization-code + S256 PKCE is the interactive default and device flow is explicit |
 | Machine API key | Implemented | `--api-key-file` sends only `X-API-Key`; env use requires `--insecure-automation`; `--token` is OAuth-only |
 | Protected descriptions and import archive list/export | Implemented | Owner-authorized explicit reads; archive export decrypts only on explicit request and has no MCP fallback |
+| Everyday expense, income, transfer, card payment, refund, and reconciliation | Implemented | `ta expense/income/transfer/card-pay/refund/reconcile` use the shared prepare/commit service; Book auto-selection is safe for a single active Book and resolved account/category previews are shown before human confirmation |
 | Frozen V1 financial-history apply | Removed | Operator-only one-shot process; there is no client command, HTTP route, MCP tool, or general import fallback. See the [runbook](v1-financial-backfill.md). |
 | Local version, schema, and capability output | Implemented | Local CLI metadata; no server fallback |
 | Payment instruments and payment profiles | Removed | No V2 route or CLI command group |
@@ -44,6 +45,11 @@ at the JSON boundary and preserve an explicit idempotency key. The CLI may
 generate a key only when the caller omitted one; it never derives an amount or
 silently maps an unsupported command to another operation.
 
+Everyday-entry commands keep accounts and categories in separate named
+arguments. `--from`/`--to` select real payment accounts; `--category` selects a
+reporting category. Agent, JSON, and no-input modes never guess among multiple
+Books and return a structured `book_selection_required` error with choices.
+
 ## Web frontend
 
 | Capability | Status | V2 boundary |
@@ -53,6 +59,7 @@ silently maps an unsupported command to another operation.
 | Session status and logout | Implemented | V2 session routes with CSRF/same-origin enforcement |
 | OAuth metadata, PKCE callback, and device approval | Implemented | V2 auth/OAuth routes only |
 | ChatGPT MCP connector | Implemented | OAuth-only; resource-bound read scopes, optional `book:write` for three idempotent catalog bootstrap tools, and optional `ledger:write` for four semantic ledger tools; no API-key fallback |
+| MCP everyday-entry gateway | Shadow preview | Scenario-specific prepare tools use the same compiler as REST/CLI and cannot expose internal accounts or commit financial events; commit remains intentionally unavailable until the shadow acceptance gate passes |
 | Ledger entry, query, classify, and reverse UI | Deferred | HTTP contract is implemented; product UI is not yet shipped |
 | Payment, recurring, backup, budget, and V1 draft UI | Removed | No V1 proxy or fallback exists |
 
@@ -70,3 +77,6 @@ silently maps an unsupported command to another operation.
   described in the [operator runbook](v1-financial-backfill.md). Clients can
   read the resulting V2 ledger and owner-authorized archive, but cannot invoke
   or generalize the importer.
+- Legacy category-as-account history is repaired only through the append-only,
+  hash-locked [everyday-entry history repair](everyday-entry-history-repair.md);
+  it is not exposed through REST, CLI, MCP, or raw SQL.

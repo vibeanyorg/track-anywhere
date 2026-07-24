@@ -173,6 +173,110 @@ def test_registered_root_command_emits_json_without_prompting():
     assert "Commit this entry?" not in result.output
 
 
+def test_single_active_book_is_selected_without_requiring_uuid():
+    calls: list[tuple[str, str, dict[str, Any] | None, str | None]] = []
+
+    def request(_config, method, path, payload=None, key=None):
+        calls.append((method, path, payload, key))
+        if path == "/api/v2/books":
+            return 200, {
+                "items": [
+                    {
+                        "book_id": BOOK,
+                        "current_name": "我的账本",
+                        "base_asset_code": "CNY",
+                        "write_state": "active",
+                    }
+                ]
+            }
+        return 200, _prepared()
+
+    result = CliRunner().invoke(
+        _cli(),
+        [
+            "expense",
+            "53",
+            "--from",
+            "微信零钱通",
+            "--category",
+            "食品/外卖",
+            "--dry-run",
+            "--json",
+        ],
+        obj=_state(request),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert [call[:2] for call in calls] == [
+        ("GET", "/api/v2/books"),
+        ("POST", f"/api/v2/books/{BOOK}/entries/prepare"),
+    ]
+
+
+def test_multiple_books_prompt_human_and_require_explicit_agent_selection():
+    second = "99999999-9999-4999-8999-999999999999"
+
+    def request(_config, method, path, payload=None, key=None):
+        if path == "/api/v2/books":
+            return 200, {
+                "items": [
+                    {
+                        "book_id": BOOK,
+                        "current_name": "个人",
+                        "base_asset_code": "CNY",
+                        "write_state": "active",
+                    },
+                    {
+                        "book_id": second,
+                        "current_name": "家庭",
+                        "base_asset_code": "CNY",
+                        "write_state": "active",
+                    },
+                ]
+            }
+        assert path == f"/api/v2/books/{second}/entries/prepare"
+        return 200, _prepared()
+
+    human = CliRunner().invoke(
+        _cli(),
+        [
+            "expense",
+            "53",
+            "--from",
+            "微信零钱通",
+            "--category",
+            "食品/外卖",
+            "--dry-run",
+        ],
+        input="2\n",
+        obj=_state(request),
+    )
+    assert human.exit_code == 0, human.output
+    assert "2. 家庭" in human.output
+    assert "Category: 食品/外卖" in human.output
+
+    agent = CliRunner().invoke(
+        _cli(),
+        [
+            "expense",
+            "53",
+            "--from",
+            "微信零钱通",
+            "--category",
+            "食品/外卖",
+            "--dry-run",
+            "--json",
+            "--no-input",
+        ],
+        obj=_state(request),
+    )
+    assert agent.return_value != 0
+    assert (
+        json.loads(agent.output)["data"]["error"]["code"]
+        == "book_selection_required"
+    )
+
+
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [

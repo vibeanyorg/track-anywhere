@@ -38,10 +38,19 @@ def register(root: click.Group) -> None:
 def _expense_command() -> click.Command:
     @click.command()
     @click.argument("amount")
-    @click.option("--from", "source_account", required=True)
+    @click.option(
+        "--from",
+        "source_account",
+        required=True,
+        help="Paying account name or id:<UUID>; this is not a category.",
+    )
     @click.option("--from-last4", "source_last4")
     @click.option("--from-subtype", "source_subtype")
-    @click.option("--category", required=True)
+    @click.option(
+        "--category",
+        required=True,
+        help="Expense category path or name, for example 食品/外卖.",
+    )
     @_common_entry_options
     def expense(state: ClickState, **values: Any) -> int:
         """Prepare and optionally commit a categorized everyday expense."""
@@ -56,7 +65,11 @@ def _income_command() -> click.Command:
     @click.option("--to", "destination_account", required=True)
     @click.option("--to-last4", "destination_last4")
     @click.option("--to-subtype", "destination_subtype")
-    @click.option("--category", required=True)
+    @click.option(
+        "--category",
+        required=True,
+        help="Income category path or name; this is not an account.",
+    )
     @_common_entry_options
     def income(state: ClickState, **values: Any) -> int:
         """Prepare and optionally commit categorized everyday income."""
@@ -136,7 +149,14 @@ def _reconcile_command() -> click.Command:
 
 
 def _common_entry_options(fn: Any) -> Any:
-    fn = click.option("--book-id", required=True)(fn)
+    fn = click.option(
+        "--book-id",
+        envvar="TRACK_ANYWHERE_BOOK_ID",
+        help=(
+            "Book UUID. Defaults to TRACK_ANYWHERE_BOOK_ID or the only "
+            "accessible active Book."
+        ),
+    )(fn)
     fn = click.option("--asset-code", default="CNY", show_default=True)(fn)
     fn = click.option(
         "--denomination",
@@ -213,6 +233,35 @@ def run_entry_workflow(
         )
         emit_outcome(outcome, json_mode=output_json, no_color=output_no_color)
         return outcome.exit_code
+
+    if args.book_id is None:
+        try:
+            selection_status, selection = _resolve_book_id(
+                args,
+                config=config,
+                requester=state.requester,
+            )
+        except Exception as error:
+            return _emit_request_failure(
+                error,
+                command_path=command_path,
+                json_mode=output_json,
+                no_color=output_no_color,
+            )
+        if selection_status >= 400:
+            outcome = build_outcome(
+                command_path,
+                selection_status,
+                selection,
+                diagnostics=auth_diagnostics,
+            )
+            emit_outcome(
+                outcome,
+                json_mode=output_json,
+                no_color=output_no_color,
+            )
+            return outcome.exit_code
+        args.book_id = selection["book_id"]
 
     try:
         prepare_status, prepared = request_prepare_entry(
@@ -340,6 +389,24 @@ def _display_preview(prepared: dict[str, Any]) -> None:
     preview = prepared.get("preview")
     summary = preview.get("summary") if isinstance(preview, dict) else None
     click.echo(f"Preview: {summary or 'Unavailable'}", err=True)
+    accounts = preview.get("accounts") if isinstance(preview, dict) else None
+    if isinstance(accounts, list):
+        for account in accounts:
+            if not isinstance(account, dict):
+                continue
+            role = account.get("role")
+            name = account.get("display_name")
+            if isinstance(role, str) and isinstance(name, str):
+                click.echo(f"Account ({role}): {name}", err=True)
+    categories = (
+        preview.get("category_paths") if isinstance(preview, dict) else None
+    )
+    if isinstance(categories, list):
+        for path in categories:
+            if isinstance(path, list) and all(
+                isinstance(part, str) for part in path
+            ):
+                click.echo(f"Category: {'/'.join(path)}", err=True)
     warnings = prepared.get("warnings")
     if isinstance(warnings, list):
         for warning in warnings:
@@ -348,6 +415,82 @@ def _display_preview(prepared: dict[str, Any]) -> None:
                     f"Warning: {warning.get('message', warning.get('code', 'warning'))}",
                     err=True,
                 )
+
+
+def _resolve_book_id(
+    args: Namespace,
+    *,
+    config: CliConfig,
+    requester,
+) -> tuple[int, dict[str, Any]]:
+    status, payload = requester(config, "GET", "/api/v2/books", None, None)
+    if status >= 400:
+        return status, payload
+    items = payload.get("items") if isinstance(payload, dict) else None
+    active = (
+        [
+            item
+            for item in items
+            if isinstance(item, dict)
+            and isinstance(item.get("book_id"), str)
+            and item.get("book_id")
+            and item.get("write_state") == "active"
+        ]
+        if isinstance(items, list)
+        else []
+    )
+    if len(active) == 1:
+        return 200, {"book_id": active[0]["book_id"]}
+    choices = [
+        {
+            "book_id": item["book_id"],
+            "current_name": item.get("current_name"),
+        }
+        for item in active
+    ]
+    if not active or args.json or args.agent_mode or args.no_input:
+        return 422, {
+            "detail": (
+                "No active Book is available."
+                if not active
+                else "Multiple active Books are available; specify --book-id."
+            ),
+            "error": {
+                "code": "book_selection_required",
+                "category": "usage",
+                "message": (
+                    "No active Book is available."
+                    if not active
+                    else "Multiple active Books are available; specify --book-id."
+                ),
+                "retryable": False,
+                "detail": {"choices": choices},
+                "remediation": [
+                    {
+                        "description": "Choose a Book for this command.",
+                        "command": [
+                            "ta",
+                            "<entry-command>",
+                            "--book-id",
+                            "<book-uuid>",
+                        ],
+                    }
+                ],
+            },
+        }
+    click.echo("Available Books:", err=True)
+    for position, item in enumerate(active, start=1):
+        click.echo(
+            f"  {position}. {item.get('current_name') or 'Unnamed'} "
+            f"({item['book_id']})",
+            err=True,
+        )
+    selected = click.prompt(
+        "Choose a Book",
+        type=click.IntRange(1, len(active)),
+        err=True,
+    )
+    return 200, {"book_id": active[selected - 1]["book_id"]}
 
 
 def _resolve_config(
