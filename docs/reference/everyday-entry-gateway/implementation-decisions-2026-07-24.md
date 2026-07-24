@@ -47,9 +47,10 @@ Credit-card refunds continue to use the existing typed credit-card relation.
 **Date:** 2026-07-24
 
 The monthly reporting projection treats a non-card journal transaction whose
-kind is `refund` as a negative expense contribution. The core lane has an
-approved ownership exception for the focused monthly-summary projection and
-replay tests needed to enforce this behavior.
+kind is `refund` as a negative expense contribution. The storage lane owns the
+database constraint, focused monthly-summary projection change, and the
+PostgreSQL/replay tests as one coherent persistence update. The core lane owns
+only the domain/compiler and serialization-facing pure tests.
 
 Typed `credit_card_refund` keeps its existing relation-based negative sign. The
 implementation must not apply both mechanisms to the same event.
