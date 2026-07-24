@@ -7,6 +7,7 @@ from .command_archive import ARCHIVE_COMMAND_DEFINITIONS
 from .command_catalog import CATALOG_COMMAND_DEFINITIONS
 from .command_credit_card import CREDIT_CARD_COMMAND_DEFINITIONS
 from .command_definition import CommandDefinition, index_definitions, local_command
+from .command_entries import ENTRY_COMMAND_DEFINITIONS
 from .command_investment import INVESTMENT_COMMAND_DEFINITIONS
 from .command_ledger import LEDGER_COMMAND_DEFINITIONS
 from .command_system import SYSTEM_COMMAND_DEFINITIONS
@@ -39,6 +40,7 @@ API_COMMAND_DEFINITIONS: tuple[CommandDefinition, ...] = (
     *CREDIT_CARD_COMMAND_DEFINITIONS,
     *INVESTMENT_COMMAND_DEFINITIONS,
     *LEDGER_COMMAND_DEFINITIONS,
+    *ENTRY_COMMAND_DEFINITIONS,
 )
 PUBLIC_COMMAND_DEFINITIONS = (*LOCAL_COMMAND_DEFINITIONS, *API_COMMAND_DEFINITIONS)
 _COMMAND_DEFINITIONS = index_definitions(PUBLIC_COMMAND_DEFINITIONS)
@@ -115,6 +117,8 @@ def infer_command_path(args: Namespace) -> str | None:
     command = getattr(args, "command", None)
     if type(command) is not str or not command:
         return None
+    if command in API_COMMAND_HANDLERS:
+        return command
     subcommand = getattr(args, f"{command}_command", None)
     if type(subcommand) is not str or not subcommand:
         return None
