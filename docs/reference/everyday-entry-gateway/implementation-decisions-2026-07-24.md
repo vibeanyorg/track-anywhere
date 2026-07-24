@@ -54,3 +54,17 @@ only the domain/compiler and serialization-facing pure tests.
 
 Typed `credit_card_refund` keeps its existing relation-based negative sign. The
 implementation must not apply both mechanisms to the same event.
+
+## D005: Non-card refund relationship is an immutable event fact
+
+**Status:** Accepted
+**Date:** 2026-07-24
+
+`JournalTransactionPosted` carries an optional `original_transaction_id`.
+Domain validation requires the field for `refund`, forbids it for other
+transaction kinds, and rejects self-reference. The identifier is a non-sensitive
+accounting relationship and belongs in the immutable event; merchant, memo,
+provider reference, and other narrative data remain excluded.
+
+The read model derives the non-card refund link from the stored source event.
+No mutable ORM relationship column is required.
