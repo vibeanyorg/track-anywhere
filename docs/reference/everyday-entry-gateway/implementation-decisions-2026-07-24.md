@@ -9,10 +9,11 @@ replace either locked reference document.
 **Status:** Accepted
 **Date:** 2026-07-24
 
-Prepared intents and source references are repository-scoped by
-`book_id + actor_subject_id`. The public commit payload remains exactly
-`intent_id + commit_token + request_id`; the authenticated actor is bound by the
-request-scoped application service and is never supplied as untrusted payload.
+Prepared intent lookup, claim, cancellation, and payload access are repository-
+scoped by `book_id + actor_subject_id + intent_id`. The public commit payload
+remains exactly `intent_id + commit_token + request_id`; the authenticated actor
+is bound by the request-scoped application service and is never supplied as
+untrusted payload.
 
 Commit lookup and claim must include Book, actor, and intent identity. An intent
 prepared by one actor cannot be observed, cancelled, or committed by another.
@@ -28,6 +29,9 @@ existing immutable-ledger financial external-reference semantics.
 
 The dedicated source-reference uniqueness scope is Book, provider, reference
 kind, and normalized protected value/digest as defined by the storage lane.
+Duplicate lookup is Book-wide so another authorized actor cannot submit the same
+source twice. It returns only minimal duplicate evidence and never exposes the
+other actor's prepared payload, token, or narrative.
 
 ## D003: Non-card refunds remain an explicit transaction kind
 
