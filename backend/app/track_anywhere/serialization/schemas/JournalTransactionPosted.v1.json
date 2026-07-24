@@ -92,6 +92,7 @@
         "opening",
         "adjustment",
         "transfer",
+        "refund",
         "fx",
         "investment_cash"
       ],
@@ -125,6 +126,19 @@
     },
     "kind": {
       "$ref": "#/$defs/TransactionKind"
+    },
+    "original_transaction_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Original Transaction Id"
     },
     "postings": {
       "items": {

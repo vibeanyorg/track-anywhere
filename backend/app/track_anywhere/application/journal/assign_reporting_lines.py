@@ -14,6 +14,7 @@ from ...domain.reporting.events import (
     ReportingLineKind,
     ReportingLinesAssigned,
 )
+from ...domain.journal.events import JournalPostingFact
 from ...infrastructure.db.models.projections import (
     JournalPostingRecord,
     JournalTransactionRecord,
@@ -275,24 +276,10 @@ def _build_assign_plan(
         transaction_kind=transaction.transaction_kind,
     )
     revision = command.expected_revision + 1
-    payload = ReportingLinesAssigned(
+    payload = build_reporting_lines_assigned(
         transaction_id=command.transaction_id,
         classification_revision=revision,
-        lines=tuple(
-            ReportingLine(
-                line_id=line.line_id,
-                line_version_id=line.line_version_id,
-                catalog_id=line.catalog_id,
-                position=position,
-                asset_code=line.asset_code,
-                units=line.units,
-                line_kind=line.line_kind,
-                dimension=line.dimension,
-                dimension_id=line.dimension_id,
-                description_ref=line.description_ref,
-            )
-            for position, line in enumerate(command.lines)
-        ),
+        lines=command.lines,
     )
     pending = PendingEvent(
         event_id=uuid5(_ASSIGN_EVENT_NAMESPACE, str(command.command_id)),
@@ -326,20 +313,6 @@ def _validate_lines(
     *,
     transaction_kind: str,
 ) -> None:
-    if transaction_kind == "credit_card_payment":
-        raise UnsupportedCreditCardReporting(
-            "credit-card payments are balance-sheet transfers and cannot be categorized"
-        )
-    if transaction_kind in {
-        "credit_card_charge",
-        "credit_card_fee",
-        "credit_card_refund",
-    } and any(
-        line.line_kind is not ReportingLineKind.EXPENSE for line in command.lines
-    ):
-        raise UnsupportedCreditCardReporting(
-            "credit-card charges, fees, and refunds require expense reporting lines"
-        )
     catalogs = CatalogRepository(uow.session)
     for line in command.lines:
         if (
@@ -356,13 +329,75 @@ def _validate_lines(
         )
 
     postings = tuple(
-        uow.session.scalars(
+        JournalPostingFact(
+            posting_id=posting.posting_id,
+            position=posting.posting_position,
+            account_id=posting.account_id,
+            asset_code=posting.asset_code,
+            side=posting.side,
+            units=str(posting.units),
+        )
+        for posting in uow.session.scalars(
             select(JournalPostingRecord).where(
                 JournalPostingRecord.book_id == command.book_id,
                 JournalPostingRecord.transaction_id == command.transaction_id,
             )
         )
     )
+    validate_reporting_allocations(
+        lines=command.lines,
+        postings=postings,
+        transaction_kind=transaction_kind,
+    )
+
+
+def validate_reporting_allocations(
+    *,
+    lines: tuple[ReportingLineInput, ...],
+    postings: tuple[JournalPostingFact, ...],
+    transaction_kind: str,
+) -> None:
+    """Validate a complete reporting snapshot against proposed or stored postings."""
+
+    if (
+        type(lines) is not tuple
+        or not lines
+        or any(type(line) is not ReportingLineInput for line in lines)
+    ):
+        raise IdempotencyValidationError(
+            "lines must be a non-empty immutable typed tuple"
+        )
+    if type(postings) is not tuple or any(
+        type(posting) is not JournalPostingFact for posting in postings
+    ):
+        raise IdempotencyValidationError(
+            "postings must be an immutable tuple of JournalPostingFact"
+        )
+    if type(transaction_kind) is not str or not transaction_kind:
+        raise IdempotencyValidationError("transaction_kind must be nonblank")
+
+    if transaction_kind == "credit_card_payment":
+        raise UnsupportedCreditCardReporting(
+            "credit-card payments are balance-sheet transfers and cannot be categorized"
+        )
+    if transaction_kind in {
+        "credit_card_charge",
+        "credit_card_fee",
+        "credit_card_refund",
+    } and any(
+        line.line_kind is not ReportingLineKind.EXPENSE for line in lines
+    ):
+        raise UnsupportedCreditCardReporting(
+            "credit-card charges, fees, and refunds require expense reporting lines"
+        )
+    for line in lines:
+        if (
+            line.dimension is not ReportingDimension.CATEGORY
+            or line.dimension_id is None
+        ):
+            raise UnsupportedReportingDimension(
+                "reporting dimension has no immutable V2 catalog contract"
+            )
     debit_by_asset: dict[str, int] = {}
     credit_by_asset: dict[str, int] = {}
     for posting in postings:
@@ -375,7 +410,7 @@ def _validate_lines(
             "reporting target postings are unavailable or unbalanced"
         )
     allocated_by_asset: dict[str, int] = {}
-    for line in command.lines:
+    for line in lines:
         allocated_by_asset[line.asset_code] = allocated_by_asset.get(
             line.asset_code, 0
         ) + int(line.units)
@@ -388,6 +423,49 @@ def _validate_lines(
         )
 
 
+def build_reporting_lines_assigned(
+    *,
+    transaction_id: UUID,
+    classification_revision: int,
+    lines: tuple[ReportingLineInput, ...],
+) -> ReportingLinesAssigned:
+    """Build the immutable event after validation against proposed postings."""
+
+    if type(transaction_id) is not UUID:
+        raise IdempotencyValidationError("transaction_id must be a UUID")
+    if type(classification_revision) is not int or classification_revision <= 0:
+        raise IdempotencyValidationError(
+            "classification_revision must be a positive integer"
+        )
+    if (
+        type(lines) is not tuple
+        or not lines
+        or any(type(line) is not ReportingLineInput for line in lines)
+    ):
+        raise IdempotencyValidationError(
+            "lines must be a non-empty immutable typed tuple"
+        )
+    return ReportingLinesAssigned(
+        transaction_id=transaction_id,
+        classification_revision=classification_revision,
+        lines=tuple(
+            ReportingLine(
+                line_id=line.line_id,
+                line_version_id=line.line_version_id,
+                catalog_id=line.catalog_id,
+                position=position,
+                asset_code=line.asset_code,
+                units=line.units,
+                line_kind=line.line_kind,
+                dimension=line.dimension,
+                dimension_id=line.dimension_id,
+                description_ref=line.description_ref,
+            )
+            for position, line in enumerate(lines)
+        ),
+    )
+
+
 __all__ = [
     "AssignReportingLinesCommand",
     "ReportingAllocationExceeded",
@@ -395,5 +473,7 @@ __all__ = [
     "UnsupportedCreditCardReporting",
     "UnsupportedReportingDimension",
     "UnsupportedReportingTarget",
+    "build_reporting_lines_assigned",
     "execute_assign_reporting_lines",
+    "validate_reporting_allocations",
 ]

@@ -53,6 +53,7 @@ class JournalTransactionPosted(EventContract):
 
     transaction_id: UUID
     kind: TransactionKind
+    original_transaction_id: UUID | None = None
     postings: tuple[JournalPostingFact, ...]
     description_ref: UUID | None = None
     external_references: tuple[FinancialExternalReference, ...] = ()
@@ -70,6 +71,13 @@ class JournalTransactionPosted(EventContract):
         ]
         if len(reference_keys) != len(set(reference_keys)):
             raise ValueError("external reference provider/kind pairs must be unique")
+        if self.kind is TransactionKind.REFUND:
+            if self.original_transaction_id is None:
+                raise ValueError("a refund requires its original transaction")
+            if self.original_transaction_id == self.transaction_id:
+                raise ValueError("a refund cannot reference itself")
+        elif self.original_transaction_id is not None:
+            raise ValueError("only a refund may reference an original transaction")
         return self
 
 

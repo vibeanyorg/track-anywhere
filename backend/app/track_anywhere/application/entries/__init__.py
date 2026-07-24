@@ -1,5 +1,29 @@
-"""Stable application contracts for the Everyday Entry Gateway."""
+"""Application contracts and pure semantic core for Everyday Entry Gateway."""
 
+from .account_resolver import AccountResolution, AccountUse, EntryAccount
+from .amounts import (
+    EntryAsset,
+    NormalizedAmount,
+    normalize_amount,
+    validate_amount_source_consistency,
+)
+from .category_resolver import (
+    CategoryResolution,
+    CategoryUsageKind,
+    EntryCategory,
+)
+from .compiler import (
+    EntryCompilationContext,
+    OriginalCategoryAllocation,
+    OriginalEntry,
+    compile_entry,
+)
+from .duplicate_detector import (
+    DuplicateCandidate,
+    DuplicateDecision,
+    DuplicateEvidenceKind,
+    decide_duplicate,
+)
 from .contracts import (
     AccountRef,
     AdjustmentEntryInput,
@@ -31,19 +55,31 @@ from .contracts import (
     ResolvedEntryReferences,
     TransferEntryInput,
 )
-from .errors import EntryErrorCode, EntryGatewayError
+from .errors import EntryClarificationRequired, EntryErrorCode, EntryGatewayError
 
 __all__ = [
     "AccountRef",
+    "AccountResolution",
+    "AccountUse",
     "AdjustmentEntryInput",
     "BalanceInput",
     "CategoryAllocationInput",
     "CategoryRef",
+    "CategoryResolution",
+    "CategoryUsageKind",
     "Clarification",
     "ClarificationChoice",
     "CommitEntryInput",
     "CommittedEntry",
     "CreditCardPaymentEntryInput",
+    "DuplicateCandidate",
+    "DuplicateDecision",
+    "DuplicateEvidenceKind",
+    "EntryAccount",
+    "EntryAsset",
+    "EntryCategory",
+    "EntryClarificationRequired",
+    "EntryCompilationContext",
     "EntryErrorCode",
     "EntryGatewayError",
     "EntryNarrativeInput",
@@ -58,6 +94,9 @@ __all__ = [
     "IncomeEntryInput",
     "MoneyDenomination",
     "MoneyInput",
+    "NormalizedAmount",
+    "OriginalCategoryAllocation",
+    "OriginalEntry",
     "PreparedEntry",
     "PreparedEntryStatus",
     "PreviewAccount",
@@ -65,4 +104,8 @@ __all__ = [
     "RefundEntryInput",
     "ResolvedEntryReferences",
     "TransferEntryInput",
+    "compile_entry",
+    "decide_duplicate",
+    "normalize_amount",
+    "validate_amount_source_consistency",
 ]

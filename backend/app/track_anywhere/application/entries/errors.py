@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from .contracts import Clarification
+
 
 class EntryErrorCode(StrEnum):
     """Stable, transport-independent Everyday Entry Gateway error codes."""
@@ -60,4 +62,26 @@ class EntryGatewayError(RuntimeError):
         super().__init__(message)
 
 
-__all__ = ["EntryErrorCode", "EntryGatewayError"]
+class EntryClarificationRequired(EntryGatewayError):
+    def __init__(
+        self,
+        code: EntryErrorCode,
+        message: str,
+        *,
+        clarifications: tuple[Clarification, ...],
+    ) -> None:
+        if not clarifications:
+            raise ValueError("clarifications must be non-empty")
+        self.clarifications = clarifications
+        super().__init__(
+            code,
+            message,
+            field=clarifications[0].field,
+        )
+
+
+__all__ = [
+    "EntryClarificationRequired",
+    "EntryErrorCode",
+    "EntryGatewayError",
+]
