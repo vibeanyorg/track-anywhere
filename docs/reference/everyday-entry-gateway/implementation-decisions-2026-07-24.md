@@ -88,3 +88,18 @@ The adapter contract uses:
 Commit also sends the same `request_id` as the existing idempotency header.
 Prepare does not invent a second request identifier outside the frozen entry
 contract.
+
+## D007: Source text is protected narrative, not prepared payload
+
+**Status:** Accepted
+**Date:** 2026-07-24
+
+The original `MoneyInput.source_text` is retained for consistency audit inside
+encrypted `transaction_narrative_v2`. It is private, redacted from `repr`, and
+never stored in the prepared intent's canonical JSON, immutable ledger events,
+logs, errors, or tokens.
+
+The prepared canonical payload stores only validated, resolved, non-sensitive
+compiler inputs. Commit may recompile from those frozen values but must not
+invent a replacement source-text marker or silently discard the original audit
+fact.
