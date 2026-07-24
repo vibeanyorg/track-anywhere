@@ -693,7 +693,7 @@ def test_mcp_shadow_expense_is_write_visible_prepare_only_and_treats_660_as_majo
     body = prepared["structuredContent"]
     assert body["mode"] == "shadow_preview"
     assert body["status"] == "ready"
-    assert body["preview"]["amount"]["value"] == "660"
+    assert body["preview"]["amount"]["value"] == "660.00"
     assert body["preview"]["amount"]["asset_code"] == "USD"
     assert "6.60" not in body["preview"]["amount"]["display"]
     assert "commit_token" not in body
