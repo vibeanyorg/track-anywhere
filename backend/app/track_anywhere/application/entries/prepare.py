@@ -43,7 +43,12 @@ from ..privacy.protected_content import (
 )
 from ..privacy.service import ProtectedContentService
 from ..unit_of_work import UnitOfWork
-from .account_resolver import AccountUse, EntryAccount, resolve_account
+from .account_resolver import (
+    AccountUse,
+    EntryAccount,
+    derive_account_last4,
+    resolve_account,
+)
 from .amounts import EntryAsset
 from .category_resolver import CategoryUsageKind, EntryCategory
 from .compiler import (
@@ -341,6 +346,7 @@ def load_compilation_context(
             account_subtype=row.account_subtype,
             system_role=AccountSystemRole(row.system_role or "standard"),
             status=row.status,
+            last4=derive_account_last4(row.current_name),
         )
         for row in session.scalars(
             select(AccountRecord)
