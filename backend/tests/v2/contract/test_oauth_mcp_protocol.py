@@ -105,7 +105,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_record_credit_card_payment",
         "ledger_record_transfer",
     }
-    shadow_prepare_tools = {
+    entry_prepare_tools = {
         "ledger_prepare_adjustment",
         "ledger_prepare_credit_card_payment",
         "ledger_prepare_expense",
@@ -113,6 +113,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_prepare_refund",
         "ledger_prepare_transfer",
     }
+    entry_commit_tools = {"ledger_commit_entry"}
     catalog_write_tools = {
         "ledger_create_account",
         "ledger_create_asset",
@@ -120,10 +121,14 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_create_payment_card",
     }
     assert {tool.name for tool in tools} == (
-        read_tools | write_tools | shadow_prepare_tools | catalog_write_tools
+        read_tools
+        | write_tools
+        | entry_prepare_tools
+        | entry_commit_tools
+        | catalog_write_tools
     )
     for tool in tools:
-        if tool.name in write_tools | shadow_prepare_tools:
+        if tool.name in write_tools | entry_prepare_tools | entry_commit_tools:
             expected_scopes = ["ledger:read", "ledger:write"]
         elif tool.name in catalog_write_tools:
             expected_scopes = ["book:read", "book:write", "ledger:read"]
@@ -134,21 +139,31 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         expected = [{"type": "oauth2", "scopes": expected_scopes}]
         assert tool.model_extra["securitySchemes"] == expected
         assert tool.meta["securitySchemes"] == expected
-        assert tool.description.startswith("Use this when")
-        assert tool.annotations.readOnlyHint is (tool.name in read_tools)
-        assert tool.annotations.destructiveHint is False
-        assert tool.annotations.idempotentHint is (
-            tool.name not in shadow_prepare_tools
+        assert tool.description.startswith(
+            "Use this only after"
+            if tool.name in entry_commit_tools
+            else "Use this when"
         )
+        assert tool.annotations.readOnlyHint is (tool.name in read_tools)
+        assert tool.annotations.destructiveHint is (tool.name in entry_commit_tools)
+        assert tool.annotations.idempotentHint is (tool.name not in entry_prepare_tools)
         assert tool.annotations.openWorldHint is False
         assert tool.outputSchema is not None
         if tool.name in write_tools | catalog_write_tools:
             assert "request_id" in tool.inputSchema["properties"]
             assert "request_id" in tool.inputSchema["required"]
-        if tool.name in shadow_prepare_tools:
-            assert tool.meta["track_anywhere/mode"] == "shadow_prepare_only"
+        if tool.name in entry_prepare_tools:
+            assert tool.meta["track_anywhere/mode"] == "entry_prepare"
             assert "request_id" not in tool.inputSchema["properties"]
-            assert "commit_token" not in _schema_property_names(tool.outputSchema)
+            assert "commit_token" in _schema_property_names(tool.outputSchema)
+        if tool.name in entry_commit_tools:
+            assert tool.meta["track_anywhere/mode"] == "entry_commit"
+            assert set(tool.inputSchema["properties"]) == {
+                "book_id",
+                "intent_id",
+                "commit_token",
+                "request_id",
+            }
     account_tool = next(tool for tool in tools if tool.name == "ledger_create_account")
     assert "system_role" not in account_tool.inputSchema["properties"]
     assert set(account_tool.inputSchema["properties"]["account_type"]["enum"]) == {
@@ -182,8 +197,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
     assert "adjustment_account_id" not in adjustment_tool.inputSchema["properties"]
 
 
-def test_shadow_prepare_tools_are_hidden_without_write_scope_and_still_guard_calls(
-) -> None:
+def test_entry_tools_are_hidden_without_write_scope_and_still_guard_calls() -> None:
     runtime = create_mcp_runtime(
         SimpleNamespace(session_factory=lambda: None),
         "http://testserver",
@@ -197,9 +211,7 @@ def test_shadow_prepare_tools_are_hidden_without_write_scope_and_still_guard_cal
     )
     context = auth_context_var.set(AuthenticatedUser(token))
     try:
-        names = {
-            tool.name for tool in asyncio.run(runtime.server.list_tools())
-        }
+        names = {tool.name for tool in asyncio.run(runtime.server.list_tools())}
         result = asyncio.run(
             runtime.server.call_tool(
                 "ledger_prepare_expense",
@@ -221,10 +233,11 @@ def test_shadow_prepare_tools_are_hidden_without_write_scope_and_still_guard_cal
         auth_context_var.reset(context)
 
     assert not any(name.startswith("ledger_prepare_") for name in names)
+    assert "ledger_commit_entry" not in names
     assert result.isError is True
     assert "ledger:write" in result.content[0].text
-    assert 'scope="ledger:read ledger:write"' in (
-        result.meta["mcp/www_authenticate"][0]
+    assert (
+        'scope="ledger:read ledger:write"' in (result.meta["mcp/www_authenticate"][0])
     )
 
 

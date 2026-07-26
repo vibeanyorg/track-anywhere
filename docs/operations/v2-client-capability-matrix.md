@@ -61,8 +61,8 @@ Books and return a structured `book_selection_required` error with choices.
 | API-key to browser-session exchange | Implemented | `POST /api/v2/auth/session/api-key` |
 | Session status and logout | Implemented | V2 session routes with CSRF/same-origin enforcement |
 | OAuth metadata, PKCE callback, and device approval | Implemented | V2 auth/OAuth routes only |
-| ChatGPT MCP connector | Implemented | OAuth-only; resource-bound read scopes, optional `book:write` catalog tools including generic payment-card configuration, and optional `ledger:write` semantic ledger/prepare tools; no API-key fallback |
-| MCP everyday-entry gateway | Shadow preview | Scenario-specific prepare tools use the same compiler as REST/CLI and cannot expose internal accounts or commit financial events; commit remains intentionally unavailable until the shadow acceptance gate passes |
+| ChatGPT MCP connector | Implemented | OAuth-only; resource-bound read scopes, optional `book:write` catalog tools including generic payment-card configuration, and optional `ledger:write` semantic prepare/commit tools; no API-key fallback |
+| MCP everyday-entry gateway | Implemented | Scenario-specific prepare tools use the same compiler as REST/CLI, return a short-lived opaque commit capability only when ready, and never expose internal accounts. After showing the preview/warnings and obtaining explicit human confirmation, `ledger_commit_entry` posts exactly that prepared intent. Commit accepts no business-fact overrides and retries reuse one `request_id`. |
 | Ledger entry, query, classify, and reverse UI | Deferred | HTTP contract is implemented; product UI is not yet shipped |
 | Payment, recurring, backup, budget, and V1 draft UI | Removed | No V1 proxy or fallback exists |
 
@@ -70,8 +70,9 @@ Books and return a structured `book_selection_required` error with choices.
 
 - Docker health checks and stable smoke use V2 health/readiness only.
 - The isolated E2E lane covers V2 post, journal/balance query, classification,
-  reporting query, reversal, CLI credit-card account creation, and all four
-  semantic card writes against PostgreSQL 17.
+  reporting query, reversal, CLI credit-card account creation, all four
+  semantic card writes, and MCP everyday-entry prepare/commit/replay against
+  PostgreSQL 17.
 - Public OpenAPI is pinned in `backend/tests/snapshots/public-api-v2.json`.
 - Contract tests provision a fresh migrated PostgreSQL 17 database and install
   its runtime-role URL before app construction. SQLite is not a supported test

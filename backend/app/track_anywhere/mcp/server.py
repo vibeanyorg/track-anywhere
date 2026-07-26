@@ -30,7 +30,7 @@ from .auth import (
 )
 from .entry_tools import (
     create_runtime_entry_service_provider,
-    register_entry_prepare_tools,
+    register_entry_tools,
 )
 from .tools import register_ledger_tools
 
@@ -44,15 +44,14 @@ class ChatGptFastMCP(FastMCP):
     async def list_tools(self) -> list[McpTool]:
         tools = await super().list_tools()
         token = get_access_token()
-        hide_shadow_tools = (
+        hide_write_required_tools = (
             token is not None and MCP_WRITE_SCOPE not in token.scopes
         )
         result: list[McpTool] = []
         for tool in tools:
             if (
-                hide_shadow_tools
-                and (tool.meta or {}).get("track_anywhere/mode")
-                == "shadow_prepare_only"
+                hide_write_required_tools
+                and (tool.meta or {}).get("track_anywhere/requires_write") is True
             ):
                 continue
             schemes = (tool.meta or {}).get("securitySchemes")
@@ -122,7 +121,11 @@ def create_mcp_runtime(
             "re-infer prepaid versus statement behavior: the card's saved "
             "configuration is authoritative. Configure settlement policy and its "
             "account binding only once, when the card is first created or explicitly "
-            "reconfigured."
+            "reconfigured. Everyday entry prepare tools never post by themselves. "
+            "When prepare returns ready, show the preview and warnings, obtain "
+            "explicit user confirmation, then call ledger_commit_entry with the "
+            "unchanged intent ID and opaque token. Reuse the same request_id when "
+            "retrying an uncertain commit response."
         ),
         token_verifier=DatabaseTokenVerifier(
             dependencies.session_factory,
@@ -165,7 +168,7 @@ def create_mcp_runtime(
     )
     server.scope_resource_metadata_url = protected_resource_metadata_url(resource)
     register_ledger_tools(server, dependencies)
-    register_entry_prepare_tools(
+    register_entry_tools(
         server,
         create_runtime_entry_service_provider(dependencies),
     )

@@ -549,7 +549,7 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
     assert _book_head(pg_engine, scenario) == 2
 
 
-def test_mcp_shadow_expense_is_write_visible_prepare_only_and_treats_660_as_major(
+def test_mcp_expense_prepare_commit_is_explicit_idempotent_and_major_unit_safe(
     pg_engine,
 ) -> None:
     scenario = JournalScenario.create()
@@ -560,7 +560,7 @@ def test_mcp_shadow_expense_is_write_visible_prepare_only_and_treats_660_as_majo
         connection.execute(
             text(
                 "update book_members set scopes="
-                "'[\"ledger:read\",\"ledger:write\"]'::jsonb "
+                '\'["ledger:read","ledger:write"]\'::jsonb '
                 "where book_id=:book_id and user_id=:user_id"
             ),
             {
@@ -675,10 +675,32 @@ def test_mcp_shadow_expense_is_write_visible_prepare_only_and_treats_660_as_majo
             "ledger_prepare_expense",
             arguments,
         )
+        body = prepared["structuredContent"]
+        assert _book_head(pg_engine, scenario) == 0
+        commit_arguments = {
+            "book_id": str(scenario.book_id),
+            "intent_id": body["intent_id"],
+            "commit_token": body["commit_token"],
+            "request_id": str(uuid4()),
+        }
+        committed = _call_tool(
+            client,
+            write_token,
+            "ledger_commit_entry",
+            commit_arguments,
+        )
+        head_after_commit = _book_head(pg_engine, scenario)
+        replayed = _call_tool(
+            client,
+            write_token,
+            "ledger_commit_entry",
+            commit_arguments,
+        )
 
     assert unavailable["isError"] is True
     assert "entry_unsupported" in unavailable["content"][0]["text"]
     assert not any(name.startswith("ledger_prepare_") for name in read_names)
+    assert "ledger_commit_entry" not in read_names
     assert {
         "ledger_prepare_expense",
         "ledger_prepare_income",
@@ -687,18 +709,27 @@ def test_mcp_shadow_expense_is_write_visible_prepare_only_and_treats_660_as_majo
         "ledger_prepare_refund",
         "ledger_prepare_adjustment",
     }.issubset(write_names)
+    assert "ledger_commit_entry" in write_names
     assert denied["isError"] is True
     assert "ledger:write" in denied["content"][0]["text"]
     assert prepared["isError"] is False, prepared
-    body = prepared["structuredContent"]
-    assert body["mode"] == "shadow_preview"
+    assert body["mode"] == "prepare"
     assert body["status"] == "ready"
     assert body["preview"]["amount"]["value"] == "660.00"
     assert body["preview"]["amount"]["asset_code"] == "USD"
     assert "6.60" not in body["preview"]["amount"]["display"]
-    assert "commit_token" not in body
+    assert body["commit_token"]
     assert "private source 660" not in str(prepared)
-    assert _book_head(pg_engine, scenario) == 0
+    assert committed["isError"] is False, committed
+    committed_body = committed["structuredContent"]
+    replayed_body = replayed["structuredContent"]
+    assert committed_body["status"] == "committed"
+    assert committed_body["request_id"] == commit_arguments["request_id"]
+    assert committed_body["replayed"] is False
+    assert replayed_body["transaction_id"] == committed_body["transaction_id"]
+    assert replayed_body["replayed"] is True
+    assert head_after_commit == 2
+    assert _book_head(pg_engine, scenario) == head_after_commit
 
 
 def test_mcp_adjustment_reconciles_decimal_balances_with_stale_write_protection(
@@ -926,8 +957,9 @@ def test_mcp_adjustment_reconciles_credit_card_outstanding_balance(
     ]
     assert replay["isError"] is False
     assert replay["structuredContent"]["replayed"] is True
-    assert replay["structuredContent"]["transaction"] == (
-        increase["structuredContent"]["transaction"]
+    assert (
+        replay["structuredContent"]["transaction"]
+        == (increase["structuredContent"]["transaction"])
     )
     assert decrease["isError"] is False, decrease
     assert _posting_pairs(decrease["structuredContent"]) == [
@@ -974,9 +1006,7 @@ def test_mcp_semantic_writes_reject_system_managed_accounts(
     )
     system_account_id = uuid4()
     system_account_type = (
-        "liability"
-        if system_account_argument == "card_account_id"
-        else "asset"
+        "liability" if system_account_argument == "card_account_id" else "asset"
     )
     system_account_subtype = (
         "credit_card" if system_account_argument == "card_account_id" else None

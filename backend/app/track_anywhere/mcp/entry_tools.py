@@ -7,7 +7,7 @@ from mcp.server.auth.provider import AccessToken
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, Field
 
 from ..application.entries.contracts import (
     AccountRef,
@@ -16,19 +16,17 @@ from ..application.entries.contracts import (
     CategoryAllocationInput,
     CategoryRef,
     CreditCardPaymentEntryInput,
-    Clarification,
+    CommitEntryInput,
+    CommittedEntry,
     EntryNarrativeInput,
-    EntryPreview,
-    EntryWarning,
     EverydayEntryInput,
     EverydayEntryService,
     ExpenseEntryInput,
     IncomeEntryInput,
     MoneyInput,
+    OpaqueToken,
     PreparedEntry,
-    PreparedEntryStatus,
     RefundEntryInput,
-    ResolvedEntryReferences,
     TransferEntryInput,
 )
 from ..application.payment_instruments.contracts import PaymentInstrumentRef
@@ -46,12 +44,24 @@ ENTRY_PREPARE_SECURITY_SCHEMES = [
 ]
 ENTRY_PREPARE_TOOL_META = {
     "securitySchemes": ENTRY_PREPARE_SECURITY_SCHEMES,
-    "track_anywhere/mode": "shadow_prepare_only",
+    "track_anywhere/mode": "entry_prepare",
+    "track_anywhere/requires_write": True,
+}
+ENTRY_COMMIT_TOOL_META = {
+    "securitySchemes": ENTRY_PREPARE_SECURITY_SCHEMES,
+    "track_anywhere/mode": "entry_commit",
+    "track_anywhere/requires_write": True,
 }
 ENTRY_PREPARE_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=False,
     destructiveHint=False,
     idempotentHint=False,
+    openWorldHint=False,
+)
+ENTRY_COMMIT_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
     openWorldHint=False,
 )
 
@@ -61,9 +71,12 @@ _AMOUNT_DESCRIPTION = (
     "660.00, never 6.60. Use minor_unit only when the source explicitly states "
     "minor units."
 )
-_SHADOW_DESCRIPTION = (
-    "This Shadow Mode tool only prepares and previews an entry. It cannot commit "
-    "or post a financial ledger event."
+_PREPARE_DESCRIPTION = (
+    "This tool only prepares and previews an entry; it never posts a financial "
+    "ledger event by itself. When status is ready it returns an opaque commit "
+    "token. Show the preview and warnings to the user, obtain explicit "
+    "confirmation, then pass the unchanged intent ID and token to "
+    "ledger_commit_entry."
 )
 
 
@@ -114,34 +127,19 @@ def create_runtime_entry_service_provider(
     return provide
 
 
-class ShadowPreparedEntry(BaseModel):
-    """Prepare result that cannot be used to commit through another surface."""
+class McpPreparedEntry(PreparedEntry):
+    """Agent-facing prepare result with a short-lived opaque commit capability."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    mode: Literal["shadow_preview"] = "shadow_preview"
-    intent_id: UUID
-    status: PreparedEntryStatus
-    expires_at: AwareDatetime
-    preview: EntryPreview
-    resolved: ResolvedEntryReferences
-    warnings: tuple[EntryWarning, ...] = ()
-    clarifications: tuple[Clarification, ...] = ()
+    mode: Literal["prepare"] = "prepare"
 
     @classmethod
-    def from_prepared(cls, prepared: PreparedEntry) -> ShadowPreparedEntry:
-        return cls(
-            intent_id=prepared.intent_id,
-            status=prepared.status,
-            expires_at=prepared.expires_at,
-            preview=prepared.preview,
-            resolved=prepared.resolved,
-            warnings=prepared.warnings,
-            clarifications=prepared.clarifications,
+    def from_prepared(cls, prepared: PreparedEntry) -> McpPreparedEntry:
+        return cls.model_validate(
+            {"mode": "prepare", **prepared.model_dump(mode="python")}
         )
 
 
-def register_entry_prepare_tools(
+def register_entry_tools(
     mcp: FastMCP,
     service_provider: EntryServiceProvider,
 ) -> None:
@@ -157,7 +155,7 @@ def register_entry_prepare_tools(
             "instruments and pass the unique matching instrument; do not select or "
             "create an account for that purchase. "
             "Supply either one category or exact category allocations. "
-            f"{_SHADOW_DESCRIPTION}"
+            f"{_PREPARE_DESCRIPTION}"
         ),
         annotations=ENTRY_PREPARE_ANNOTATIONS,
         meta=ENTRY_PREPARE_TOOL_META,
@@ -174,7 +172,7 @@ def register_entry_prepare_tools(
             Field(max_length=64),
         ] = (),
         narrative: EntryNarrativeInput | None = None,
-    ) -> ShadowPreparedEntry:
+    ) -> McpPreparedEntry:
         return _prepare(
             book_id=book_id,
             entry=ExpenseEntryInput(
@@ -196,7 +194,7 @@ def register_entry_prepare_tools(
             "Use this when the user wants to record salary, reimbursement, or "
             f"other income. {_AMOUNT_DESCRIPTION} Supply the receiving account "
             "and either one income category or exact category allocations. "
-            f"{_SHADOW_DESCRIPTION}"
+            f"{_PREPARE_DESCRIPTION}"
         ),
         annotations=ENTRY_PREPARE_ANNOTATIONS,
         meta=ENTRY_PREPARE_TOOL_META,
@@ -212,7 +210,7 @@ def register_entry_prepare_tools(
             Field(max_length=64),
         ] = (),
         narrative: EntryNarrativeInput | None = None,
-    ) -> ShadowPreparedEntry:
+    ) -> McpPreparedEntry:
         return _prepare(
             book_id=book_id,
             entry=IncomeEntryInput(
@@ -232,7 +230,7 @@ def register_entry_prepare_tools(
         description=(
             "Use this when the user moves money between two asset accounts. "
             f"{_AMOUNT_DESCRIPTION} Transfers never take an expense or income "
-            f"category. {_SHADOW_DESCRIPTION}"
+            f"category. {_PREPARE_DESCRIPTION}"
         ),
         annotations=ENTRY_PREPARE_ANNOTATIONS,
         meta=ENTRY_PREPARE_TOOL_META,
@@ -244,7 +242,7 @@ def register_entry_prepare_tools(
         destination_account: AccountRef,
         occurred_at: AwareDatetime,
         narrative: EntryNarrativeInput | None = None,
-    ) -> ShadowPreparedEntry:
+    ) -> McpPreparedEntry:
         return _prepare(
             book_id=book_id,
             entry=TransferEntryInput(
@@ -266,7 +264,7 @@ def register_entry_prepare_tools(
             "or a statement payment instrument; the latter resolves its bound "
             "liability automatically. A card payment is a balance-sheet "
             "transfer and never takes an expense category. "
-            f"{_SHADOW_DESCRIPTION}"
+            f"{_PREPARE_DESCRIPTION}"
         ),
         annotations=ENTRY_PREPARE_ANNOTATIONS,
         meta=ENTRY_PREPARE_TOOL_META,
@@ -279,7 +277,7 @@ def register_entry_prepare_tools(
         card_account: AccountRef | None = None,
         payment_instrument: PaymentInstrumentRef | None = None,
         narrative: EntryNarrativeInput | None = None,
-    ) -> ShadowPreparedEntry:
+    ) -> McpPreparedEntry:
         return _prepare(
             book_id=book_id,
             entry=CreditCardPaymentEntryInput(
@@ -300,7 +298,7 @@ def register_entry_prepare_tools(
             "Use this when money is returned for an existing transaction. Supply "
             "the original transaction ID; omit amount only for a full refund. "
             f"{_AMOUNT_DESCRIPTION} Split partial refunds may require exact "
-            f"category allocations. {_SHADOW_DESCRIPTION}"
+            f"category allocations. {_PREPARE_DESCRIPTION}"
         ),
         annotations=ENTRY_PREPARE_ANNOTATIONS,
         meta=ENTRY_PREPARE_TOOL_META,
@@ -315,7 +313,7 @@ def register_entry_prepare_tools(
             Field(max_length=64),
         ] = (),
         narrative: EntryNarrativeInput | None = None,
-    ) -> ShadowPreparedEntry:
+    ) -> McpPreparedEntry:
         return _prepare(
             book_id=book_id,
             entry=RefundEntryInput(
@@ -336,7 +334,7 @@ def register_entry_prepare_tools(
             "account for reconciliation. actual_balance is an exact business "
             "amount and never ledger units; for a scale-2 currency, bare `660` "
             "with asset_unit means 660.00, never 6.60. "
-            f"{_SHADOW_DESCRIPTION}"
+            f"{_PREPARE_DESCRIPTION}"
         ),
         annotations=ENTRY_PREPARE_ANNOTATIONS,
         meta=ENTRY_PREPARE_TOOL_META,
@@ -347,7 +345,7 @@ def register_entry_prepare_tools(
         actual_balance: BalanceInput,
         occurred_at: AwareDatetime,
         narrative: EntryNarrativeInput | None = None,
-    ) -> ShadowPreparedEntry:
+    ) -> McpPreparedEntry:
         return _prepare(
             book_id=book_id,
             entry=AdjustmentEntryInput(
@@ -359,20 +357,50 @@ def register_entry_prepare_tools(
             service_provider=service_provider,
         )
 
+    @mcp.tool(
+        name="ledger_commit_entry",
+        title="Commit a prepared entry",
+        description=(
+            "Use this only after ledger_prepare_* returned status ready and the "
+            "user explicitly confirmed its preview and warnings. Pass the exact "
+            "Book ID, intent ID, and opaque commit token returned by prepare. "
+            "Generate one fresh request_id UUID for the first attempt and reuse "
+            "that same request_id for every retry. Never prepare a replacement "
+            "merely because a commit response timed out. This tool posts the "
+            "already prepared financial ledger event and does not accept amount, "
+            "account, category, time, or narrative overrides."
+        ),
+        annotations=ENTRY_COMMIT_ANNOTATIONS,
+        meta=ENTRY_COMMIT_TOOL_META,
+    )
+    def ledger_commit_entry(
+        book_id: UUID,
+        intent_id: UUID,
+        commit_token: OpaqueToken,
+        request_id: UUID,
+    ) -> CommittedEntry:
+        return _commit(
+            book_id=book_id,
+            command=CommitEntryInput(
+                intent_id=intent_id,
+                commit_token=commit_token,
+                request_id=request_id,
+            ),
+            service_provider=service_provider,
+        )
+
 
 def _prepare(
     *,
     book_id: UUID,
     entry: EverydayEntryInput,
     service_provider: EntryServiceProvider,
-) -> ShadowPreparedEntry:
+) -> McpPreparedEntry:
     token = require_write_access_token()
-    restricted_book_id = (token.claims or {}).get("book_id")
-    if restricted_book_id is not None and str(restricted_book_id) != str(book_id):
-        raise ToolError("This connection is restricted to a different Book.")
+    _require_token_book(token, book_id)
     try:
         service = service_provider(token, book_id)
-        return ShadowPreparedEntry.from_prepared(
+        return McpPreparedEntry.from_prepared(
             service.prepare(book_id=book_id, entry=entry)
         )
     except ToolError:
@@ -387,12 +415,49 @@ def _prepare(
         ) from None
 
 
+def _commit(
+    *,
+    book_id: UUID,
+    command: CommitEntryInput,
+    service_provider: EntryServiceProvider,
+) -> CommittedEntry:
+    token = require_write_access_token()
+    _require_token_book(token, book_id)
+    try:
+        service = service_provider(token, book_id)
+        return service.commit(book_id=book_id, command=command)
+    except ToolError:
+        raise
+    except EntryGatewayError as error:
+        field = "" if error.field is None else f" field={error.field}"
+        raise ToolError(f"{error.code.value}:{field} {error}") from None
+    except Exception:
+        # A transport failure may happen after an idempotent commit succeeded.
+        raise ToolError(
+            "Entry commit failed unexpectedly. Retry with the same request_id "
+            "before preparing a replacement."
+        ) from None
+
+
+def _require_token_book(token: AccessToken, book_id: UUID) -> None:
+    restricted_book_id = (token.claims or {}).get("book_id")
+    if restricted_book_id is not None and str(restricted_book_id) != str(book_id):
+        raise ToolError("This connection is restricted to a different Book.")
+
+
+# Compatibility import for integrations that registered the original shadow tools.
+register_entry_prepare_tools = register_entry_tools
+
+
 __all__ = [
+    "ENTRY_COMMIT_ANNOTATIONS",
+    "ENTRY_COMMIT_TOOL_META",
     "ENTRY_PREPARE_ANNOTATIONS",
     "ENTRY_PREPARE_SECURITY_SCHEMES",
     "ENTRY_PREPARE_TOOL_META",
     "EntryServiceProvider",
-    "ShadowPreparedEntry",
+    "McpPreparedEntry",
     "create_runtime_entry_service_provider",
+    "register_entry_tools",
     "register_entry_prepare_tools",
 ]

@@ -51,7 +51,7 @@ class CompilerPreviewService:
         return PreparedEntry(
             intent_id=context.command_id,
             status=PreparedEntryStatus.READY,
-            commit_token="golden-shadow-token-" + "x" * 32,
+            commit_token="golden-ready-token-" + "x" * 32,
             expires_at=datetime.now(UTC) + timedelta(minutes=10),
             preview=preview,
             resolved=resolved,
@@ -64,7 +64,7 @@ class CompilerPreviewService:
         command: CommitEntryInput,
     ) -> CommittedEntry:
         self.commit_calls += 1
-        raise AssertionError("MCP shadow tools must never commit")
+        raise AssertionError("Prepare tools must never commit")
 
 
 def _token() -> AccessToken:
@@ -82,7 +82,7 @@ def _token() -> AccessToken:
     golden_scenarios(),
     ids=lambda scenario: scenario.name,
 )
-def test_mcp_shadow_preview_matches_shared_compiler_and_json_contract(
+def test_mcp_prepare_matches_shared_compiler_and_json_contract(
     monkeypatch: pytest.MonkeyPatch,
     scenario: GoldenEntryScenario,
 ) -> None:
@@ -97,11 +97,9 @@ def test_mcp_shadow_preview_matches_shared_compiler_and_json_contract(
     arguments.pop("kind")
     arguments["book_id"] = str(BOOK_ID)
 
-    _, structured = asyncio.run(
-        server.call_tool(scenario.mcp_tool, arguments)
-    )
+    _, structured = asyncio.run(server.call_tool(scenario.mcp_tool, arguments))
 
-    assert structured["mode"] == "shadow_preview"
+    assert structured["mode"] == "prepare"
     assert structured["status"] == "ready"
     assert structured["preview"]["kind"] == scenario.entry.kind
     assert structured["preview"]["amount"] == {
@@ -112,6 +110,6 @@ def test_mcp_shadow_preview_matches_shared_compiler_and_json_contract(
     assert tuple(structured["resolved"]["category_ids"]) == tuple(
         str(value) for value in scenario.expected_categories
     )
-    assert "commit_token" not in structured
+    assert structured["commit_token"] == "golden-ready-token-" + "x" * 32
     assert service.calls == [scenario.entry]
     assert service.commit_calls == 0

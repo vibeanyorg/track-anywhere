@@ -16,6 +16,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from track_anywhere.application.entries.contracts import (
     Clarification,
     ClarificationCode,
+    CommitEntryInput,
     CommittedEntry,
     EverydayEntryInput,
     PreparedEntry,
@@ -31,7 +32,7 @@ from track_anywhere.application.entries.errors import (
 from track_anywhere.mcp import entry_tools
 from track_anywhere.mcp.entry_tools import (
     create_runtime_entry_service_provider,
-    register_entry_prepare_tools,
+    register_entry_tools,
 )
 from track_anywhere.mcp.server import ChatGptFastMCP
 
@@ -42,8 +43,10 @@ ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000010")
 OTHER_ACCOUNT_ID = UUID("00000000-0000-4000-8000-000000000011")
 ORIGINAL_ID = UUID("00000000-0000-4000-8000-000000000030")
 INTENT_ID = UUID("00000000-0000-4000-8000-000000000040")
+REQUEST_ID = UUID("00000000-0000-4000-8000-000000000041")
+TRANSACTION_ID = UUID("00000000-0000-4000-8000-000000000042")
 OCCURRED_AT = "2026-07-24T12:00:00+00:00"
-COMMIT_TOKEN = "shadow-ready-token-0123456789abcdef"
+COMMIT_TOKEN = "ready-token-" + "x" * 48
 
 PREPARE_TOOL_NAMES = {
     "ledger_prepare_expense",
@@ -53,6 +56,7 @@ PREPARE_TOOL_NAMES = {
     "ledger_prepare_refund",
     "ledger_prepare_adjustment",
 }
+ENTRY_TOOL_NAMES = PREPARE_TOOL_NAMES | {"ledger_commit_entry"}
 FORBIDDEN_INPUT_FIELDS = {
     "debit",
     "credit",
@@ -73,8 +77,9 @@ FORBIDDEN_INPUT_FIELDS = {
 class FakeEntryService:
     status: PreparedEntryStatus = PreparedEntryStatus.READY
     calls: list[tuple[UUID, EverydayEntryInput]] = field(default_factory=list)
-    commit_calls: int = 0
+    commit_calls: list[tuple[UUID, CommitEntryInput]] = field(default_factory=list)
     unexpected_error: Exception | None = None
+    commit_error: Exception | None = None
 
     def prepare(
         self,
@@ -108,9 +113,7 @@ class FakeEntryService:
             intent_id=INTENT_ID,
             status=self.status,
             commit_token=(
-                COMMIT_TOKEN
-                if self.status is PreparedEntryStatus.READY
-                else None
+                COMMIT_TOKEN if self.status is PreparedEntryStatus.READY else None
             ),
             expires_at=datetime(2026, 7, 24, 12, 10, tzinfo=UTC),
             preview=EntryPreview(
@@ -127,9 +130,31 @@ class FakeEntryService:
             clarifications=clarification,
         )
 
-    def commit(self, **_kwargs) -> CommittedEntry:
-        self.commit_calls += 1
-        raise AssertionError("Shadow Mode must never call commit")
+    def commit(
+        self,
+        *,
+        book_id: UUID,
+        command: CommitEntryInput,
+    ) -> CommittedEntry:
+        self.commit_calls.append((book_id, command))
+        if self.commit_error is not None:
+            raise self.commit_error
+        return CommittedEntry(
+            intent_id=command.intent_id,
+            request_id=command.request_id,
+            transaction_id=TRANSACTION_ID,
+            committed_at=datetime(2026, 7, 24, 12, 1, tzinfo=UTC),
+            preview=EntryPreview(
+                kind="expense",
+                summary="Preview expense",
+                amount=PreviewMoney(
+                    value="660",
+                    asset_code="CNY",
+                    display="CNY 660.00",
+                ),
+                occurred_at=datetime.fromisoformat(OCCURRED_AT),
+            ),
+        )
 
 
 @dataclass
@@ -170,11 +195,11 @@ def _server(
 ) -> tuple[ChatGptFastMCP, FakeEntryService, FakeEntryServiceProvider]:
     selected = service or FakeEntryService()
     provider = FakeEntryServiceProvider(selected)
-    server = ChatGptFastMCP("Everyday Entry Shadow")
+    server = ChatGptFastMCP("Everyday Entry")
     server.scope_resource_metadata_url = (
         "http://testserver/.well-known/oauth-protected-resource/mcp"
     )
-    register_entry_prepare_tools(server, provider)
+    register_entry_tools(server, provider)
     return server, selected, provider
 
 
@@ -256,18 +281,19 @@ def _arguments_by_tool() -> dict[str, dict[str, object]]:
     }
 
 
-def test_shadow_descriptors_are_small_business_fact_schemas() -> None:
+def test_entry_descriptors_keep_prepare_friendly_and_commit_narrow() -> None:
     server, _, _ = _server()
 
     tools = asyncio.run(server.list_tools())
     by_name = {tool.name: tool for tool in tools}
 
-    assert set(by_name) == PREPARE_TOOL_NAMES
-    for tool in tools:
+    assert set(by_name) == ENTRY_TOOL_NAMES
+    for tool_name in PREPARE_TOOL_NAMES:
+        tool = by_name[tool_name]
         assert tool.title
         assert tool.description.startswith("Use this when")
-        assert "Shadow Mode" in tool.description
-        assert "cannot commit" in tool.description
+        assert "explicit confirmation" in tool.description
+        assert "ledger_commit_entry" in tool.description
         assert "`660` with asset_unit means 660.00, never 6.60" in tool.description
         assert tool.annotations.readOnlyHint is False
         assert tool.annotations.destructiveHint is False
@@ -277,21 +303,51 @@ def test_shadow_descriptors_are_small_business_fact_schemas() -> None:
             {"type": "oauth2", "scopes": ["ledger:read", "ledger:write"]}
         ]
         assert tool.model_extra["securitySchemes"] == tool.meta["securitySchemes"]
+        assert tool.meta["track_anywhere/mode"] == "entry_prepare"
+        assert tool.meta["track_anywhere/requires_write"] is True
         assert _property_names(tool.inputSchema).isdisjoint(FORBIDDEN_INPUT_FIELDS)
         assert "book_id" in tool.inputSchema["required"]
         assert "occurred_at" in tool.inputSchema["required"]
         assert tool.outputSchema is not None
-        assert "commit_token" not in _property_names(tool.outputSchema)
+        assert "commit_token" in _property_names(tool.outputSchema)
 
-    assert "category" not in by_name[
-        "ledger_prepare_transfer"
-    ].inputSchema["properties"]
-    assert "category" not in by_name[
-        "ledger_prepare_credit_card_payment"
-    ].inputSchema["properties"]
-    assert "actual_balance" in by_name[
-        "ledger_prepare_adjustment"
-    ].inputSchema["required"]
+    commit = by_name["ledger_commit_entry"]
+    assert commit.title
+    assert commit.description.startswith("Use this only after")
+    assert "explicitly confirmed" in commit.description
+    assert "same request_id" in commit.description
+    assert set(commit.inputSchema["properties"]) == {
+        "book_id",
+        "intent_id",
+        "commit_token",
+        "request_id",
+    }
+    assert set(commit.inputSchema["required"]) == {
+        "book_id",
+        "intent_id",
+        "commit_token",
+        "request_id",
+    }
+    assert commit.annotations.readOnlyHint is False
+    assert commit.annotations.destructiveHint is True
+    assert commit.annotations.idempotentHint is True
+    assert commit.annotations.openWorldHint is False
+    assert commit.meta["track_anywhere/mode"] == "entry_commit"
+    assert commit.meta["track_anywhere/requires_write"] is True
+    assert commit.meta["securitySchemes"] == [
+        {"type": "oauth2", "scopes": ["ledger:read", "ledger:write"]}
+    ]
+
+    assert (
+        "category" not in by_name["ledger_prepare_transfer"].inputSchema["properties"]
+    )
+    assert (
+        "category"
+        not in by_name["ledger_prepare_credit_card_payment"].inputSchema["properties"]
+    )
+    assert (
+        "actual_balance" in by_name["ledger_prepare_adjustment"].inputSchema["required"]
+    )
 
 
 def test_runtime_provider_reuses_book_guard_and_injects_actor_scoped_dependencies(
@@ -347,7 +403,7 @@ def test_runtime_provider_construction_does_not_require_entry_secrets() -> None:
         ("ledger_prepare_adjustment", "adjustment"),
     ],
 )
-def test_each_tool_delegates_only_to_the_shared_prepare_service(
+def test_each_prepare_tool_delegates_only_to_the_shared_prepare_service(
     monkeypatch,
     tool_name: str,
     expected_kind: str,
@@ -359,15 +415,15 @@ def test_each_tool_delegates_only_to_the_shared_prepare_service(
     _, structured = _call(server, tool_name, _arguments_by_tool()[tool_name])
 
     assert structured["status"] == "ready"
-    assert structured["mode"] == "shadow_preview"
-    assert "commit_token" not in structured
+    assert structured["mode"] == "prepare"
+    assert structured["commit_token"] == COMMIT_TOKEN
     assert structured["preview"]["kind"] == expected_kind
     assert structured["preview"]["amount"]["display"] == "CNY 660.00"
     assert len(service.calls) == 1
     assert service.calls[0][0] == BOOK_ID
     assert service.calls[0][1].kind == expected_kind
     assert provider.calls == [(token, BOOK_ID)]
-    assert service.commit_calls == 0
+    assert service.commit_calls == []
 
 
 @pytest.mark.parametrize(
@@ -379,7 +435,7 @@ def test_each_tool_delegates_only_to_the_shared_prepare_service(
         PreparedEntryStatus.UNSUPPORTED,
     ],
 )
-def test_shadow_tools_return_every_prepare_status_without_committing(
+def test_prepare_tools_return_every_status_and_only_ready_exposes_token(
     monkeypatch,
     status: PreparedEntryStatus,
 ) -> None:
@@ -398,14 +454,51 @@ def test_shadow_tools_return_every_prepare_status_without_committing(
 
     assert structured["status"] == status.value
     assert structured["preview"]["kind"] == "expense"
-    assert service.commit_calls == 0
+    assert structured.get("commit_token") == (
+        COMMIT_TOKEN if status is PreparedEntryStatus.READY else None
+    )
+    assert service.commit_calls == []
+
+
+def test_commit_delegates_exact_capability_and_idempotency_key(
+    monkeypatch,
+) -> None:
+    server, service, provider = _server()
+    token = _token()
+    monkeypatch.setattr(entry_tools, "require_write_access_token", lambda: token)
+
+    _, structured = _call(
+        server,
+        "ledger_commit_entry",
+        {
+            "book_id": str(BOOK_ID),
+            "intent_id": str(INTENT_ID),
+            "commit_token": COMMIT_TOKEN,
+            "request_id": str(REQUEST_ID),
+        },
+    )
+
+    assert structured["status"] == "committed"
+    assert structured["intent_id"] == str(INTENT_ID)
+    assert structured["request_id"] == str(REQUEST_ID)
+    assert structured["transaction_id"] == str(TRANSACTION_ID)
+    assert provider.calls == [(token, BOOK_ID)]
+    assert service.commit_calls == [
+        (
+            BOOK_ID,
+            CommitEntryInput(
+                intent_id=INTENT_ID,
+                commit_token=COMMIT_TOKEN,
+                request_id=REQUEST_ID,
+            ),
+        )
+    ]
+    assert service.calls == []
 
 
 def test_prepare_requires_write_scope_and_preserves_oauth_challenge() -> None:
     server, service, provider = _server()
-    context = auth_context_var.set(
-        AuthenticatedUser(_token(scopes=["ledger:read"]))
-    )
+    context = auth_context_var.set(AuthenticatedUser(_token(scopes=["ledger:read"])))
     try:
         result = _call(
             server,
@@ -474,7 +567,7 @@ def test_private_narrative_never_enters_repr_logs_or_unexpected_errors(
     assert secret not in str(raised.value)
     assert secret not in repr(service.calls)
     assert secret not in caplog.text
-    assert service.commit_calls == 0
+    assert service.commit_calls == []
 
 
 def test_safe_application_errors_keep_stable_code_and_field(monkeypatch) -> None:
@@ -502,13 +595,65 @@ def test_safe_application_errors_keep_stable_code_and_field(monkeypatch) -> None
 
     assert "entry_account_not_found" in str(raised.value)
     assert "field=source_account" in str(raised.value)
-    assert service.commit_calls == 0
+    assert service.commit_calls == []
+
+
+def test_commit_requires_write_scope_and_preserves_oauth_challenge() -> None:
+    server, service, provider = _server()
+    context = auth_context_var.set(AuthenticatedUser(_token(scopes=["ledger:read"])))
+    try:
+        result = _call(
+            server,
+            "ledger_commit_entry",
+            {
+                "book_id": str(BOOK_ID),
+                "intent_id": str(INTENT_ID),
+                "commit_token": COMMIT_TOKEN,
+                "request_id": str(REQUEST_ID),
+            },
+        )
+    finally:
+        auth_context_var.reset(context)
+
+    assert result.isError is True
+    assert 'error="insufficient_scope"' in (result.meta["mcp/www_authenticate"][0])
+    assert service.commit_calls == []
+    assert provider.calls == []
+
+
+def test_commit_unexpected_error_hides_token_and_preserves_retry_instruction(
+    monkeypatch,
+    caplog,
+) -> None:
+    secret = "commit-secret-token-" + "9" * 32
+    server, service, _ = _server(FakeEntryService(commit_error=RuntimeError(secret)))
+    monkeypatch.setattr(
+        entry_tools,
+        "require_write_access_token",
+        lambda: _token(),
+    )
+
+    with pytest.raises(ToolError) as raised:
+        _call(
+            server,
+            "ledger_commit_entry",
+            {
+                "book_id": str(BOOK_ID),
+                "intent_id": str(INTENT_ID),
+                "commit_token": secret,
+                "request_id": str(REQUEST_ID),
+            },
+        )
+
+    assert "Retry with the same request_id" in str(raised.value)
+    assert secret not in str(raised.value)
+    assert secret not in repr(service.commit_calls)
+    assert secret not in caplog.text
 
 
 @pytest.mark.parametrize(
     "tool_name",
     [
-        "ledger_commit_entry",
         "ledger_cancel_entry",
         "ledger_record_expense",
         "ledger_record_credit_card_charge",
