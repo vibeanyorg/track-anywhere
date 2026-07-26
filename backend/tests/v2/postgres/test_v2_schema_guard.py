@@ -742,6 +742,29 @@ def test_programmatic_stamp_cannot_accept_a_preforged_marker(
     ]
 
 
+def test_journal_cursor_pagination_has_a_matching_index(
+    migrated_postgres_database,
+) -> None:
+    with create_engine(migrated_postgres_database.runtime_url).connect() as connection:
+        index_definition = connection.execute(
+            text(
+                """
+                select indexdef
+                  from pg_catalog.pg_indexes
+                 where schemaname = 'public'
+                   and tablename = 'journal_transactions'
+                   and indexname =
+                       'ix_journal_transactions_book_effective_position'
+                """
+            )
+        ).scalar_one()
+
+    assert (
+        "(book_id, effective_at, source_position, transaction_id)"
+        in index_definition
+    )
+
+
 def test_programmatic_current_rejects_marker_without_version_table(
     migrated_postgres_database,
 ) -> None:

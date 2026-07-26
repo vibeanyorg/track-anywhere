@@ -88,6 +88,13 @@ class JournalTransactionRecord(V2Base):
             "'credit_card_payment', 'credit_card_refund', 'credit_card_fee')",
             name="kind_valid",
         ),
+        Index(
+            "ix_journal_transactions_book_effective_position",
+            "book_id",
+            "effective_at",
+            "source_position",
+            "transaction_id",
+        ),
     )
 
     book_id: Mapped[UUID] = mapped_column(primary_key=True)

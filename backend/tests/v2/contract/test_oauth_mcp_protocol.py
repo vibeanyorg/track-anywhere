@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import get_ident
 from types import SimpleNamespace
 from uuid import uuid4
 from xml.etree import ElementTree
@@ -14,7 +15,7 @@ from mcp.server.auth.provider import AccessToken
 
 from track_anywhere.api.v2.query_routes.journal import serialize_journal_item
 from track_anywhere.auth.security import redirect_uri_matches, validate_redirect_uri
-from track_anywhere.mcp.server import create_mcp_runtime
+from track_anywhere.mcp.server import ChatGptFastMCP, create_mcp_runtime
 from track_anywhere.queries.journal import JournalItem
 from track_anywhere.server import create_server
 
@@ -59,6 +60,25 @@ def _payload_keys(value: object) -> set[str]:
             names.update(_payload_keys(child))
         return names
     return set()
+
+
+def test_sync_mcp_tools_run_outside_the_event_loop_thread() -> None:
+    server = ChatGptFastMCP("Threaded MCP")
+
+    @server.tool()
+    def worker_thread_id() -> int:
+        return get_ident()
+
+    async def invoke() -> tuple[int, object]:
+        event_loop_thread_id = get_ident()
+        _, structured_content = await server.call_tool("worker_thread_id", {})
+        return event_loop_thread_id, structured_content
+
+    event_loop_thread_id, content = asyncio.run(invoke())
+
+    assert isinstance(content, dict)
+    assert set(content) == {"result"}
+    assert content["result"] != event_loop_thread_id
 
 
 def test_standard_well_known_metadata_uses_fixed_resources(monkeypatch) -> None:
