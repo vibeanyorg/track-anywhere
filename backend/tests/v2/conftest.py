@@ -40,6 +40,26 @@ def postgres_database_factory() -> Iterator[PostgresDatabaseFactory]:
         factory.close()
 
 
+@pytest.fixture(scope="session")
+def migrated_postgres_template() -> Iterator[ProvisionedDatabase]:
+    try:
+        config = ClusterConfig.from_env()
+    except ValueError as error:
+        pytest.fail(str(error), pytrace=False)
+
+    factory = PostgresDatabaseFactory(
+        config,
+        worker_id=os.environ.get("PYTEST_XDIST_WORKER", "main"),
+        test_uuid=uuid.uuid4().hex,
+    )
+    try:
+        template = factory.create(purpose="template", schema="v2")
+        factory.freeze_as_template(template)
+        yield template
+    finally:
+        factory.close()
+
+
 @pytest.fixture
 def empty_postgres_database(
     postgres_database_factory: PostgresDatabaseFactory,
@@ -60,17 +80,25 @@ def empty_postgres_source_target(
 @pytest.fixture
 def migrated_postgres_database(
     postgres_database_factory: PostgresDatabaseFactory,
+    migrated_postgres_template: ProvisionedDatabase,
 ) -> ProvisionedDatabase:
-    return postgres_database_factory.create(purpose="runtime", schema="v2")
+    return postgres_database_factory.clone_v2(
+        purpose="runtime", template=migrated_postgres_template
+    )
 
 
 @pytest.fixture
 def migrated_postgres_source_target(
     postgres_database_factory: PostgresDatabaseFactory,
+    migrated_postgres_template: ProvisionedDatabase,
 ) -> tuple[ProvisionedDatabase, ProvisionedDatabase]:
     return (
-        postgres_database_factory.create(purpose="source", schema="v2"),
-        postgres_database_factory.create(purpose="target", schema="v2"),
+        postgres_database_factory.clone_v2(
+            purpose="source", template=migrated_postgres_template
+        ),
+        postgres_database_factory.clone_v2(
+            purpose="target", template=migrated_postgres_template
+        ),
     )
 
 

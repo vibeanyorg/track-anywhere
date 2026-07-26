@@ -79,6 +79,74 @@ def test_factory_creates_migrated_v2_database_for_runtime(
             connection.execute(text("delete from v2_schema_metadata"))
 
 
+def test_worker_v2_template_is_frozen(
+    migrated_postgres_template,
+    postgres_cluster_config,
+) -> None:
+    engine = create_engine(postgres_cluster_config.admin_url)
+    try:
+        with engine.connect() as connection:
+            template = (
+                connection.execute(
+                    text(
+                        "select datallowconn, pg_catalog.pg_get_userbyid(datdba) "
+                        "as owner_role "
+                        "from pg_catalog.pg_database where datname = :name"
+                    ),
+                    {"name": migrated_postgres_template.database_name},
+                )
+                .mappings()
+                .one()
+            )
+    finally:
+        engine.dispose()
+
+    assert template == {
+        "datallowconn": False,
+        "owner_role": postgres_cluster_config.owner_role,
+    }
+
+
+def test_factory_clones_worker_template_without_rerunning_alembic(
+    postgres_database_factory,
+    migrated_postgres_template,
+    monkeypatch,
+) -> None:
+    def fail_migration(_database) -> None:
+        raise AssertionError("clone unexpectedly reran Alembic")
+
+    monkeypatch.setattr(postgres_database_factory, "_upgrade_to_v2", fail_migration)
+    database = postgres_database_factory.clone_v2(
+        purpose="clone", template=migrated_postgres_template
+    )
+
+    with create_engine(database.runtime_url).connect() as connection:
+        assert (
+            connection.execute(
+                text("select version_num from alembic_version")
+            ).scalar_one()
+            == current_v2_head()
+        )
+        assert (
+            connection.execute(
+                text("select schema_generation from v2_schema_metadata")
+            ).scalar_one()
+            == 2
+        )
+
+
+def test_factory_rejects_an_unfrozen_v2_template(
+    postgres_database_factory,
+) -> None:
+    database = postgres_database_factory.create(purpose="unfrozen", schema="v2")
+
+    with pytest.raises(RuntimeError, match="must reject connections"):
+        postgres_database_factory.clone_v2(
+            purpose="invalid_clone",
+            template=database,
+        )
+
+
 def test_migrated_pg_engine_uses_runtime_role(
     pg_engine, postgres_cluster_config
 ) -> None:
@@ -100,7 +168,9 @@ def test_migrated_source_and_target_are_independent(
     source, target = migrated_postgres_source_target
 
     assert source.database_name != target.database_name
-    with create_engine(source.runtime_url).connect() as connection:
+    with create_engine(source.migrator_url).begin() as connection:
+        connection.execute(text(f'SET ROLE "{source.owner_role}"'))
+        connection.execute(text("create table source_marker(id integer)"))
         assert (
             connection.execute(
                 text("select schema_generation from v2_schema_metadata")
@@ -113,6 +183,12 @@ def test_migrated_source_and_target_are_independent(
                 text("select schema_generation from v2_schema_metadata")
             ).scalar_one()
             == 2
+        )
+        assert (
+            connection.execute(
+                text("select to_regclass('public.source_marker')")
+            ).scalar_one()
+            is None
         )
 
 
@@ -160,6 +236,25 @@ def test_factory_drops_database_if_migration_fails(
             ).scalar_one()
             == 2
         )
+
+
+def test_factory_drops_clone_if_validation_fails(
+    postgres_database_factory,
+    migrated_postgres_template,
+    monkeypatch,
+) -> None:
+    databases_before = _factory_database_names(postgres_database_factory)
+
+    def fail_validation(_database) -> None:
+        raise RuntimeError("intentional clone validation failure")
+
+    monkeypatch.setattr(postgres_database_factory, "_validate_v2", fail_validation)
+    with pytest.raises(RuntimeError, match="intentional clone validation failure"):
+        postgres_database_factory.clone_v2(
+            purpose="failed_clone", template=migrated_postgres_template
+        )
+
+    assert _factory_database_names(postgres_database_factory) == databases_before
 
 
 def test_v2_create_cli_emits_only_requested_runtime_dsn() -> None:
