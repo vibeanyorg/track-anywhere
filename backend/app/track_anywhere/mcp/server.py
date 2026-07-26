@@ -2,14 +2,24 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from functools import partial, wraps
+from inspect import iscoroutinefunction
+from typing import Any, Callable
 from urllib.parse import urlparse
 
+from anyio import to_thread
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import CallToolResult, TextContent, Tool as McpTool
+from mcp.types import (
+    CallToolResult,
+    Icon,
+    TextContent,
+    Tool as McpTool,
+    ToolAnnotations,
+)
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -40,6 +50,36 @@ MCP_TRUSTED_PROXY_HOSTS_ENV = "TRACK_ANYWHERE_MCP_TRUSTED_PROXY_HOSTS"
 
 class ChatGptFastMCP(FastMCP):
     scope_resource_metadata_url: str | None = None
+
+    def add_tool(
+        self,
+        fn: Callable[..., object],
+        name: str | None = None,
+        title: str | None = None,
+        description: str | None = None,
+        annotations: ToolAnnotations | None = None,
+        icons: list[Icon] | None = None,
+        meta: dict[str, Any] | None = None,
+        structured_output: bool | None = None,
+    ) -> None:
+        registered_fn = fn
+        if not iscoroutinefunction(fn):
+
+            @wraps(fn)
+            async def run_sync_tool(*args: object, **kwargs: object) -> object:
+                return await to_thread.run_sync(partial(fn, *args, **kwargs))
+
+            registered_fn = run_sync_tool
+        super().add_tool(
+            registered_fn,
+            name=name,
+            title=title,
+            description=description,
+            annotations=annotations,
+            icons=icons,
+            meta=meta,
+            structured_output=structured_output,
+        )
 
     async def list_tools(self) -> list[McpTool]:
         tools = await super().list_tools()

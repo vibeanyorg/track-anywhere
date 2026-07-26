@@ -16,6 +16,7 @@ def test_catalog_queries_list_accessible_books_and_zero_balance_accounts(
     try:
         from track_anywhere.queries.catalogs import (
             get_account,
+            list_account_page,
             list_accessible_books,
             list_accounts,
             list_assets,
@@ -48,6 +49,22 @@ def test_catalog_queries_list_accessible_books_and_zero_balance_accounts(
             account_type="asset",
             status="active",
         )
+        first_page = list_account_page(
+            session,
+            scenario.book_id,
+            account_type="asset",
+            status="active",
+            limit=1,
+            offset=0,
+        )
+        second_page = list_account_page(
+            session,
+            scenario.book_id,
+            account_type="asset",
+            status="active",
+            limit=1,
+            offset=1,
+        )
         account = get_account(session, scenario.book_id, scenario.debit_account_id)
         categories = list_categories(session, scenario.book_id)
 
@@ -58,6 +75,9 @@ def test_catalog_queries_list_accessible_books_and_zero_balance_accounts(
         scenario.credit_account_id,
     }
     assert all(item.balance.natural_units == 0 for item in accounts)
+    assert first_page.total == 2
+    assert second_page.total == 2
+    assert first_page.items + second_page.items == accounts
     assert account.current_name == "Debit"
     assert account.balance.raw_accounting_units == 0
     assert categories == ()

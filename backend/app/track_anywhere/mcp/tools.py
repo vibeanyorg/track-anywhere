@@ -38,7 +38,7 @@ from ..queries.balances import get_book_balances, get_verified_book_balances
 from ..queries.catalogs import (
     get_account,
     list_accessible_books,
-    list_accounts,
+    list_account_page,
     list_assets,
     list_categories,
 )
@@ -675,7 +675,7 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         with session_factory() as session:
             require_book_access(session, token, book_id)
             try:
-                values = list_accounts(
+                page = list_account_page(
                     session,
                     book_id,
                     account_type=account_type,
@@ -683,15 +683,17 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
                     status=status,
                     asset_code=asset_code,
                     name=name,
+                    limit=limit,
+                    offset=offset,
                 )
             except (LookupError, ValueError) as error:
                 raise ToolError(str(error)) from error
-        total = len(values)
-        page = values[offset : offset + limit]
-        next_offset = offset + limit if offset + limit < total else None
+        next_offset = (
+            offset + limit if offset + limit < page.total else None
+        )
         return AccountPage(
-            items=tuple(serialize_account(item) for item in page),
-            total=total,
+            items=tuple(serialize_account(item) for item in page.items),
+            total=page.total,
             offset=offset,
             limit=limit,
             next_offset=next_offset,

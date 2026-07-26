@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from ..domain.journal import AccountType
@@ -47,6 +48,14 @@ class AccountSummary:
     current_name: str
     status: str
     balance: BalanceItem
+
+
+@dataclass(frozen=True, slots=True)
+class AccountSummaryPage:
+    items: tuple[AccountSummary, ...]
+    total: int
+    offset: int
+    limit: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +131,74 @@ def list_accounts(
     name: str | None = None,
 ) -> tuple[AccountSummary, ...]:
     _require_book(session, book_id)
+    statement = _account_list_statement(
+        book_id,
+        account_type=account_type,
+        account_subtype=account_subtype,
+        status=status,
+        asset_code=asset_code,
+        name=name,
+    )
+    return tuple(
+        _account_summary(record, balance_units)
+        for record, balance_units in session.execute(statement)
+    )
+
+
+def list_account_page(
+    session: Session,
+    book_id: UUID,
+    *,
+    account_type: str | None = None,
+    account_subtype: str | None = None,
+    status: str | None = None,
+    asset_code: str | None = None,
+    name: str | None = None,
+    limit: int,
+    offset: int,
+) -> AccountSummaryPage:
+    _require_book(session, book_id)
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset must be nonnegative")
+    statement = _account_list_statement(
+        book_id,
+        account_type=account_type,
+        account_subtype=account_subtype,
+        status=status,
+        asset_code=asset_code,
+        name=name,
+    )
+    total = int(
+        session.scalar(
+            select(func.count()).select_from(statement.order_by(None).subquery())
+        )
+        or 0
+    )
+    items = tuple(
+        _account_summary(record, balance_units)
+        for record, balance_units in session.execute(
+            statement.offset(offset).limit(limit)
+        )
+    )
+    return AccountSummaryPage(
+        items=items,
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+def _account_list_statement(
+    book_id: UUID,
+    *,
+    account_type: str | None,
+    account_subtype: str | None,
+    status: str | None,
+    asset_code: str | None,
+    name: str | None,
+) -> Select[tuple[AccountRecord, Decimal | None]]:
     if account_type is not None:
         try:
             AccountType(account_type)
@@ -160,10 +237,7 @@ def list_accounts(
         statement = statement.where(
             AccountRecord.current_name.ilike(f"%{escaped}%", escape="\\")
         )
-    return tuple(
-        _account_summary(record, balance_units)
-        for record, balance_units in session.execute(statement)
-    )
+    return statement
 
 
 def get_account(
