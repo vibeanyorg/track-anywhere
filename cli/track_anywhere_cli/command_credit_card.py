@@ -1,13 +1,75 @@
 from __future__ import annotations
 
 from argparse import Namespace
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from .command_catalog import compact_payload
 from .command_definition import CommandDefinition, Requester, api_command
 from .config import CliConfig, command_idempotency_key
 from .structured_inputs import parse_external_reference
+
+
+_PAYMENT_INSTRUMENT_NAMESPACE = uuid5(
+    NAMESPACE_URL,
+    "https://track-anywhere.dev/v2/cli/payment-instrument",
+)
+
+
+@api_command("card.configure", mutating=True)
+def request_configure_card(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    request_id = UUID(str(args.request_id)) if args.request_id else uuid4()
+    scope = f"{args.book_id}:{request_id}"
+    instrument_id = uuid5(_PAYMENT_INSTRUMENT_NAMESPACE, f"{scope}:instrument")
+    binding_id = uuid5(_PAYMENT_INSTRUMENT_NAMESPACE, f"{scope}:binding")
+    effective_from = args.effective_from or datetime.now(UTC).isoformat()
+    payload = compact_payload(
+        {
+            "instrument_id": str(instrument_id),
+            "binding_id": str(binding_id),
+            "current_name": args.name,
+            "form_factor": args.form_factor,
+            "network": args.network,
+            "provider_code": args.provider_code,
+            "settlement_policy": args.settlement_policy,
+            "settlement_account_id": args.settlement_account_id,
+            "asset_code": args.asset_code,
+            "last4": args.last4,
+            "effective_from": effective_from,
+        }
+    )
+    return requester(
+        config,
+        "POST",
+        f"/api/v2/books/{_path(args.book_id)}/payment-instruments",
+        payload,
+        None,
+    )
+
+
+@api_command("card.list_configured")
+def request_list_configured_cards(
+    args: Namespace,
+    config: CliConfig,
+    requester: Requester,
+) -> tuple[int, Any]:
+    from .http import with_query
+
+    path = with_query(
+        f"/api/v2/books/{_path(args.book_id)}/payment-instruments",
+        {
+            "status": args.status,
+            "asset_code": args.asset_code,
+            "name": args.name,
+        },
+    )
+    return requester(config, "GET", path, None, None)
 
 
 @api_command("card.charge", mutating=True, idempotent=True)
@@ -130,6 +192,8 @@ def _path(value: object) -> str:
 
 
 CREDIT_CARD_COMMAND_DEFINITIONS: tuple[CommandDefinition, ...] = (
+    request_configure_card,
+    request_list_configured_cards,
     request_charge,
     request_payment,
     request_refund,

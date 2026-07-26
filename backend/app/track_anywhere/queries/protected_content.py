@@ -9,7 +9,12 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from ..application.privacy.protected_content import TransactionDescription
+from ..application.privacy.protected_content import (
+    TransactionDescription,
+    TransactionNarrative,
+    TransactionNarrativeV2,
+    upcast_transaction_description,
+)
 from ..application.privacy.service import (
     ProtectedContentConflict,
     ProtectedContentService,
@@ -57,9 +62,38 @@ def get_transaction_descriptions(
     cipher: ProtectedContentCipher,
     repository: ProtectedContentRepository | None = None,
 ) -> dict[UUID, TransactionDescription]:
-    if type(book_id) is not UUID or any(type(value) is not UUID for value in description_refs):
+    narratives = get_transaction_narratives(
+        session,
+        book_id,
+        narrative_refs=description_refs,
+        cipher=cipher,
+        repository=repository,
+    )
+    return {
+        sidecar_id: TransactionDescription(
+            purpose=narrative.purpose,
+            transaction_memo=narrative.transaction_memo,
+            line_memos=narrative.line_memos,
+        )
+        for sidecar_id, narrative in narratives.items()
+    }
+
+
+def get_transaction_narratives(
+    session: Session,
+    book_id: UUID,
+    *,
+    narrative_refs: tuple[UUID, ...],
+    cipher: ProtectedContentCipher,
+    repository: ProtectedContentRepository | None = None,
+) -> dict[UUID, TransactionNarrative]:
+    """Decode strict v1/v2 sidecars into one version-neutral query contract."""
+
+    if type(book_id) is not UUID or any(
+        type(value) is not UUID for value in narrative_refs
+    ):
         raise ProtectedContentUnavailable("protected content is unavailable")
-    unique_refs = tuple(dict.fromkeys(description_refs))
+    unique_refs = tuple(dict.fromkeys(narrative_refs))
     if not unique_refs:
         return {}
     content_repository = repository or ProtectedContentRepository()
@@ -84,14 +118,25 @@ def get_transaction_descriptions(
         cipher=cipher,
         repository=content_repository,
     )
-    result: dict[UUID, TransactionDescription] = {}
+    result: dict[UUID, TransactionNarrative] = {}
     for sidecar_id in unique_refs:
+        snapshot = snapshots[sidecar_id]
+        if snapshot.kind not in {
+            "transaction_description",
+            "transaction_narrative_v2",
+        }:
+            raise ProtectedContentUnavailable("protected content is unavailable")
         try:
             plaintext = service.decrypt_active(
-                snapshots[sidecar_id],
-                expected_kind="transaction_description",
+                snapshot,
+                expected_kind=snapshot.kind,
             )
-            result[sidecar_id] = _decode_transaction_description(plaintext)
+            versioned = (
+                _decode_transaction_description(plaintext)
+                if snapshot.kind == "transaction_description"
+                else _decode_transaction_narrative_v2(plaintext)
+            )
+            result[sidecar_id] = upcast_transaction_description(versioned)
         except ProtectedContentConflict:
             raise ProtectedContentUnavailable(
                 "protected content is unavailable"
@@ -219,6 +264,26 @@ def _decode_transaction_description(plaintext: bytes) -> TransactionDescription:
         raise ProtectedContentUnavailable("protected content is unavailable") from None
 
 
+def _decode_transaction_narrative_v2(plaintext: bytes) -> TransactionNarrativeV2:
+    try:
+        if type(plaintext) is not bytes:
+            raise TypeError
+        parsed = json.loads(
+            plaintext.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=lambda _value: (_ for _ in ()).throw(ValueError()),
+        )
+        if type(parsed) is not dict:
+            raise ValueError
+        narrative = TransactionNarrativeV2.model_validate(parsed)
+        canonical = canonical_json_bytes(narrative.model_dump(mode="json"))
+        if not hmac.compare_digest(canonical, plaintext):
+            raise ValueError
+        return narrative
+    except (TypeError, UnicodeError, ValueError, json.JSONDecodeError):
+        raise ProtectedContentUnavailable("protected content is unavailable") from None
+
+
 def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
@@ -235,5 +300,6 @@ __all__ = [
     "ProtectedContentUnavailable",
     "export_import_archive",
     "get_transaction_descriptions",
+    "get_transaction_narratives",
     "list_import_archives",
 ]

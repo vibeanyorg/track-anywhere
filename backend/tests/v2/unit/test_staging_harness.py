@@ -549,6 +549,8 @@ def test_existing_stack_e2e_is_non_mutating_to_infrastructure() -> None:
     assert "static_web_smoke=PASS" in harness
     assert "embedded_projection_convergence=PASS" in harness
     assert "backup_restore_roundtrip=PASS" in harness
+    assert '"ledger_list_payment_instruments"' in harness
+    assert '"ledger_create_payment_card"' in harness
     assert "AsyncProjectionWorker" not in harness
     assert "embedded async projection runtime did not converge" in harness
     assert "public, max-age=31536000, immutable" in harness

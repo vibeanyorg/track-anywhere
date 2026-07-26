@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from mcp.server.auth.settings import AuthSettings
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
@@ -27,6 +28,10 @@ from .auth import (
     MCP_WRITE_SCOPE,
     McpInsufficientScope,
 )
+from .entry_tools import (
+    create_runtime_entry_service_provider,
+    register_entry_prepare_tools,
+)
 from .tools import register_ledger_tools
 
 
@@ -38,8 +43,18 @@ class ChatGptFastMCP(FastMCP):
 
     async def list_tools(self) -> list[McpTool]:
         tools = await super().list_tools()
+        token = get_access_token()
+        hide_shadow_tools = (
+            token is not None and MCP_WRITE_SCOPE not in token.scopes
+        )
         result: list[McpTool] = []
         for tool in tools:
+            if (
+                hide_shadow_tools
+                and (tool.meta or {}).get("track_anywhere/mode")
+                == "shadow_prepare_only"
+            ):
+                continue
             schemes = (tool.meta or {}).get("securitySchemes")
             result.append(
                 tool.model_copy(update={"securitySchemes": schemes})
@@ -93,8 +108,21 @@ def create_mcp_runtime(
         instructions=(
             "Read verified Track Anywhere V2 ledger data. After explicit user "
             "confirmation, bootstrap Books, assets, and standard accounts or record "
-            "semantic ledger entries. Integer units are exact; use asset scale "
-            "metadata before presenting decimal amounts."
+            "supported ledger entries. Read responses expose exact integer `units`; "
+            "use asset scale metadata before presenting them as decimals. Write "
+            "parameters named `amount`, `expected_balance`, or `actual_balance` are "
+            "decimal strings in the asset's major unit, never integer ledger units. "
+            "For example, CNY amount `660` means CNY 660.00, not CNY 6.60."
+            " For a configured physical or virtual card, prefer its payment "
+            "instrument ID during expense or statement-payment preparation; the "
+            "service resolves the bound asset or liability account. When a user "
+            "names a card, list payment instruments first and select the unique "
+            "matching card. Do not ask the user or account catalog to choose a "
+            "funding, clearing, or liability account for each purchase, and do not "
+            "re-infer prepaid versus statement behavior: the card's saved "
+            "configuration is authoritative. Configure settlement policy and its "
+            "account binding only once, when the card is first created or explicitly "
+            "reconfigured."
         ),
         token_verifier=DatabaseTokenVerifier(
             dependencies.session_factory,
@@ -137,6 +165,10 @@ def create_mcp_runtime(
     )
     server.scope_resource_metadata_url = protected_resource_metadata_url(resource)
     register_ledger_tools(server, dependencies)
+    register_entry_prepare_tools(
+        server,
+        create_runtime_entry_service_provider(dependencies),
+    )
     application = server.streamable_http_app()
     _advertise_mcp_scopes(application, base, resource)
     return McpRuntime(

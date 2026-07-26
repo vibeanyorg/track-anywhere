@@ -18,6 +18,7 @@ EXPENSE = "55555555-5555-5555-5555-555555555555"
 SOURCE = "66666666-6666-6666-6666-666666666666"
 ORIGINAL = "77777777-7777-7777-7777-777777777777"
 EFFECTIVE_AT = "2026-07-15T12:00:00+08:00"
+REQUEST = "88888888-8888-4888-8888-888888888888"
 
 
 def _recorder(calls):
@@ -184,3 +185,58 @@ def test_invalid_card_external_reference_fails_before_network(capsys):
     payload = json.loads(capsys.readouterr().err)
     assert payload["status"] == 422
     assert payload["diagnostics"][0]["code"] == "invalid_v2_cli_input"
+
+
+def test_card_configuration_exposes_generic_settlement_choices(capsys):
+    calls = []
+    assert (
+        run(
+            [
+                "--token",
+                "token",
+                "card",
+                "configure",
+                BOOK,
+                "--request-id",
+                REQUEST,
+                "--name",
+                "SafePal USD24 virtual Mastercard",
+                "--form-factor",
+                "virtual",
+                "--network",
+                "mastercard",
+                "--provider-code",
+                "safepal",
+                "--settlement-policy",
+                "prepaid",
+                "--settlement-account-id",
+                SOURCE,
+                "--asset-code",
+                "USD24",
+                "--last4",
+                "0024",
+                "--effective-from",
+                EFFECTIVE_AT,
+                "--json",
+            ],
+            requester=_recorder(calls),
+        )
+        == 0
+    )
+    capsys.readouterr()
+    method, path, payload, key = calls[0]
+    assert method == "POST"
+    assert path == f"/api/v2/books/{BOOK}/payment-instruments"
+    assert payload["settlement_policy"] == "prepaid"
+    assert payload["settlement_account_id"] == SOURCE
+    assert payload["asset_code"] == "USD24"
+    assert payload["instrument_id"] != payload["binding_id"]
+    assert key is None
+
+    schema = command_schema(cli, "card.configure")
+    flags = {flag["name"]: flag for flag in schema["flags"]}
+    assert flags["settlement_policy"]["choices"] == [
+        "immediate",
+        "prepaid",
+        "statement",
+    ]

@@ -84,7 +84,7 @@ class JournalTransactionRecord(V2Base):
         CheckConstraint("source_position > 0", name="source_position_positive"),
         CheckConstraint(
             "transaction_kind in ('standard', 'opening', 'adjustment', "
-            "'transfer', 'fx', 'investment_cash', 'credit_card_charge', "
+            "'transfer', 'refund', 'fx', 'investment_cash', 'credit_card_charge', "
             "'credit_card_payment', 'credit_card_refund', 'credit_card_fee')",
             name="kind_valid",
         ),

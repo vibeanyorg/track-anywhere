@@ -11,6 +11,7 @@ from .click_auth import register as register_auth
 from .click_catalog import register as register_catalog
 from .click_common import ClickState, Requester, output_options, pass_state
 from .click_credit_card import register as register_credit_card
+from .click_entries import register as register_entries
 from .click_investment import register as register_investment
 from .click_ledger import register as register_ledger
 from .click_system import register as register_system
@@ -400,6 +401,7 @@ register_auth(cli)
 register_archive(cli)
 register_catalog(cli)
 register_credit_card(cli)
+register_entries(cli)
 register_investment(cli)
 register_ledger(cli)
 register_system(cli)

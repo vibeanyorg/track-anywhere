@@ -25,6 +25,7 @@ from ...serialization.canonical_json import canonical_json_bytes
 
 ProtectedContentKind: TypeAlias = Literal[
     "transaction_description",
+    "transaction_narrative_v2",
     "import_archive",
 ]
 
@@ -40,7 +41,9 @@ _NONCE_BYTES = 12
 _CONTENT_COMMITMENT_VERSION = 1
 _IMPORT_ARCHIVE_SEAL_VERSION = 1
 _KEY_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", flags=re.ASCII)
-_PROTECTED_CONTENT_KINDS = frozenset({"transaction_description", "import_archive"})
+_PROTECTED_CONTENT_KINDS = frozenset(
+    {"transaction_description", "transaction_narrative_v2", "import_archive"}
+)
 _IMPORT_ARCHIVE_COUNT_KEYS = frozenset(
     {
         "classification_audit_records",

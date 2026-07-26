@@ -739,19 +739,19 @@ read_tools = {
     "ledger_list_assets",
     "ledger_list_books",
     "ledger_list_categories",
+    "ledger_list_payment_instruments",
     "ledger_list_transactions",
 }
 ledger_write_tools = {
     "ledger_record_adjustment",
-    "ledger_record_credit_card_charge",
     "ledger_record_credit_card_payment",
-    "ledger_record_expense",
     "ledger_record_transfer",
 }
 catalog_write_tools = {
     "ledger_create_account",
     "ledger_create_asset",
     "ledger_create_book",
+    "ledger_create_payment_card",
 }
 assert set(tools_by_name) == read_tools | ledger_write_tools | catalog_write_tools
 for name, tool in tools_by_name.items():

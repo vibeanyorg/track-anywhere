@@ -217,6 +217,10 @@ class CategoryVersionRecord(V2Base):
         CheckConstraint("btrim(name) <> ''", name="name_nonblank"),
         CheckConstraint("status in ('active', 'archived')", name="status_valid"),
         CheckConstraint(
+            "usage_kind in ('expense', 'income', 'both')",
+            name="usage_kind_valid",
+        ),
+        CheckConstraint(
             "btrim(change_reason_code) <> ''", name="change_reason_nonblank"
         ),
     )
@@ -227,6 +231,7 @@ class CategoryVersionRecord(V2Base):
     parent_category_id: Mapped[UUID | None] = mapped_column(nullable=True)
     name: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16))
+    usage_kind: Mapped[str] = mapped_column(String(16), default="both")
     change_reason_code: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW

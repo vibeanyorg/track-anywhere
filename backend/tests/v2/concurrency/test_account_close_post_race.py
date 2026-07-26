@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from backend.tests.v2.fixtures.synchronous import JournalScenario, seed_journal_scenario
 from track_anywhere.application.catalogs.close_account import (
     AccountAlreadyClosed,
+    AccountBalanceNonzero,
     CloseAccount,
     close_account,
 )
@@ -103,6 +104,8 @@ def _close_worker(
         results.put(("close_ok", outcome["as_of_book_position"]))
     except AccountAlreadyClosed:
         results.put(("close_already", index))
+    except AccountBalanceNonzero:
+        results.put(("close_nonzero", index))
     except BaseException:
         results.put(("error", traceback.format_exc()))
     finally:
@@ -184,14 +187,21 @@ def test_close_and_post_share_one_book_serialization_order(
     assert not [outcome for outcome in outcomes if outcome[0] == "error"], outcomes
     close_positions = [outcome[1] for outcome in outcomes if outcome[0] == "close_ok"]
     post_positions = [outcome[1] for outcome in outcomes if outcome[0] == "post_ok"]
-    assert len(close_positions) == 1
-    assert sum(outcome[0] == "close_already" for outcome in outcomes) == 19
-    assert (
-        len(post_positions) + sum(outcome[0] == "post_closed" for outcome in outcomes)
-        == 20
-    )
-    assert all(position <= close_positions[0] for position in post_positions)
-    assert len(post_positions) == close_positions[0]
+    post_closed = sum(outcome[0] == "post_closed" for outcome in outcomes)
+    close_already = sum(outcome[0] == "close_already" for outcome in outcomes)
+    close_nonzero = sum(outcome[0] == "close_nonzero" for outcome in outcomes)
+    assert len(post_positions) + post_closed == 20
+    if close_positions:
+        assert close_positions == [0]
+        assert post_positions == []
+        assert post_closed == 20
+        assert close_already == 19
+        assert close_nonzero == 0
+    else:
+        assert len(post_positions) == 20
+        assert post_closed == 0
+        assert close_already == 0
+        assert close_nonzero == 20
 
     with Session(engine) as session:
         assert session.scalar(

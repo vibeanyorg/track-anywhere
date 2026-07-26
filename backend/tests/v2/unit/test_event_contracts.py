@@ -119,6 +119,23 @@ def test_posted_event_round_trips_through_a_jsonb_mapping() -> None:
     assert isinstance(restored.external_references, tuple)
 
 
+def test_non_card_refund_round_trips_with_explicit_semantics() -> None:
+    event = JournalTransactionPosted(
+        transaction_id=TRANSACTION_ID,
+        kind=TransactionKind.REFUND,
+        original_transaction_id=OTHER_TRANSACTION_ID,
+        postings=_postings(),
+    )
+
+    raw = event.model_dump(mode="json")
+    restored = JournalTransactionPosted.model_validate(raw)
+
+    assert raw["kind"] == "refund"
+    assert raw["original_transaction_id"] == str(OTHER_TRANSACTION_ID)
+    assert restored.kind is TransactionKind.REFUND
+    assert restored.original_transaction_id == OTHER_TRANSACTION_ID
+
+
 @pytest.mark.parametrize(
     ("model", "event_type"),
     [

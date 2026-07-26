@@ -30,9 +30,19 @@ from .event_store import (
     LedgerEventRecord,
 )
 from .credit_cards import CreditCardTransactionRecord
+from .entries import (
+    EverydayEntryExternalReferenceRecord,
+    EverydayEntrySourceFingerprintRecord,
+    PreparedEntryIntentRecord,
+)
 from .investments import InvestmentLotAllocationRecord, InvestmentLotRecord
 from .monthly_summary import MonthlyCategorySummaryRecord
 from .outbox import OutboxMessageRecord
+from .payment_instruments import (
+    PaymentInstrumentBindingRecord,
+    PaymentInstrumentRecord,
+    PaymentInstrumentTransactionRecord,
+)
 from .privacy import ImportArchiveManifestRecord, ProtectedDescriptionSidecarRecord
 from .projections import (
     AccountBalanceRecord,
@@ -61,6 +71,8 @@ __all__ = [
     "CreditCardTransactionRecord",
     "CommandReceiptRecord",
     "EventStreamHeadRecord",
+    "EverydayEntryExternalReferenceRecord",
+    "EverydayEntrySourceFingerprintRecord",
     "LedgerEventRecord",
     "JournalPostingRecord",
     "JournalTransactionRecord",
@@ -78,6 +90,10 @@ __all__ = [
     "ProjectionFailureRecord",
     "ProjectionGenerationRecord",
     "PasswordAccountRecord",
+    "PaymentInstrumentBindingRecord",
+    "PaymentInstrumentRecord",
+    "PaymentInstrumentTransactionRecord",
+    "PreparedEntryIntentRecord",
     "ProtectedDescriptionSidecarRecord",
     "ReportingLineRecord",
     "SynchronousProjectionAppliedEventRecord",

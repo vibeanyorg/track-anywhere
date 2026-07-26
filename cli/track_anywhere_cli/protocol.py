@@ -5,6 +5,7 @@ from typing import Any
 
 import click
 
+from .command_entries import ENTRY_COMMAND_PATHS
 from .commands import command_definition, command_paths
 from .output import CLI_SCHEMA_VERSION
 
@@ -101,7 +102,7 @@ def supports_payload() -> dict[str, Any]:
         "no_input": True,
         "structured_errors": True,
         "stderr_errors": True,
-        "dry_run_commands": ["release.bump"],
+        "dry_run_commands": sorted((*ENTRY_COMMAND_PATHS, "release.bump")),
         "idempotency_keys": True,
         "agent_requires_explicit_idempotency_key": True,
         "amount_transport": "exact_string",
