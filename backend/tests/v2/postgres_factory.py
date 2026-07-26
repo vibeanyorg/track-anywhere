@@ -341,6 +341,67 @@ class PostgresDatabaseFactory:
         if schema not in {"empty", "v2"}:
             raise ValueError("database factory schema must be empty or v2")
 
+        handle = self._new_database_handle(purpose)
+        self._verify_cluster_roles()
+        self._create_database(handle, template_name="template0", encoding="UTF8")
+
+        if schema == "v2":
+            try:
+                self._upgrade_to_v2(handle)
+            except BaseException:
+                self._drop_database(handle.database_name)
+                raise
+
+        self._created[handle.database_name] = handle
+        return handle
+
+    def freeze_as_template(self, database: ProvisionedDatabase) -> None:
+        """Make a migrated factory database safe to clone for the worker session."""
+
+        if self._created.get(database.database_name) != database:
+            raise ValueError("template database must be owned by this factory")
+        self._validate_v2(database)
+
+        engine = create_engine(
+            self.config.admin_url, isolation_level="AUTOCOMMIT", pool_pre_ping=True
+        )
+        try:
+            with engine.connect() as connection:
+                connection.exec_driver_sql(
+                    f"ALTER DATABASE {_quoted_identifier(database.database_name)} "
+                    "ALLOW_CONNECTIONS false"
+                )
+                connection.execute(
+                    text(
+                        "select pg_catalog.pg_terminate_backend(pid) "
+                        "from pg_catalog.pg_stat_activity "
+                        "where datname = :name "
+                        "and pid <> pg_catalog.pg_backend_pid()"
+                    ),
+                    {"name": database.database_name},
+                ).all()
+        finally:
+            engine.dispose()
+
+    def clone_v2(
+        self, *, purpose: str, template: ProvisionedDatabase
+    ) -> ProvisionedDatabase:
+        """Clone a frozen, validated V2 template without rerunning Alembic."""
+
+        self._verify_cluster_roles()
+        self._validate_template(template)
+        handle = self._new_database_handle(purpose)
+        self._create_database(handle, template_name=template.database_name)
+        try:
+            self._validate_v2(handle)
+        except BaseException:
+            self._drop_database(handle.database_name)
+            raise
+
+        self._created[handle.database_name] = handle
+        return handle
+
+    def _new_database_handle(self, purpose: str) -> ProvisionedDatabase:
         self._counter += 1
         purpose_slug = _slug(purpose)[:18]
         database_name = _validate_identifier(
@@ -351,9 +412,7 @@ class PostgresDatabaseFactory:
             raise ValueError(
                 "generated test database name exceeds PostgreSQL's 63-byte limit"
             )
-
-        self._verify_cluster_roles()
-        handle = ProvisionedDatabase(
+        return ProvisionedDatabase(
             database_name=database_name,
             owner_role=self.config.owner_role,
             migrator_role=self.config.migrator_role,
@@ -367,6 +426,19 @@ class PostgresDatabaseFactory:
             ),
         )
 
+    def _create_database(
+        self,
+        database: ProvisionedDatabase,
+        *,
+        template_name: str,
+        encoding: str | None = None,
+    ) -> None:
+        template_name = _validate_identifier(
+            template_name, label="template database name"
+        )
+        if encoding not in {None, "UTF8"}:
+            raise ValueError("database encoding must be UTF8")
+        create_options = f" ENCODING '{encoding}'" if encoding is not None else ""
         database_created = False
         engine = create_engine(
             self.config.admin_url, isolation_level="AUTOCOMMIT", pool_pre_ping=True
@@ -374,40 +446,33 @@ class PostgresDatabaseFactory:
         try:
             with engine.connect() as connection:
                 connection.exec_driver_sql(
-                    f"CREATE DATABASE {_quoted_identifier(database_name)} "
-                    f"OWNER {_quoted_identifier(self.config.owner_role)} TEMPLATE template0 ENCODING 'UTF8'"
+                    f"CREATE DATABASE {_quoted_identifier(database.database_name)} "
+                    f"OWNER {_quoted_identifier(self.config.owner_role)} "
+                    f"TEMPLATE {_quoted_identifier(template_name)}{create_options}"
                 )
                 database_created = True
                 connection.exec_driver_sql(
-                    f"REVOKE ALL PRIVILEGES ON DATABASE {_quoted_identifier(database_name)} FROM PUBLIC"
+                    f"REVOKE ALL PRIVILEGES ON DATABASE "
+                    f"{_quoted_identifier(database.database_name)} FROM PUBLIC"
                 )
                 connection.exec_driver_sql(
-                    f"GRANT CONNECT ON DATABASE {_quoted_identifier(database_name)} "
+                    f"GRANT CONNECT ON DATABASE "
+                    f"{_quoted_identifier(database.database_name)} "
                     f"TO {_quoted_identifier(self.config.migrator_role)}"
                 )
                 connection.exec_driver_sql(
-                    f"GRANT CONNECT ON DATABASE {_quoted_identifier(database_name)} "
+                    f"GRANT CONNECT ON DATABASE "
+                    f"{_quoted_identifier(database.database_name)} "
                     f"TO {_quoted_identifier(self.config.runtime_role)}"
                 )
         except BaseException:
             if database_created:
-                self._drop_database(database_name)
+                self._drop_database(database.database_name)
             raise
         finally:
             engine.dispose()
 
-        if schema == "v2":
-            try:
-                self._upgrade_to_v2(handle)
-            except BaseException:
-                self._drop_database(database_name)
-                raise
-
-        self._created[database_name] = handle
-        return handle
-
     def _upgrade_to_v2(self, database: ProvisionedDatabase) -> None:
-        expected_revision = current_v2_head()
         environment = os.environ.copy()
         environment["TRACK_ANYWHERE_DATABASE_URL"] = database.migrator_url
         environment["TRACK_ANYWHERE_DB_RUNTIME_ROLE"] = database.runtime_role
@@ -421,7 +486,10 @@ class PostgresDatabaseFactory:
         )
         if result.returncode != 0:
             raise RuntimeError("V2 schema migration failed")
+        self._validate_v2(database)
 
+    def _validate_v2(self, database: ProvisionedDatabase) -> None:
+        expected_revision = current_v2_head()
         engine = create_engine(database.runtime_url, pool_pre_ping=True)
         try:
             with engine.connect() as connection:
@@ -442,6 +510,45 @@ class PostgresDatabaseFactory:
                 raise RuntimeError("V2 schema validation failed")
         finally:
             engine.dispose()
+
+    def _validate_template(self, template: ProvisionedDatabase) -> None:
+        database_name = self.config.database_name_from_drop_url(template.runtime_url)
+        if database_name != template.database_name:
+            raise ValueError("template database URL does not match its database name")
+        if (
+            template.owner_role,
+            template.migrator_role,
+            template.runtime_role,
+        ) != (
+            self.config.owner_role,
+            self.config.migrator_role,
+            self.config.runtime_role,
+        ):
+            raise ValueError("template database roles do not match the factory roles")
+
+        engine = create_engine(self.config.admin_url, pool_pre_ping=True)
+        try:
+            with engine.connect() as connection:
+                row = (
+                    connection.execute(
+                        text(
+                            "select datallowconn, pg_catalog.pg_get_userbyid(datdba) "
+                            "as owner_role "
+                            "from pg_catalog.pg_database where datname = :name"
+                        ),
+                        {"name": database_name},
+                    )
+                    .mappings()
+                    .one_or_none()
+                )
+        finally:
+            engine.dispose()
+        if row is None:
+            raise RuntimeError("V2 template database does not exist")
+        if row["datallowconn"]:
+            raise RuntimeError("V2 template database must reject connections")
+        if row["owner_role"] != self.config.owner_role:
+            raise RuntimeError("V2 template database has the wrong owner")
 
     def drop(self, database: ProvisionedDatabase | str) -> None:
         database_name = (

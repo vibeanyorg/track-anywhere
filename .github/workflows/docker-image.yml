@@ -27,8 +27,42 @@ env:
   IMAGE: ghcr.io/vibeanyorg/track-anywhere-api
 
 jobs:
-  v2-gates:
-    name: V2 PostgreSQL and client gates
+  v2-unit-gate:
+    name: V2 unit gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked --extra postgres
+      - name: V2 unit gate
+        run: uv run --extra postgres pytest backend/tests/v2/unit -q --durations=25
+
+  frontend-gate:
+    name: Frontend gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Frontend install
+        run: npm --prefix frontend ci
+      - name: Frontend tests
+        run: npm --prefix frontend test
+      - name: Frontend lint
+        run: npm --prefix frontend run lint
+      - name: Frontend build
+        run: npm --prefix frontend run build
+
+  v2-postgres-gate:
+    name: PostgreSQL constraints and role separation gate
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -57,11 +91,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
       - name: Provision non-superuser V2 roles
         env:
           PGPASSWORD: postgres
@@ -79,16 +108,218 @@ jobs:
             with admin false, inherit false, set true;
           SQL
       - run: uv sync --locked --extra postgres
-      - name: V2 unit gate
-        run: uv run --extra postgres pytest backend/tests/v2/unit -q
       - name: PostgreSQL constraints and role separation gate
-        run: uv run --extra postgres pytest backend/tests/v2/postgres -q
+        run: >-
+          uv run --extra postgres pytest backend/tests/v2/postgres
+          --ignore=backend/tests/v2/postgres/test_database_factory.py
+          --ignore=backend/tests/v2/postgres/test_v2_schema_guard.py
+          -q --durations=25
+
+  v2-postgres-global-role-gate:
+    name: PostgreSQL global role gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TRACK_ANYWHERE_ALLOW_EXTERNAL_TEST_DATABASE: "1"
+      TRACK_ANYWHERE_TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_MIGRATOR_BASE_URL: postgresql+psycopg://track_anywhere_migrator:track_anywhere_migrator_test@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_RUNTIME_BASE_URL: postgresql+psycopg://track_anywhere_runtime:track_anywhere_runtime_test@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Provision non-superuser V2 roles
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          create role track_anywhere_owner
+            nologin nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_migrator
+            login password 'track_anywhere_migrator_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_runtime
+            login password 'track_anywhere_runtime_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          grant track_anywhere_owner to track_anywhere_migrator
+            with admin false, inherit false, set true;
+          SQL
+      - run: uv sync --locked --extra postgres
+      - name: Global role mutation tests (serial)
+        run: >-
+          uv run --extra postgres pytest
+          backend/tests/v2/postgres/test_database_factory.py
+          backend/tests/v2/postgres/test_v2_schema_guard.py
+          -q --durations=25
+
+  v2-concurrency-replay-gate:
+    name: Multiprocess concurrency and deterministic replay gates
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TRACK_ANYWHERE_ALLOW_EXTERNAL_TEST_DATABASE: "1"
+      TRACK_ANYWHERE_TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_MIGRATOR_BASE_URL: postgresql+psycopg://track_anywhere_migrator:track_anywhere_migrator_test@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_RUNTIME_BASE_URL: postgresql+psycopg://track_anywhere_runtime:track_anywhere_runtime_test@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Provision non-superuser V2 roles
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          create role track_anywhere_owner
+            nologin nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_migrator
+            login password 'track_anywhere_migrator_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_runtime
+            login password 'track_anywhere_runtime_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          grant track_anywhere_owner to track_anywhere_migrator
+            with admin false, inherit false, set true;
+          SQL
+      - run: uv sync --locked --extra postgres
       - name: Multiprocess concurrency gate
-        run: uv run --extra postgres pytest backend/tests/v2/concurrency -q
+        run: uv run --extra postgres pytest backend/tests/v2/concurrency -q --durations=25
       - name: Deterministic replay gate
-        run: uv run --extra postgres pytest backend/tests/v2/replay -q
+        run: uv run --extra postgres pytest backend/tests/v2/replay -q --durations=25
+
+  v2-contract-cli-gate:
+    name: API contract and CLI gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TRACK_ANYWHERE_ALLOW_EXTERNAL_TEST_DATABASE: "1"
+      TRACK_ANYWHERE_TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_MIGRATOR_BASE_URL: postgresql+psycopg://track_anywhere_migrator:track_anywhere_migrator_test@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_RUNTIME_BASE_URL: postgresql+psycopg://track_anywhere_runtime:track_anywhere_runtime_test@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Provision non-superuser V2 roles
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          create role track_anywhere_owner
+            nologin nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_migrator
+            login password 'track_anywhere_migrator_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_runtime
+            login password 'track_anywhere_runtime_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          grant track_anywhere_owner to track_anywhere_migrator
+            with admin false, inherit false, set true;
+          SQL
+      - run: uv sync --locked --extra postgres
       - name: API contract and CLI gate
-        run: uv run --extra postgres pytest backend/tests/v2/contract cli/tests contract_tests -q
+        run: >-
+          uv run --extra postgres pytest backend/tests/v2/contract cli/tests contract_tests
+          -q --durations=25
+
+  v2-migration-gate:
+    name: Clean migration and role separation gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      TRACK_ANYWHERE_ALLOW_EXTERNAL_TEST_DATABASE: "1"
+      TRACK_ANYWHERE_TEST_POSTGRES_ADMIN_URL: postgresql+psycopg://postgres:postgres@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_MIGRATOR_BASE_URL: postgresql+psycopg://track_anywhere_migrator:track_anywhere_migrator_test@127.0.0.1:5432/postgres
+      TRACK_ANYWHERE_TEST_POSTGRES_RUNTIME_BASE_URL: postgresql+psycopg://track_anywhere_runtime:track_anywhere_runtime_test@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Provision non-superuser V2 roles
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          create role track_anywhere_owner
+            nologin nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_migrator
+            login password 'track_anywhere_migrator_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          create role track_anywhere_runtime
+            login password 'track_anywhere_runtime_test'
+            nosuperuser nocreatedb nocreaterole noreplication nobypassrls noinherit;
+          grant track_anywhere_owner to track_anywhere_migrator
+            with admin false, inherit false, set true;
+          SQL
+      - run: uv sync --locked --extra postgres
       - name: Clean migration and role separation gate
         run: |
           set -euo pipefail
@@ -111,14 +342,20 @@ jobs:
             uv run --extra postgres alembic check
           cleanup
           trap - EXIT
-      - name: Frontend install
-        run: npm --prefix frontend ci
-      - name: Frontend tests
-        run: npm --prefix frontend test
-      - name: Frontend lint
-        run: npm --prefix frontend run lint
-      - name: Frontend build
-        run: npm --prefix frontend run build
+
+  v2-gates:
+    name: V2 PostgreSQL and client gates
+    runs-on: ubuntu-latest
+    needs:
+      - v2-unit-gate
+      - frontend-gate
+      - v2-postgres-gate
+      - v2-postgres-global-role-gate
+      - v2-concurrency-replay-gate
+      - v2-contract-cli-gate
+      - v2-migration-gate
+    steps:
+      - run: echo "All V2 gates passed"
 
   hash-vectors:
     name: Hash vectors on Python ${{ matrix.python-version }}
@@ -140,7 +377,7 @@ jobs:
           uv run pytest
           backend/tests/v2/unit/test_canonical_json.py
           backend/tests/v2/unit/test_event_contracts.py
-          backend/tests/v2/unit/test_event_hash.py -q
+          backend/tests/v2/unit/test_event_hash.py -q --durations=25
 
   frozen-history-synthetic:
     name: Synthetic frozen V1 history gate
@@ -206,7 +443,7 @@ jobs:
           cleanup
           trap - EXIT
       - name: Frozen-history synthetic import and verifier gate
-        run: uv run --extra postgres pytest backend/tests/v2/imports -q
+        run: uv run --extra postgres pytest backend/tests/v2/imports -q --durations=25
 
   docker-postgres-e2e:
     name: Docker PostgreSQL 17 V2 E2E
@@ -222,7 +459,17 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+      - uses: docker/setup-buildx-action@v3
       - run: uv sync --locked --extra postgres
+      - name: Warm E2E image cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: api-runtime
+          load: true
+          tags: track-anywhere-api:e2e
+          cache-from: type=gha,scope=api-runtime
+          cache-to: type=gha,mode=max,scope=api-runtime
       - run: bash scripts/e2e-docker-postgres.sh
 
   build-nightly:
@@ -257,6 +504,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=api-runtime
+          cache-to: type=gha,mode=max,scope=api-runtime
 
   build-stable:
     name: Build stable image
@@ -291,3 +540,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=api-runtime
+          cache-to: type=gha,mode=max,scope=api-runtime
