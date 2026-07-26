@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.tests.v2.fixtures.synchronous import (
@@ -21,6 +22,7 @@ from track_anywhere.application.entries.contracts import (
     CategoryAllocationInput,
     CategoryRef,
     CommitEntryInput,
+    CreditCardPaymentEntryInput,
     ExpenseEntryInput,
     MoneyInput,
     PreparedEntryStatus,
@@ -40,18 +42,28 @@ from track_anywhere.application.privacy.protected_content import (
     TransactionNarrativeV2,
 )
 from track_anywhere.application.privacy.service import ProtectedContentService
+from track_anywhere.application.payment_instruments import (
+    CreatePaymentInstrument,
+    PaymentInstrumentError,
+    PaymentInstrumentRef,
+    create_payment_instrument,
+)
 from track_anywhere.infrastructure.crypto import (
     DuplicateDetectionKeyProvider,
     ProtectedContentCipher,
     ProtectedContentKeyring,
 )
 from track_anywhere.infrastructure.db.models.entries import PreparedEntryIntentRecord
+from track_anywhere.infrastructure.db.models.catalog import AccountRecord
 from track_anywhere.infrastructure.db.models.event_store import (
     CommandReceiptRecord,
     LedgerEventRecord,
 )
 from track_anywhere.infrastructure.db.models.projections import (
     JournalTransactionRecord,
+)
+from track_anywhere.infrastructure.db.models.payment_instruments import (
+    PaymentInstrumentTransactionRecord,
 )
 from track_anywhere.infrastructure.db.repositories.entries import (
     EverydayEntryDuplicateRepository,
@@ -656,3 +668,315 @@ def test_expired_and_stale_intents_never_claim_or_append(pg_engine) -> None:
             )
             assert intent is not None
             assert intent.lifecycle_status == "created"
+
+
+def test_virtual_cards_resolve_generic_prepaid_and_statement_accounting(
+    pg_engine,
+) -> None:
+    scenario, category_id = _seed(pg_engine)
+    statement_account_id = uuid4()
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "update book_members set scopes = "
+                "'[\"book:write\",\"ledger:write\"]'::jsonb "
+                "where book_id = :book_id and user_id = :user_id"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "user_id": scenario.actor_subject_id,
+            },
+        )
+        connection.execute(
+            text(
+                "insert into accounts ("
+                "book_id, account_id, asset_code, account_type, account_subtype, "
+                "current_name, status) values ("
+                ":book_id, :account_id, 'USD', 'liability', 'credit_card', "
+                "'Generic statement card', 'active')"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "account_id": statement_account_id,
+            },
+        )
+        account_count = connection.execute(
+            text("select count(*) from accounts where book_id = :book_id"),
+            {"book_id": scenario.book_id},
+        ).scalar_one()
+
+    factory = sessionmaker(pg_engine, expire_on_commit=False)
+    uow_factory = lambda: SqlAlchemyUnitOfWork(factory)
+    actor = CommandActor(scenario.actor_subject_id)
+    prepaid_id, prepaid_binding_id = uuid4(), uuid4()
+    statement_id, statement_binding_id = uuid4(), uuid4()
+    invalid_instrument_id = uuid4()
+    with pytest.raises(IntegrityError):
+        with pg_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "insert into payment_instruments ("
+                    "book_id, instrument_id, instrument_kind, form_factor, "
+                    "network, provider_code, settlement_policy, current_name, "
+                    "status) values ("
+                    ":book_id, :instrument_id, 'card', 'virtual', 'other', "
+                    "'generic', 'statement', 'Invalid direct binding', 'active')"
+                ),
+                {
+                    "book_id": scenario.book_id,
+                    "instrument_id": invalid_instrument_id,
+                },
+            )
+            connection.execute(
+                text(
+                    "insert into payment_instrument_bindings ("
+                    "book_id, binding_id, instrument_id, account_id, asset_code, "
+                    "binding_role, priority, status, effective_from) values ("
+                    ":book_id, :binding_id, :instrument_id, :account_id, 'USD', "
+                    "'funding_asset', 100, 'active', :effective_from)"
+                ),
+                {
+                    "book_id": scenario.book_id,
+                    "binding_id": uuid4(),
+                    "instrument_id": invalid_instrument_id,
+                    "account_id": scenario.credit_account_id,
+                    "effective_from": OCCURRED_AT - timedelta(days=1),
+                },
+            )
+    with pytest.raises(PaymentInstrumentError, match="require an asset"):
+        create_payment_instrument(
+            CreatePaymentInstrument(
+                book_id=scenario.book_id,
+                instrument_id=uuid4(),
+                binding_id=uuid4(),
+                current_name="Invalid prepaid liability card",
+                form_factor="physical",
+                network="other",
+                provider_code="generic",
+                settlement_policy="prepaid",
+                settlement_account_id=statement_account_id,
+                asset_code="USD",
+                effective_from=OCCURRED_AT - timedelta(days=1),
+            ),
+            actor=actor,
+            uow_factory=uow_factory,
+        )
+    prepaid = create_payment_instrument(
+        CreatePaymentInstrument(
+            book_id=scenario.book_id,
+            instrument_id=prepaid_id,
+            binding_id=prepaid_binding_id,
+            current_name="SafePal USD virtual Mastercard",
+            form_factor="virtual",
+            network="mastercard",
+            provider_code="safepal",
+            settlement_policy="prepaid",
+            settlement_account_id=scenario.credit_account_id,
+            asset_code="USD",
+            last4="0024",
+            effective_from=OCCURRED_AT - timedelta(days=1),
+        ),
+        actor=actor,
+        uow_factory=uow_factory,
+    )
+    statement = create_payment_instrument(
+        CreatePaymentInstrument(
+            book_id=scenario.book_id,
+            instrument_id=statement_id,
+            binding_id=statement_binding_id,
+            current_name="Provider-neutral virtual Visa",
+            form_factor="virtual",
+            network="visa",
+            provider_code="other_provider",
+            settlement_policy="statement",
+            settlement_account_id=statement_account_id,
+            asset_code="USD",
+            last4="4242",
+            effective_from=OCCURRED_AT - timedelta(days=1),
+        ),
+        actor=actor,
+        uow_factory=uow_factory,
+    )
+    assert prepaid.binding_role.value == "funding_asset"
+    assert statement.binding_role.value == "card_liability"
+
+    prepare_runtime, commit_runtime = _runtime(pg_engine, scenario)
+
+    def instrument_expense(
+        instrument_id: UUID,
+        *,
+        value: str,
+        occurred_at: datetime,
+    ) -> ExpenseEntryInput:
+        return ExpenseEntryInput(
+            amount=MoneyInput(
+                value=value,
+                denomination="asset_unit",
+                asset_code="USD",
+                source_text=f"{value} USD",
+            ),
+            payment_instrument=PaymentInstrumentRef(
+                instrument_id=instrument_id
+            ),
+            category=CategoryRef(category_id=category_id),
+            occurred_at=occurred_at,
+        )
+
+    prepared_prepaid = prepare_entry(
+        book_id=scenario.book_id,
+        entry=instrument_expense(
+            prepaid_id,
+            value="8",
+            occurred_at=OCCURRED_AT,
+        ),
+        runtime=prepare_runtime,
+    )
+    assert prepared_prepaid.status is PreparedEntryStatus.READY
+    assert prepared_prepaid.resolved.source_account_id == scenario.credit_account_id
+    assert prepared_prepaid.resolved.payment_instrument_id == prepaid_id
+    assert (
+        prepared_prepaid.resolved.payment_instrument_binding_id
+        == prepaid_binding_id
+    )
+    assert prepared_prepaid.commit_token is not None
+    prepaid_commit = commit_entry(
+        book_id=scenario.book_id,
+        command=CommitEntryInput(
+            intent_id=prepared_prepaid.intent_id,
+            commit_token=prepared_prepaid.commit_token,
+            request_id=uuid4(),
+        ),
+        runtime=commit_runtime,
+    )
+
+    prepared_statement = prepare_entry(
+        book_id=scenario.book_id,
+        entry=instrument_expense(
+            statement_id,
+            value="9",
+            occurred_at=OCCURRED_AT + timedelta(minutes=1),
+        ),
+        runtime=prepare_runtime,
+    )
+    assert prepared_statement.status is PreparedEntryStatus.READY
+    assert prepared_statement.resolved.source_account_id == statement_account_id
+    assert prepared_statement.commit_token is not None
+    statement_commit = commit_entry(
+        book_id=scenario.book_id,
+        command=CommitEntryInput(
+            intent_id=prepared_statement.intent_id,
+            commit_token=prepared_statement.commit_token,
+            request_id=uuid4(),
+        ),
+        runtime=commit_runtime,
+    )
+    prepared_payment = prepare_entry(
+        book_id=scenario.book_id,
+        entry=CreditCardPaymentEntryInput(
+            amount=MoneyInput(
+                value="9",
+                denomination="asset_unit",
+                asset_code="USD",
+                source_text="Monthly statement payment: 9 USD",
+            ),
+            funding_account=AccountRef(
+                account_id=scenario.credit_account_id
+            ),
+            payment_instrument=PaymentInstrumentRef(
+                instrument_id=statement_id
+            ),
+            occurred_at=OCCURRED_AT + timedelta(days=1),
+        ),
+        runtime=prepare_runtime,
+    )
+    assert prepared_payment.status is PreparedEntryStatus.READY
+    assert prepared_payment.resolved.card_account_id == statement_account_id
+    assert prepared_payment.resolved.payment_instrument_id == statement_id
+    assert prepared_payment.commit_token is not None
+    payment_commit = commit_entry(
+        book_id=scenario.book_id,
+        command=CommitEntryInput(
+            intent_id=prepared_payment.intent_id,
+            commit_token=prepared_payment.commit_token,
+            request_id=uuid4(),
+        ),
+        runtime=commit_runtime,
+    )
+
+    with Session(pg_engine) as session:
+        assert session.get(
+            JournalTransactionRecord,
+            (scenario.book_id, prepaid_commit.transaction_id),
+        ).transaction_kind == "standard"
+        assert session.get(
+            JournalTransactionRecord,
+            (scenario.book_id, statement_commit.transaction_id),
+        ).transaction_kind == "credit_card_charge"
+        assert session.get(
+            JournalTransactionRecord,
+            (scenario.book_id, payment_commit.transaction_id),
+        ).transaction_kind == "credit_card_payment"
+        prepaid_link = session.get(
+            PaymentInstrumentTransactionRecord,
+            (scenario.book_id, prepaid_commit.transaction_id),
+        )
+        statement_link = session.get(
+            PaymentInstrumentTransactionRecord,
+            (scenario.book_id, statement_commit.transaction_id),
+        )
+        payment_link = session.get(
+            PaymentInstrumentTransactionRecord,
+            (scenario.book_id, payment_commit.transaction_id),
+        )
+        assert (prepaid_link.instrument_id, prepaid_link.binding_id) == (
+            prepaid_id,
+            prepaid_binding_id,
+        )
+        assert (statement_link.instrument_id, statement_link.binding_id) == (
+            statement_id,
+            statement_binding_id,
+        )
+        assert (payment_link.instrument_id, payment_link.binding_id) == (
+            statement_id,
+            statement_binding_id,
+        )
+        assert session.scalar(
+            select(func.count())
+            .select_from(AccountRecord)
+            .where(AccountRecord.book_id == scenario.book_id)
+        ) == account_count
+
+    stale = prepare_entry(
+        book_id=scenario.book_id,
+        entry=instrument_expense(
+            prepaid_id,
+            value="11",
+            occurred_at=OCCURRED_AT + timedelta(hours=1),
+        ),
+        runtime=prepare_runtime,
+    )
+    assert stale.commit_token is not None
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "update payment_instrument_bindings set status = 'closed', "
+                "effective_to = :effective_to "
+                "where book_id = :book_id and binding_id = :binding_id"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "binding_id": prepaid_binding_id,
+                "effective_to": OCCURRED_AT + timedelta(minutes=30),
+            },
+        )
+    with pytest.raises(EntryGatewayError) as changed:
+        commit_entry(
+            book_id=scenario.book_id,
+            command=CommitEntryInput(
+                intent_id=stale.intent_id,
+                commit_token=stale.commit_token,
+                request_id=uuid4(),
+            ),
+            runtime=commit_runtime,
+        )
+    assert changed.value.code is EntryErrorCode.INTENT_STALE

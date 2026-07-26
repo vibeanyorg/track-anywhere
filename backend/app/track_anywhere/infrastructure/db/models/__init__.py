@@ -38,6 +38,11 @@ from .entries import (
 from .investments import InvestmentLotAllocationRecord, InvestmentLotRecord
 from .monthly_summary import MonthlyCategorySummaryRecord
 from .outbox import OutboxMessageRecord
+from .payment_instruments import (
+    PaymentInstrumentBindingRecord,
+    PaymentInstrumentRecord,
+    PaymentInstrumentTransactionRecord,
+)
 from .privacy import ImportArchiveManifestRecord, ProtectedDescriptionSidecarRecord
 from .projections import (
     AccountBalanceRecord,
@@ -85,6 +90,9 @@ __all__ = [
     "ProjectionFailureRecord",
     "ProjectionGenerationRecord",
     "PasswordAccountRecord",
+    "PaymentInstrumentBindingRecord",
+    "PaymentInstrumentRecord",
+    "PaymentInstrumentTransactionRecord",
     "PreparedEntryIntentRecord",
     "ProtectedDescriptionSidecarRecord",
     "ReportingLineRecord",

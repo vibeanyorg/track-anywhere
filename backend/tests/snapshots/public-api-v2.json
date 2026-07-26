@@ -112,6 +112,13 @@
     "/api/v2/books/{book_id}/journal/transactions/{transaction_id}/reverse": [
       "post"
     ],
+    "/api/v2/books/{book_id}/payment-instruments": [
+      "get",
+      "post"
+    ],
+    "/api/v2/books/{book_id}/payment-instruments/{instrument_id}": [
+      "get"
+    ],
     "/api/v2/books/{book_id}/reporting-lines": [
       "get"
     ],

@@ -98,6 +98,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_list_books",
         "ledger_list_categories",
         "ledger_list_transactions",
+        "ledger_list_payment_instruments",
     }
     write_tools = {
         "ledger_record_adjustment",
@@ -116,6 +117,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_create_account",
         "ledger_create_asset",
         "ledger_create_book",
+        "ledger_create_payment_card",
     }
     assert {tool.name for tool in tools} == (
         read_tools | write_tools | shadow_prepare_tools | catalog_write_tools

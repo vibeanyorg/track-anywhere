@@ -42,6 +42,11 @@ from ..privacy.protected_content import (
     TransactionNarrativeV2,
 )
 from ..privacy.service import ProtectedContentService
+from ..payment_instruments.contracts import BindingRole
+from ..payment_instruments.service import (
+    PaymentInstrumentError,
+    resolve_payment_instrument,
+)
 from ..unit_of_work import UnitOfWork
 from .account_resolver import (
     AccountUse,
@@ -158,6 +163,11 @@ def prepare_entry(
             book_id,
             lock_membership=True,
         )
+        entry, instrument_resolution = _resolve_payment_instrument_source(
+            uow.session,
+            book_id=book_id,
+            entry=entry,
+        )
         context = load_compilation_context(
             uow.session,
             book_id=book_id,
@@ -196,6 +206,14 @@ def prepare_entry(
                 context=context,
                 plan=plan,
             )
+            if instrument_resolution is not None:
+                instrument_id, binding_id = instrument_resolution
+                resolved = resolved.model_copy(
+                    update={
+                        "payment_instrument_id": instrument_id,
+                        "payment_instrument_binding_id": binding_id,
+                    }
+                )
             fingerprint = _fingerprint(
                 entry,
                 preview=preview,
@@ -298,6 +316,56 @@ def prepare_entry(
             )
         )
         return prepared
+
+
+def _resolve_payment_instrument_source(
+    session: Session,
+    *,
+    book_id: UUID,
+    entry: EverydayEntryInput,
+) -> tuple[EverydayEntryInput, tuple[UUID, UUID] | None]:
+    reference = (
+        entry.payment_instrument
+        if isinstance(entry, (ExpenseEntryInput, CreditCardPaymentEntryInput))
+        else None
+    )
+    if reference is None:
+        return entry, None
+    try:
+        instrument, binding = resolve_payment_instrument(
+            session,
+            book_id=book_id,
+            reference=reference,
+            asset_code=entry.amount.asset_code,
+            occurred_at=entry.occurred_at,
+        )
+    except PaymentInstrumentError as error:
+        raise EntryGatewayError(
+            EntryErrorCode.INVALID_INPUT,
+            str(error),
+            field="payment_instrument",
+        ) from error
+    if isinstance(entry, CreditCardPaymentEntryInput):
+        if binding.binding_role != BindingRole.CARD_LIABILITY.value:
+            raise EntryGatewayError(
+                EntryErrorCode.INVALID_INPUT,
+                "credit-card payments require a statement payment instrument",
+                field="payment_instrument",
+            )
+        normalized = entry.model_copy(
+            update={
+                "card_account": AccountRef(account_id=binding.account_id),
+                "payment_instrument": None,
+            }
+        )
+    else:
+        normalized = entry.model_copy(
+            update={
+                "source_account": AccountRef(account_id=binding.account_id),
+                "payment_instrument": None,
+            }
+        )
+    return normalized, (instrument.instrument_id, binding.binding_id)
 
 
 def load_compilation_context(
@@ -757,6 +825,7 @@ def _fingerprint(
                 or resolved.adjusted_account_id
                 or resolved.original_transaction_id
             ),
+            str(resolved.payment_instrument_id or "-"),
             "-" if narrative is None or narrative.merchant is None else narrative.merchant,
         ),
     )

@@ -113,6 +113,16 @@ def create_mcp_runtime(
             "parameters named `amount`, `expected_balance`, or `actual_balance` are "
             "decimal strings in the asset's major unit, never integer ledger units. "
             "For example, CNY amount `660` means CNY 660.00, not CNY 6.60."
+            " For a configured physical or virtual card, prefer its payment "
+            "instrument ID during expense or statement-payment preparation; the "
+            "service resolves the bound asset or liability account. When a user "
+            "names a card, list payment instruments first and select the unique "
+            "matching card. Do not ask the user or account catalog to choose a "
+            "funding, clearing, or liability account for each purchase, and do not "
+            "re-infer prepaid versus statement behavior: the card's saved "
+            "configuration is authoritative. Configure settlement policy and its "
+            "account binding only once, when the card is first created or explicitly "
+            "reconfigured."
         ),
         token_verifier=DatabaseTokenVerifier(
             dependencies.session_factory,

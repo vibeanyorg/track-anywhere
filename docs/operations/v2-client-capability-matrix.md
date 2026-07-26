@@ -21,6 +21,7 @@ Status meanings:
 | Category creation and listing | Implemented | `POST/GET /api/v2/books/{book_id}/categories` |
 | Journal post, list, and transaction detail | Implemented | Book-scoped journal command/query routes with optional as-of positions |
 | Credit-card charge, payment, refund, and fee | Implemented | Book-scoped semantic card routes; positive amounts only and no caller-selected posting sides |
+| Payment-card configuration and lookup | Implemented | `POST/GET /api/v2/books/{book_id}/payment-instruments`; `ta card configure/list-configured`; settlement policy binds the card to a real asset or credit-card liability account |
 | Reverse and correct | Implemented | Explicit reversal/correction command routes |
 | External-reference correction | Implemented | Explicit journal reference correction route |
 | FX | Implemented | `POST /api/v2/books/{book_id}/journal/fx` |
@@ -33,7 +34,7 @@ Status meanings:
 | Everyday expense, income, transfer, card payment, refund, and reconciliation | Implemented | `ta expense/income/transfer/card-pay/refund/reconcile` use the shared prepare/commit service; Book auto-selection is safe for a single active Book and resolved account/category previews are shown before human confirmation |
 | Frozen V1 financial-history apply | Removed | Operator-only one-shot process; there is no client command, HTTP route, MCP tool, or general import fallback. See the [runbook](v1-financial-backfill.md). |
 | Local version, schema, and capability output | Implemented | Local CLI metadata; no server fallback |
-| Payment instruments and payment profiles | Removed | No V2 route or CLI command group |
+| Payment instruments and payment profiles | Implemented | Generic card instruments only: virtual/physical/single-use form factor, provider/network metadata, and effective account bindings. Sensitive card credentials and provider-specific payment profiles remain outside V2. |
 | Recurring items, reminders, and draft generation | Removed | No V2 route or CLI command group |
 | SQLite/data backup command | Removed | No CLI command group; V2 backup is not a client-side SQLite copy |
 | V1 draft capture/confirm/reject/supersede | Removed | Replaced by explicit V2 journal commands |
@@ -47,7 +48,9 @@ silently maps an unsupported command to another operation.
 
 Everyday-entry commands keep accounts and categories in separate named
 arguments. `--from`/`--to` select real payment accounts; `--category` selects a
-reporting category. Agent, JSON, and no-input modes never guess among multiple
+reporting category. A configured card may be selected with `--instrument`;
+its backend binding selects the real account without exposing clearing accounts.
+Agent, JSON, and no-input modes never guess among multiple
 Books and return a structured `book_selection_required` error with choices.
 
 ## Web frontend
@@ -58,7 +61,7 @@ Books and return a structured `book_selection_required` error with choices.
 | API-key to browser-session exchange | Implemented | `POST /api/v2/auth/session/api-key` |
 | Session status and logout | Implemented | V2 session routes with CSRF/same-origin enforcement |
 | OAuth metadata, PKCE callback, and device approval | Implemented | V2 auth/OAuth routes only |
-| ChatGPT MCP connector | Implemented | OAuth-only; resource-bound read scopes, optional `book:write` for three idempotent catalog bootstrap tools, and optional `ledger:write` for four semantic ledger tools; no API-key fallback |
+| ChatGPT MCP connector | Implemented | OAuth-only; resource-bound read scopes, optional `book:write` catalog tools including generic payment-card configuration, and optional `ledger:write` semantic ledger/prepare tools; no API-key fallback |
 | MCP everyday-entry gateway | Shadow preview | Scenario-specific prepare tools use the same compiler as REST/CLI and cannot expose internal accounts or commit financial events; commit remains intentionally unavailable until the shadow acceptance gate passes |
 | Ledger entry, query, classify, and reverse UI | Deferred | HTTP contract is implemented; product UI is not yet shipped |
 | Payment, recurring, backup, budget, and V1 draft UI | Removed | No V1 proxy or fallback exists |

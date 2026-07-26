@@ -41,9 +41,18 @@ def _expense_command() -> click.Command:
     @click.option(
         "--from",
         "source_account",
-        required=True,
         help="Paying account name or id:<UUID>; this is not a category.",
     )
+    @click.option(
+        "--instrument",
+        "payment_instrument",
+        help=(
+            "Configured payment card name or id:<UUID>. Use exactly one of "
+            "--from or --instrument."
+        ),
+    )
+    @click.option("--instrument-last4")
+    @click.option("--instrument-provider")
     @click.option("--from-last4", "source_last4")
     @click.option("--from-subtype", "source_subtype")
     @click.option(
@@ -101,7 +110,21 @@ def _card_payment_command() -> click.Command:
     @click.option("--from", "funding_account", required=True)
     @click.option("--from-last4", "funding_last4")
     @click.option("--from-subtype", "funding_subtype", default="debit_card")
-    @click.option("--card", "card_account", required=True)
+    @click.option(
+        "--card",
+        "card_account",
+        help="Credit-card liability account name or id:<UUID>.",
+    )
+    @click.option(
+        "--instrument",
+        "payment_instrument",
+        help=(
+            "Configured statement card name or id:<UUID>. Use exactly one of "
+            "--card or --instrument."
+        ),
+    )
+    @click.option("--instrument-last4")
+    @click.option("--instrument-provider")
     @click.option("--card-last4")
     @click.option("--card-subtype", default="credit_card")
     @_common_entry_options

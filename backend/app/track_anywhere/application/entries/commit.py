@@ -18,6 +18,9 @@ from ...infrastructure.db.repositories.entries import (
     hash_commit_token,
 )
 from ...infrastructure.db.repositories.privacy import ProtectedContentRepository
+from ...infrastructure.db.models.payment_instruments import (
+    PaymentInstrumentTransactionRecord,
+)
 from ...serialization.canonical_json import JSONValue, canonical_json_bytes
 from ..command_bus import execute_financial
 from ..event_batch import AppendBatchResult
@@ -34,11 +37,17 @@ from ..ledger_committer import (
 )
 from ..privacy.service import ProtectedContentConflict, ProtectedContentService
 from ..privacy.protected_content import TransactionNarrativeV2
+from ..payment_instruments.contracts import PaymentInstrumentRef
+from ..payment_instruments.service import (
+    PaymentInstrumentError,
+    resolve_payment_instrument,
+)
 from ..unit_of_work import UnitOfWork
 from .compiler import compile_entry
 from .contracts import (
     CommitEntryInput,
     CommittedEntry,
+    EverydayEntryInput,
 )
 from .errors import EntryErrorCode, EntryGatewayError
 from .prepare import (
@@ -185,6 +194,12 @@ def _build_commit_plan(
         payload.get("entry"),
         amount_sources=amount_sources,
     )
+    instrument_resolution = _revalidate_payment_instrument(
+        uow,
+        book_id=command.book_id,
+        entry=entry,
+        payload=payload,
+    )
     try:
         context = load_compilation_context(
             uow.session,
@@ -197,6 +212,14 @@ def _build_commit_plan(
         )
         plan = compile_entry(entry, context=context)
         preview, resolved = preview_and_resolved(entry, context=context, plan=plan)
+        if instrument_resolution is not None:
+            instrument_id, binding_id = instrument_resolution
+            resolved = resolved.model_copy(
+                update={
+                    "payment_instrument_id": instrument_id,
+                    "payment_instrument_binding_id": binding_id,
+                }
+            )
     except EntryGatewayError as error:
         if error.code is EntryErrorCode.INTENT_STALE:
             raise
@@ -240,6 +263,7 @@ def _build_commit_plan(
         transaction_id=transaction_id,
         intent_id=command.intent_id,
         payload=payload,
+        instrument_resolution=instrument_resolution,
         prior=plan.post_projection_finalizer,
     )
     result = CommittedEntry(
@@ -336,6 +360,7 @@ def _entry_finalizer(
     transaction_id: UUID,
     intent_id: UUID,
     payload: Mapping[str, object],
+    instrument_resolution: tuple[UUID, UUID] | None,
     prior,
 ):
     fingerprint = _payload_digest(payload, "fingerprint_hmac")
@@ -373,8 +398,66 @@ def _entry_finalizer(
                 fingerprint_hmac=fingerprint,
             )
         )
+        if instrument_resolution is not None:
+            instrument_id, binding_id = instrument_resolution
+            session.add(
+                PaymentInstrumentTransactionRecord(
+                    book_id=book_id,
+                    transaction_id=transaction_id,
+                    instrument_id=instrument_id,
+                    binding_id=binding_id,
+                )
+            )
+            session.flush()
 
     return finalize
+
+
+def _revalidate_payment_instrument(
+    uow: UnitOfWork,
+    *,
+    book_id: UUID,
+    entry: EverydayEntryInput,
+    payload: Mapping[str, object],
+) -> tuple[UUID, UUID] | None:
+    resolved = payload.get("resolved")
+    if not isinstance(resolved, Mapping):
+        raise EntryGatewayError(
+            EntryErrorCode.INTENT_STALE,
+            "prepared entry references are invalid",
+        )
+    raw_instrument = resolved.get("payment_instrument_id")
+    raw_binding = resolved.get("payment_instrument_binding_id")
+    if raw_instrument is None and raw_binding is None:
+        return None
+    try:
+        instrument_id = UUID(str(raw_instrument))
+        expected_binding_id = UUID(str(raw_binding))
+        asset_code = entry.amount.asset_code
+    except (AttributeError, TypeError, ValueError):
+        raise EntryGatewayError(
+            EntryErrorCode.INTENT_STALE,
+            "prepared payment instrument binding is invalid",
+        ) from None
+    try:
+        instrument, binding = resolve_payment_instrument(
+            uow.session,
+            book_id=book_id,
+            reference=PaymentInstrumentRef(instrument_id=instrument_id),
+            asset_code=asset_code,
+            occurred_at=entry.occurred_at,
+        )
+    except PaymentInstrumentError as error:
+        raise EntryGatewayError(
+            EntryErrorCode.INTENT_STALE,
+            "payment instrument binding changed after prepare",
+        ) from error
+    if binding.binding_id != expected_binding_id:
+        raise EntryGatewayError(
+            EntryErrorCode.INTENT_STALE,
+            "payment instrument binding changed after prepare",
+        )
+    return instrument.instrument_id, binding.binding_id
 
 
 def _recheck_duplicates(

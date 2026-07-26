@@ -97,6 +97,12 @@ uv run ta card charge --help
 uv run ta card payment --help
 uv run ta card refund --help
 uv run ta card fee --help
+uv run ta card configure --help
+uv run ta card list-configured <book_id> --json
+uv run ta expense 8 --instrument "SafePal USD24" \
+  --category "软件订阅/X订阅" --asset-code USD24 --dry-run
+uv run ta card-pay 80 --from "USD24 wallet" \
+  --instrument "Statement virtual card" --asset-code USD24 --dry-run
 ```
 
 Interactive CLI login uses OAuth authorization code + PKCE by default, stores

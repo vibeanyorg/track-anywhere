@@ -73,6 +73,16 @@ from ..application.journal.record_simple import (
     RecordTransferCommand,
     execute_record_transfer,
 )
+from ..application.payment_instruments import (
+    CardFormFactor,
+    CardNetwork,
+    CreatePaymentInstrument,
+    PaymentInstrumentView,
+    SettlementPolicy,
+    create_payment_instrument,
+    get_payment_instrument,
+    list_payment_instruments,
+)
 from ..infrastructure.db.event_store import StreamVersionConflict
 from .auth import (
     require_access_token,
@@ -192,6 +202,21 @@ class AccountCatalogWriteResponse(BaseModel):
     account: AccountResponse | None
     verification_status: Literal["verified", "pending"] = "verified"
     retry_guidance: str = "No retry is needed after verified readback."
+
+
+class PaymentInstrumentPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[PaymentInstrumentView, ...]
+
+
+class PaymentInstrumentCatalogWriteResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    request_id: UUID
+    committed: Literal[True] = True
+    replayed: bool
+    instrument: PaymentInstrumentView
 
 
 def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> None:
@@ -452,6 +477,159 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
             replayed=False,
             account=created,
         )
+
+    @mcp.tool(
+        name="ledger_create_payment_card",
+        title="Create a payment card",
+        description=(
+            "Use this when the user wants to create a generic physical or virtual "
+            "payment card for the first time and bind it to the account that drives "
+            "its purchases. This is one-time configuration, not a step repeated for "
+            "every expense. Choose immediate or prepaid for an asset account, and "
+            "statement for a credit-card liability account. Once configured, pass "
+            "the returned instrument_id for purchases and let the service apply the "
+            "saved settlement behavior. "
+            "The card network and provider are descriptive; no provider-specific "
+            "ledger behavior is used. Never submit a full card number, CVV, PIN, "
+            "or credential. Reuse request_id only for an exact retry."
+        ),
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_create_payment_card(
+        book_id: UUID,
+        request_id: UUID,
+        current_name: Annotated[str, Field(min_length=1, max_length=512)],
+        form_factor: CardFormFactor,
+        network: CardNetwork,
+        provider_code: Annotated[
+            str,
+            Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$"),
+        ],
+        settlement_policy: SettlementPolicy,
+        settlement_account_id: UUID,
+        asset_code: AssetCode,
+        effective_from: AwareDatetime,
+        last4: Annotated[
+            str | None,
+            Field(pattern=r"^[0-9]{4}$"),
+        ] = None,
+    ) -> PaymentInstrumentCatalogWriteResponse:
+        token = _require_catalog_book(dependencies, book_id, request_id)
+        instrument_id = _catalog_entity_id(
+            token.subject or "",
+            book_id,
+            "ledger_create_payment_card",
+            request_id,
+        )
+        binding_id = _catalog_entity_id(
+            token.subject or "",
+            book_id,
+            "ledger_create_payment_card_binding",
+            request_id,
+        )
+        try:
+            with session_factory() as session:
+                existing = get_payment_instrument(
+                    session,
+                    book_id=book_id,
+                    instrument_id=instrument_id,
+                )
+        except LookupError:
+            existing = None
+        if existing is not None:
+            expected = (
+                current_name.strip(),
+                form_factor,
+                network,
+                provider_code,
+                settlement_policy,
+                settlement_account_id,
+                asset_code,
+                last4,
+                effective_from,
+            )
+            actual = (
+                existing.current_name,
+                existing.form_factor,
+                existing.network,
+                existing.provider_code,
+                existing.settlement_policy,
+                existing.settlement_account_id,
+                existing.asset_code,
+                existing.last4,
+                existing.effective_from,
+            )
+            if actual != expected:
+                raise ToolError(
+                    "request_id already identifies a payment card created with "
+                    "different arguments. Reuse it only for the exact same request."
+                )
+            return PaymentInstrumentCatalogWriteResponse(
+                request_id=request_id,
+                replayed=True,
+                instrument=existing,
+            )
+        created = _call_catalog_write(
+            lambda: create_payment_instrument(
+                CreatePaymentInstrument(
+                    book_id=book_id,
+                    instrument_id=instrument_id,
+                    binding_id=binding_id,
+                    current_name=current_name,
+                    form_factor=form_factor,
+                    network=network,
+                    provider_code=provider_code,
+                    settlement_policy=settlement_policy,
+                    settlement_account_id=settlement_account_id,
+                    asset_code=asset_code,
+                    last4=last4,
+                    effective_from=effective_from,
+                ),
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+            ),
+            request_id=request_id,
+        )
+        return PaymentInstrumentCatalogWriteResponse(
+            request_id=request_id,
+            replayed=False,
+            instrument=created,
+        )
+
+    @mcp.tool(
+        name="ledger_list_payment_instruments",
+        title="List payment instruments",
+        description=(
+            "Use this when you need configured payment cards and their current "
+            "account bindings. When the user names a card, select a unique match and "
+            "use its instrument_id in expense or statement-payment preparation. The "
+            "service selects the correct funding asset or card liability "
+            "automatically; do not ask the user to choose that account again."
+        ),
+        annotations=READ_ONLY_ANNOTATIONS,
+        meta=TOOL_META,
+    )
+    def ledger_list_payment_instruments(
+        book_id: UUID,
+        status: str | None = "active",
+        asset_code: str | None = None,
+        name: str | None = None,
+    ) -> PaymentInstrumentPage:
+        token = require_access_token()
+        with session_factory() as session:
+            require_book_access(session, token, book_id)
+            try:
+                values = list_payment_instruments(
+                    session,
+                    book_id=book_id,
+                    status=status,
+                    asset_code=asset_code,
+                    name=name,
+                )
+            except (LookupError, ValueError) as error:
+                raise ToolError(str(error)) from error
+        return PaymentInstrumentPage(items=values)
 
     @mcp.tool(
         name="ledger_list_assets",

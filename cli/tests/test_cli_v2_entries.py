@@ -173,6 +173,73 @@ def test_registered_root_command_emits_json_without_prompting():
     assert "Commit this entry?" not in result.output
 
 
+def test_friendly_cli_accepts_payment_instruments_without_account_details():
+    expense_calls: list[
+        tuple[str, str, dict[str, Any] | None, str | None]
+    ] = []
+    expense = CliRunner().invoke(
+        root_cli,
+        [
+            "--token",
+            "token",
+            "expense",
+            "8",
+            "--instrument",
+            "SafePal USD24",
+            "--instrument-provider",
+            "safepal",
+            "--category",
+            "软件订阅/X订阅",
+            "--asset-code",
+            "USD24",
+            "--book-id",
+            BOOK,
+            "--dry-run",
+            "--json",
+        ],
+        obj={"requester": _recorder(expense_calls)},
+    )
+    assert expense.exit_code == 0, expense.output
+    payload = expense_calls[0][2]
+    assert payload is not None
+    assert "source_account" not in payload
+    assert payload["payment_instrument"] == {
+        "query": "SafePal USD24",
+        "provider_code": "safepal",
+    }
+
+    payment_calls: list[
+        tuple[str, str, dict[str, Any] | None, str | None]
+    ] = []
+    payment = CliRunner().invoke(
+        root_cli,
+        [
+            "--token",
+            "token",
+            "card-pay",
+            "80",
+            "--from",
+            "USD24 wallet",
+            "--instrument",
+            "Provider-neutral statement card",
+            "--asset-code",
+            "USD24",
+            "--book-id",
+            BOOK,
+            "--dry-run",
+            "--json",
+        ],
+        obj={"requester": _recorder(payment_calls)},
+    )
+    assert payment.exit_code == 0, payment.output
+    payment_payload = payment_calls[0][2]
+    assert payment_payload is not None
+    assert "card_account" not in payment_payload
+    assert payment_payload["payment_instrument"] == {
+        "query": "Provider-neutral statement card"
+    }
+
+
 def test_single_active_book_is_selected_without_requiring_uuid():
     calls: list[tuple[str, str, dict[str, Any] | None, str | None]] = []
 

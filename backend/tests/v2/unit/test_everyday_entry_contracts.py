@@ -28,6 +28,7 @@ from track_anywhere.application.entries.errors import (
     EntryErrorCode,
     EntryGatewayError,
 )
+from track_anywhere.application.payment_instruments import PaymentInstrumentRef
 
 
 FIXTURE_PATH = (
@@ -123,6 +124,36 @@ def test_account_and_category_refs_require_exactly_one_selector() -> None:
 
     assert AccountRef(query="  工商银行  ").query == "工商银行"
     assert CategoryRef(path=(" 食品 ", " 外卖 ")).path == ("食品", "外卖")
+
+
+def test_expense_accepts_exactly_one_account_or_payment_instrument() -> None:
+    common = {
+        "amount": MoneyInput(
+            value="8",
+            denomination="asset_unit",
+            asset_code="USD24",
+            source_text="$8.00",
+        ),
+        "category": CategoryRef(query="软件订阅 > X订阅"),
+        "occurred_at": datetime(2026, 7, 24, 20, 21, 13, tzinfo=UTC),
+    }
+    instrument_id = UUID("00000000-0000-4000-8000-000000000099")
+    instrument_entry = ExpenseEntryInput(
+        **common,
+        payment_instrument=PaymentInstrumentRef(instrument_id=instrument_id),
+    )
+
+    assert instrument_entry.source_account is None
+    assert instrument_entry.payment_instrument is not None
+    assert instrument_entry.payment_instrument.instrument_id == instrument_id
+    with pytest.raises(ValidationError):
+        ExpenseEntryInput(**common)
+    with pytest.raises(ValidationError):
+        ExpenseEntryInput(
+            **common,
+            source_account=AccountRef(query="SafePal USD24"),
+            payment_instrument=PaymentInstrumentRef(instrument_id=instrument_id),
+        )
 
 
 def test_semantic_inputs_forbid_accounting_and_cross_dimension_fields() -> None:

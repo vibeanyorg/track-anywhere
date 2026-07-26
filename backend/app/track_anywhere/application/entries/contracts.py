@@ -17,6 +17,7 @@ from pydantic import (
 )
 
 from ...domain.privacy import AssetCode, FrozenContract
+from ..payment_instruments.contracts import PaymentInstrumentRef
 
 
 _PLAIN_DECIMAL = re.compile(r"^[0-9]+(?:\.[0-9]+)?$", flags=re.ASCII)
@@ -267,7 +268,16 @@ class _CategorizedEntryInput(_TimedEntryInput):
 
 class ExpenseEntryInput(_CategorizedEntryInput):
     kind: Literal["expense"] = "expense"
-    source_account: AccountRef
+    source_account: AccountRef | None = None
+    payment_instrument: PaymentInstrumentRef | None = None
+
+    @model_validator(mode="after")
+    def validate_payment_source(self) -> ExpenseEntryInput:
+        if (self.source_account is None) == (self.payment_instrument is None):
+            raise ValueError(
+                "expense requires exactly one source_account or payment_instrument"
+            )
+        return self
 
 
 class IncomeEntryInput(_CategorizedEntryInput):
@@ -292,11 +302,20 @@ class CreditCardPaymentEntryInput(_TimedEntryInput):
     kind: Literal["credit_card_payment"] = "credit_card_payment"
     amount: MoneyInput
     funding_account: AccountRef
-    card_account: AccountRef
+    card_account: AccountRef | None = None
+    payment_instrument: PaymentInstrumentRef | None = None
 
     @model_validator(mode="after")
-    def validate_distinct_accounts(self) -> CreditCardPaymentEntryInput:
-        if self.funding_account == self.card_account:
+    def validate_payment_target(self) -> CreditCardPaymentEntryInput:
+        if (self.card_account is None) == (self.payment_instrument is None):
+            raise ValueError(
+                "credit-card payment requires exactly one card_account or "
+                "payment_instrument"
+            )
+        if (
+            self.card_account is not None
+            and self.funding_account == self.card_account
+        ):
             raise ValueError("credit-card payment accounts must be distinct")
         return self
 
@@ -412,6 +431,16 @@ class ResolvedEntryReferences(EntryContract):
     category_ids: tuple[UUID, ...] = Field(default=(), max_length=64)
     category_version_ids: tuple[UUID, ...] = Field(default=(), max_length=64)
     original_transaction_id: UUID | None = None
+    payment_instrument_id: UUID | None = None
+    payment_instrument_binding_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_payment_instrument_pair(self) -> ResolvedEntryReferences:
+        if (self.payment_instrument_id is None) != (
+            self.payment_instrument_binding_id is None
+        ):
+            raise ValueError("resolved payment instrument identities must be paired")
+        return self
 
     @model_validator(mode="after")
     def validate_category_pairs(self) -> ResolvedEntryReferences:
@@ -531,6 +560,7 @@ __all__ = [
     "MoneyInput",
     "PreparedEntry",
     "PreparedEntryStatus",
+    "PaymentInstrumentRef",
     "PreviewAccount",
     "PreviewMoney",
     "RefundEntryInput",

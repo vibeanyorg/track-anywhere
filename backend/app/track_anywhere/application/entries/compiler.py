@@ -142,6 +142,12 @@ def _compile_expense(
     asset: EntryAsset,
 ) -> LedgerWritePlan:
     amount = normalize_amount(entry.amount, asset=asset)
+    if entry.source_account is None:
+        raise EntryGatewayError(
+            EntryErrorCode.INVALID_INPUT,
+            "expense payment instrument was not resolved",
+            field="payment_instrument",
+        )
     source = _account(
         entry.source_account,
         context=context,
@@ -297,6 +303,12 @@ def _compile_card_payment(
     asset: EntryAsset,
 ) -> LedgerWritePlan:
     amount = normalize_amount(entry.amount, asset=asset)
+    if entry.card_account is None:
+        raise EntryGatewayError(
+            EntryErrorCode.INVALID_INPUT,
+            "credit-card payment instrument was not resolved",
+            field="payment_instrument",
+        )
     funding = _account(
         entry.funding_account,
         context=context,

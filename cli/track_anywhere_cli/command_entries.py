@@ -107,14 +107,12 @@ def new_request_id() -> str:
 
 
 def _build_expense(args: Namespace) -> dict[str, Any]:
+    source_account, payment_instrument = _payment_source(args)
     return {
         "kind": "expense",
         "amount": _money(args),
-        "source_account": _account_ref(
-            args.source_account,
-            last4=args.source_last4,
-            subtype=args.source_subtype,
-        ),
+        "source_account": source_account,
+        "payment_instrument": payment_instrument,
         "category": _category_ref(args.category),
         "occurred_at": _occurred_at(args.occurred_at),
         "narrative": _narrative(args),
@@ -156,6 +154,7 @@ def _build_transfer(args: Namespace) -> dict[str, Any]:
 
 
 def _build_credit_card_payment(args: Namespace) -> dict[str, Any]:
+    card_account, payment_instrument = _card_payment_target(args)
     return {
         "kind": "credit_card_payment",
         "amount": _money(args),
@@ -164,14 +163,57 @@ def _build_credit_card_payment(args: Namespace) -> dict[str, Any]:
             last4=args.funding_last4,
             subtype=args.funding_subtype,
         ),
-        "card_account": _account_ref(
-            args.card_account,
-            last4=args.card_last4,
-            subtype=args.card_subtype,
-        ),
+        "card_account": card_account,
+        "payment_instrument": payment_instrument,
         "occurred_at": _occurred_at(args.occurred_at),
         "narrative": _narrative(args),
     }
+
+
+def _payment_source(
+    args: Namespace,
+) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+    account = getattr(args, "source_account", None)
+    instrument = getattr(args, "payment_instrument", None)
+    if (account is None) == (instrument is None):
+        raise ValueError("use exactly one of --from or --instrument")
+    if account is not None:
+        return (
+            _account_ref(
+                account,
+                last4=args.source_last4,
+                subtype=args.source_subtype,
+            ),
+            None,
+        )
+    return None, _payment_instrument_ref(
+        instrument,
+        last4=args.instrument_last4,
+        provider_code=args.instrument_provider,
+    )
+
+
+def _card_payment_target(
+    args: Namespace,
+) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+    account = getattr(args, "card_account", None)
+    instrument = getattr(args, "payment_instrument", None)
+    if (account is None) == (instrument is None):
+        raise ValueError("use exactly one of --card or --instrument")
+    if account is not None:
+        return (
+            _account_ref(
+                account,
+                last4=args.card_last4,
+                subtype=args.card_subtype,
+            ),
+            None,
+        )
+    return None, _payment_instrument_ref(
+        instrument,
+        last4=args.instrument_last4,
+        provider_code=args.instrument_provider,
+    )
 
 
 def _build_refund(args: Namespace) -> dict[str, Any]:
@@ -229,6 +271,32 @@ def _account_ref(
             raise ValueError("account ID references cannot include query hints")
         return {"account_id": account_id}
     return compact_payload({"query": value, "last4": last4, "subtype": subtype})
+
+
+def _payment_instrument_ref(
+    raw: str,
+    *,
+    last4: str | None,
+    provider_code: str | None,
+) -> dict[str, str]:
+    value = raw.strip()
+    if not value:
+        raise ValueError("payment instrument reference must be nonblank")
+    if value.startswith("id:"):
+        instrument_id = value.removeprefix("id:")
+        _require_uuid(instrument_id, label="payment instrument id")
+        if last4 is not None or provider_code is not None:
+            raise ValueError(
+                "payment instrument ID references cannot include query hints"
+            )
+        return {"instrument_id": instrument_id}
+    return compact_payload(
+        {
+            "query": value,
+            "last4": last4,
+            "provider_code": provider_code,
+        }
+    )
 
 
 def _category_ref(raw: str) -> dict[str, Any]:

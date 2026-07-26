@@ -1788,8 +1788,10 @@ def test_dcr_book_write_grant_bootstraps_a_book_through_mcp(pg_engine) -> None:
     assert initialize.status_code == 200
     assert tools.status_code == 200
     tool_names = {tool["name"] for tool in tools.json()["result"]["tools"]}
-    assert len(tool_names) == 14
+    assert len(tool_names) == 16
     assert "ledger_create_book" in tool_names
+    assert "ledger_create_payment_card" in tool_names
+    assert "ledger_list_payment_instruments" in tool_names
     assert not any(name.startswith("ledger_prepare_") for name in tool_names)
     assert {
         "ledger_record_expense",

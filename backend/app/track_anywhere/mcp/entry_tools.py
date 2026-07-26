@@ -31,6 +31,7 @@ from ..application.entries.contracts import (
     ResolvedEntryReferences,
     TransferEntryInput,
 )
+from ..application.payment_instruments.contracts import PaymentInstrumentRef
 from ..application.entries.errors import EntryGatewayError
 from ..application.entries.service import RequestScopedEverydayEntryService
 from ..application.idempotency import CommandActor
@@ -149,8 +150,13 @@ def register_entry_prepare_tools(
         title="Preview an expense",
         description=(
             "Use this when the user wants to record a purchase or other expense. "
-            f"{_AMOUNT_DESCRIPTION} Supply a funding account and either one "
-            "category or exact category allocations. "
+            f"{_AMOUNT_DESCRIPTION} Supply exactly one ordinary source account or "
+            "payment instrument. A payment instrument resolves its configured "
+            "asset/prepaid funding or statement liability account automatically. "
+            "For a named physical or virtual card, list configured payment "
+            "instruments and pass the unique matching instrument; do not select or "
+            "create an account for that purchase. "
+            "Supply either one category or exact category allocations. "
             f"{_SHADOW_DESCRIPTION}"
         ),
         annotations=ENTRY_PREPARE_ANNOTATIONS,
@@ -159,8 +165,9 @@ def register_entry_prepare_tools(
     def ledger_prepare_expense(
         book_id: UUID,
         amount: MoneyInput,
-        source_account: AccountRef,
         occurred_at: AwareDatetime,
+        source_account: AccountRef | None = None,
+        payment_instrument: PaymentInstrumentRef | None = None,
         category: CategoryRef | None = None,
         category_allocations: Annotated[
             tuple[CategoryAllocationInput, ...],
@@ -173,6 +180,7 @@ def register_entry_prepare_tools(
             entry=ExpenseEntryInput(
                 amount=amount,
                 source_account=source_account,
+                payment_instrument=payment_instrument,
                 occurred_at=occurred_at,
                 category=category,
                 category_allocations=category_allocations,
@@ -254,7 +262,9 @@ def register_entry_prepare_tools(
         title="Preview a credit-card payment",
         description=(
             "Use this when the user pays a credit-card liability from an asset "
-            f"account. {_AMOUNT_DESCRIPTION} A card payment is a balance-sheet "
+            f"account. {_AMOUNT_DESCRIPTION} Supply the exact liability account "
+            "or a statement payment instrument; the latter resolves its bound "
+            "liability automatically. A card payment is a balance-sheet "
             "transfer and never takes an expense category. "
             f"{_SHADOW_DESCRIPTION}"
         ),
@@ -265,8 +275,9 @@ def register_entry_prepare_tools(
         book_id: UUID,
         amount: MoneyInput,
         funding_account: AccountRef,
-        card_account: AccountRef,
         occurred_at: AwareDatetime,
+        card_account: AccountRef | None = None,
+        payment_instrument: PaymentInstrumentRef | None = None,
         narrative: EntryNarrativeInput | None = None,
     ) -> ShadowPreparedEntry:
         return _prepare(
@@ -275,6 +286,7 @@ def register_entry_prepare_tools(
                 amount=amount,
                 funding_account=funding_account,
                 card_account=card_account,
+                payment_instrument=payment_instrument,
                 occurred_at=occurred_at,
                 narrative=narrative,
             ),

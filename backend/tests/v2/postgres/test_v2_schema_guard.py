@@ -56,6 +56,9 @@ V2_MODEL_TABLES = {
     "projection_failures",
     "projection_generations",
     "password_accounts",
+    "payment_instrument_bindings",
+    "payment_instrument_transactions",
+    "payment_instruments",
     "prepared_entry_intents",
     "protected_description_sidecars",
     "reporting_lines",
@@ -885,6 +888,39 @@ def test_environment_url_wins_over_explicit_config(
     assert result.returncode == 0, result.stderr
     assert _relation_names(configured.migrator_url) == []
     assert _relation_names(environment.migrator_url) == V2_RELATION_NAMES
+
+
+def test_payment_instrument_revision_downgrades_and_reapplies(
+    migrated_postgres_database,
+) -> None:
+    downgraded = _run_alembic(
+        "downgrade",
+        "v2_0014_everyday_entry_gateway",
+        database_url=migrated_postgres_database.migrator_url,
+        runtime_role=migrated_postgres_database.runtime_role,
+    )
+    assert downgraded.returncode == 0, downgraded.stderr
+    with create_engine(migrated_postgres_database.runtime_url).connect() as connection:
+        for table_name in (
+            "payment_instruments",
+            "payment_instrument_bindings",
+            "payment_instrument_transactions",
+        ):
+            assert connection.execute(
+                text("select to_regclass(:name)"),
+                {"name": f"public.{table_name}"},
+            ).scalar_one() is None
+
+    upgraded = _run_alembic(
+        "upgrade",
+        "head",
+        database_url=migrated_postgres_database.migrator_url,
+        runtime_role=migrated_postgres_database.runtime_role,
+    )
+    assert upgraded.returncode == 0, upgraded.stderr
+    assert _relation_names(migrated_postgres_database.migrator_url) == (
+        V2_RELATION_NAMES
+    )
 
 
 def test_explicit_config_url_is_used_only_when_environment_key_is_absent(

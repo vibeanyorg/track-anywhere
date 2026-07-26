@@ -16,6 +16,7 @@ from .credit_cards import create_credit_card_router
 from .entries import create_entry_router
 from .investments import create_investment_router
 from .journal import create_journal_router
+from .payment_instruments import create_payment_instrument_router
 from .queries import create_query_router
 from .reporting import create_reporting_router
 from .system import create_system_router
@@ -108,6 +109,12 @@ def create_v2_router(
                 ledger_committer=runtime.ledger_committer,
                 protected_content_cipher=protected_content_cipher,
                 duplicate_key_provider=duplicate_key_provider,
+            )
+        )
+        versioned_router.include_router(
+            create_payment_instrument_router(
+                get_session=get_session,
+                uow_factory=runtime.uow_factory,
             )
         )
     router.include_router(versioned_router)
