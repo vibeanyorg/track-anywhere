@@ -28,6 +28,8 @@ from track_anywhere.infrastructure.db.models.catalog import (
     AccountRecord,
     AssetRecord,
     BookRecord,
+    CategoryRecord,
+    CategoryVersionRecord,
 )
 from track_anywhere.infrastructure.db.models.event_store import BookEventHeadRecord
 from track_anywhere.mcp.server import create_mcp_runtime
@@ -146,6 +148,68 @@ def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
                 "current_name": "Everyday checking",
             },
         )
+        root_category_request_id = str(uuid4())
+        created_root_category = _call_tool(
+            client,
+            write_token,
+            "ledger_create_category",
+            {
+                "book_id": book_id,
+                "request_id": root_category_request_id,
+                "current_name": "Food",
+            },
+        )
+        root_category_id = created_root_category["structuredContent"]["category"][
+            "category_id"
+        ]
+        child_category_arguments = {
+            "book_id": book_id,
+            "request_id": str(uuid4()),
+            "current_name": "Dining out",
+            "parent_category_id": root_category_id,
+        }
+        created_child_category = _call_tool(
+            client,
+            write_token,
+            "ledger_create_category",
+            child_category_arguments,
+        )
+        replayed_child_category = _call_tool(
+            client,
+            write_token,
+            "ledger_create_category",
+            child_category_arguments,
+        )
+        categories = _call_tool(
+            client,
+            write_token,
+            "ledger_list_categories",
+            {"book_id": book_id},
+        )
+        closed_account = _call_tool(
+            client,
+            write_token,
+            "ledger_close_account",
+            {
+                "book_id": book_id,
+                "request_id": str(uuid4()),
+                "account_id": created_account["structuredContent"]["account"][
+                    "account_id"
+                ],
+            },
+        )
+        reopened_account = _call_tool(
+            client,
+            write_token,
+            "ledger_reopen_account",
+            {
+                "book_id": book_id,
+                "request_id": str(uuid4()),
+                "account_id": created_account["structuredContent"]["account"][
+                    "account_id"
+                ],
+            },
+        )
         rejected_expense_account = _call_tool(
             client,
             write_token,
@@ -186,6 +250,26 @@ def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
     assert conflicting_asset["isError"] is True
     assert "idempotency key" in conflicting_asset["content"][0]["text"]
     assert created_account["isError"] is False
+    assert created_root_category["isError"] is False
+    assert created_root_category["structuredContent"]["category"]["path"] == ["Food"]
+    assert created_child_category["isError"] is False
+    assert created_child_category["structuredContent"]["category"]["path"] == [
+        "Food",
+        "Dining out",
+    ]
+    assert created_child_category["structuredContent"]["category"]["usage_kind"] == (
+        "both"
+    )
+    assert replayed_child_category["isError"] is False
+    assert replayed_child_category["structuredContent"]["replayed"] is True
+    assert [item["path"] for item in categories["structuredContent"]["items"]] == [
+        ["Food"],
+        ["Food", "Dining out"],
+    ]
+    assert closed_account["isError"] is False
+    assert closed_account["structuredContent"]["account"]["status"] == "closed"
+    assert reopened_account["isError"] is False
+    assert reopened_account["structuredContent"]["account"]["status"] == "active"
     assert rejected_expense_account["isError"] is True
     assert "asset" in rejected_expense_account["content"][0]["text"]
     assert "liability" in rejected_expense_account["content"][0]["text"]
@@ -209,6 +293,25 @@ def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
             AccountRecord,
             (parsed_book_id, UUID(account_body["account_id"])),
         )
+        child_category_id = UUID(
+            created_child_category["structuredContent"]["category"]["category_id"]
+        )
+        child_category = session.get(
+            CategoryRecord,
+            (parsed_book_id, child_category_id),
+        )
+        child_version = session.get(
+            CategoryVersionRecord,
+            (
+                parsed_book_id,
+                child_category_id,
+                UUID(
+                    created_child_category["structuredContent"]["category"][
+                        "current_version_id"
+                    ]
+                ),
+            ),
+        )
         head = session.get(BookEventHeadRecord, parsed_book_id)
     assert book is not None
     assert membership is not None
@@ -222,6 +325,11 @@ def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
     assert asset is not None
     assert conflicting_asset_record is None
     assert account is not None
+    assert account.status == "active"
+    assert child_category is not None
+    assert child_category.parent_category_id == UUID(root_category_id)
+    assert child_version is not None
+    assert child_version.usage_kind == "both"
     assert head is not None and head.last_position == 0
 
 
@@ -479,6 +587,47 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
                 "effective_at": "2026-07-16T09:34:00+00:00",
             },
         )
+        entries_before_reversal = _call_tool(
+            client,
+            write_token,
+            "ledger_list_entries",
+            {"book_id": str(scenario.book_id)},
+        )
+        transfer_entry = _call_tool(
+            client,
+            write_token,
+            "ledger_get_entry",
+            {
+                "book_id": str(scenario.book_id),
+                "transaction_id": transfer["structuredContent"]["transaction_id"],
+            },
+        )
+        reverse_request_id = str(uuid4())
+        reverse_arguments = {
+            "book_id": str(scenario.book_id),
+            "request_id": reverse_request_id,
+            "transaction_id": transfer["structuredContent"]["transaction_id"],
+            "reason_code": "user_correction",
+            "effective_at": "2026-07-16T09:36:00+00:00",
+        }
+        reversed_transfer = _call_tool(
+            client,
+            write_token,
+            "ledger_reverse_transaction",
+            reverse_arguments,
+        )
+        replayed_reversal = _call_tool(
+            client,
+            write_token,
+            "ledger_reverse_transaction",
+            reverse_arguments,
+        )
+        entries_after_reversal = _call_tool(
+            client,
+            write_token,
+            "ledger_list_entries",
+            {"book_id": str(scenario.book_id)},
+        )
 
     assert transfer["isError"] is False
     transfer_body = transfer["structuredContent"]
@@ -515,7 +664,36 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
     assert 'scope="ledger:read ledger:write"' in challenge
     assert wrong_account_type["isError"] is True
     assert "asset account" in wrong_account_type["content"][0]["text"]
-    assert _book_head(pg_engine, scenario) == 2
+    assert entries_before_reversal["isError"] is False
+    assert {
+        item["kind"] for item in entries_before_reversal["structuredContent"]["items"]
+    } == {"transfer", "credit_card_payment"}
+    assert transfer_entry["isError"] is False
+    assert transfer_entry["structuredContent"]["kind"] == "transfer"
+    assert transfer_entry["structuredContent"]["amount"]["value"] == "660.00"
+    assert transfer_entry["structuredContent"]["source_account"]["account_id"] == str(
+        scenario.debit_account_id
+    )
+    assert reversed_transfer["isError"] is False
+    assert (
+        reversed_transfer["structuredContent"]["transaction"]["reverses_transaction_id"]
+        == transfer_body["transaction_id"]
+    )
+    assert replayed_reversal["isError"] is False
+    assert replayed_reversal["structuredContent"]["replayed"] is True
+    assert {
+        item["kind"] for item in entries_after_reversal["structuredContent"]["items"]
+    } == {"transfer", "credit_card_payment", "reversal"}
+    source_after_reversal = next(
+        item
+        for item in entries_after_reversal["structuredContent"]["items"]
+        if item["transaction_id"] == transfer_body["transaction_id"]
+    )
+    assert (
+        source_after_reversal["reversed_by_transaction_id"]
+        == (reversed_transfer["structuredContent"]["transaction_id"])
+    )
+    assert _book_head(pg_engine, scenario) == 3
 
     with pg_engine.begin() as connection:
         connection.execute(
@@ -546,7 +724,7 @@ def test_mcp_semantic_writes_are_scoped_idempotent_and_directionally_safe(
     assert membership_denied["isError"] is True
     assert "not writable" in membership_denied["content"][0]["text"]
     assert "outcome is unknown" not in membership_denied["content"][0]["text"]
-    assert _book_head(pg_engine, scenario) == 2
+    assert _book_head(pg_engine, scenario) == 3
 
 
 def test_mcp_expense_prepare_commit_is_explicit_idempotent_and_major_unit_safe(
@@ -556,6 +734,8 @@ def test_mcp_expense_prepare_commit_is_explicit_idempotent_and_major_unit_safe(
     seed_journal_scenario(pg_engine, scenario)
     category_id = uuid4()
     category_version_id = uuid4()
+    replacement_category_id = uuid4()
+    replacement_category_version_id = uuid4()
     with pg_engine.begin() as connection:
         connection.execute(
             text(
@@ -610,6 +790,43 @@ def test_mcp_expense_prepare_commit_is_explicit_idempotent_and_major_unit_safe(
                 "book_id": scenario.book_id,
                 "category_id": category_id,
                 "version_id": category_version_id,
+            },
+        )
+        connection.execute(
+            text(
+                "insert into categories ("
+                "book_id, category_id, parent_category_id, current_name, "
+                "current_version_id, status) values ("
+                ":book_id, :category_id, null, 'Travel', null, 'active')"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "category_id": replacement_category_id,
+            },
+        )
+        connection.execute(
+            text(
+                "insert into category_versions ("
+                "book_id, category_id, category_version_id, parent_category_id, "
+                "name, status, usage_kind, change_reason_code) values ("
+                ":book_id, :category_id, :version_id, null, 'Travel', "
+                "'active', 'expense', 'created')"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "category_id": replacement_category_id,
+                "version_id": replacement_category_version_id,
+            },
+        )
+        connection.execute(
+            text(
+                "update categories set current_version_id=:version_id "
+                "where book_id=:book_id and category_id=:category_id"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "category_id": replacement_category_id,
+                "version_id": replacement_category_version_id,
             },
         )
     write_token = "ta_mcp_shadow_write"
@@ -696,6 +913,61 @@ def test_mcp_expense_prepare_commit_is_explicit_idempotent_and_major_unit_safe(
             "ledger_commit_entry",
             commit_arguments,
         )
+        category_arguments = {
+            "book_id": str(scenario.book_id),
+            "request_id": str(uuid4()),
+            "transaction_id": committed["structuredContent"]["transaction_id"],
+            "category_id": str(replacement_category_id),
+            "effective_at": "2026-07-24T12:31:00Z",
+        }
+        recategorized = _call_tool(
+            client,
+            write_token,
+            "ledger_set_transaction_category",
+            category_arguments,
+        )
+        recategorized_replay = _call_tool(
+            client,
+            write_token,
+            "ledger_set_transaction_category",
+            category_arguments,
+        )
+        entry_after_recategorize = _call_tool(
+            client,
+            write_token,
+            "ledger_get_entry",
+            {
+                "book_id": str(scenario.book_id),
+                "transaction_id": committed["structuredContent"]["transaction_id"],
+            },
+        )
+        clear_arguments = {
+            "book_id": str(scenario.book_id),
+            "request_id": str(uuid4()),
+            "transaction_id": committed["structuredContent"]["transaction_id"],
+            "effective_at": "2026-07-24T12:32:00Z",
+        }
+        cleared = _call_tool(
+            client,
+            write_token,
+            "ledger_clear_transaction_category",
+            clear_arguments,
+        )
+        cleared_replay = _call_tool(
+            client,
+            write_token,
+            "ledger_clear_transaction_category",
+            clear_arguments,
+        )
+        entry_after_clear = _call_tool(
+            client,
+            write_token,
+            "ledger_get_entry",
+            {
+                "book_id": str(scenario.book_id),
+                "transaction_id": committed["structuredContent"]["transaction_id"],
+            },
+        )
 
     assert unavailable["isError"] is True
     assert "entry_unsupported" in unavailable["content"][0]["text"]
@@ -729,7 +1001,20 @@ def test_mcp_expense_prepare_commit_is_explicit_idempotent_and_major_unit_safe(
     assert replayed_body["transaction_id"] == committed_body["transaction_id"]
     assert replayed_body["replayed"] is True
     assert head_after_commit == 2
-    assert _book_head(pg_engine, scenario) == head_after_commit
+    assert recategorized["isError"] is False, recategorized
+    assert recategorized["structuredContent"]["category"]["path"] == ["Travel"]
+    assert recategorized["structuredContent"]["classification_revision"] == 2
+    assert recategorized_replay["isError"] is False
+    assert recategorized_replay["structuredContent"]["replayed"] is True
+    assert entry_after_recategorize["structuredContent"]["category_allocations"][0][
+        "path"
+    ] == ["Travel"]
+    assert cleared["isError"] is False, cleared
+    assert cleared["structuredContent"]["classification_revision"] == 3
+    assert cleared_replay["isError"] is False
+    assert cleared_replay["structuredContent"]["replayed"] is True
+    assert entry_after_clear["structuredContent"]["category_allocations"] == []
+    assert _book_head(pg_engine, scenario) == 4
 
 
 def test_mcp_adjustment_reconciles_decimal_balances_with_stale_write_protection(

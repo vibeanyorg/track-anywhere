@@ -129,17 +129,18 @@ The public ChatGPT connector URL is:
 https://ledger.example.com/mcp
 ```
 
-It is a stateless Streamable HTTP MCP server with eight read tools, three
-opt-in catalog tools for creating Books, assets, and accounts, and four opt-in
-semantic ledger tools for expenses, transfers, credit-card charges, and card
-payments. ChatGPT discovers OAuth through `/.well-known/*`, performs
+It is a stateless Streamable HTTP MCP server with user-facing tools for Books,
+assets, accounts, categories, payment cards, everyday entry history, balances,
+prepare/commit bookkeeping, account lifecycle, recategorization, and append-only
+transaction reversal. Internal clearing accounts and raw debit/credit choices
+are never Agent inputs. ChatGPT discovers OAuth through `/.well-known/*`, performs
 authorization code + PKCE, and receives a token bound specifically to the MCP
 resource. `book:read` and `ledger:read` are selected by default. `book:write`
-enables the catalog bootstrap tools, while `ledger:write` enables financial
-writes; both write scopes require explicit consent. API keys are not accepted
-by `/mcp` and are never disclosed to ChatGPT. The REST/CLI resource is
-separately bound to `/api/v2`, so an MCP token cannot be replayed against the
-API and vice versa.
+enables catalog and account-lifecycle tools, while `ledger:write` enables
+prepare/commit, recategorization, adjustment, transfer, payment, and reversal;
+both write scopes require explicit consent. API keys are not accepted by `/mcp`
+and are never disclosed to ChatGPT. The REST/CLI resource is separately bound
+to `/api/v2`, so an MCP token cannot be replayed against the API and vice versa.
 
 See the [authentication and MCP runbook](docs/operations/oauth-mcp-auth.md) for
 the endpoint matrix, local setup, production settings, and revocation behavior.

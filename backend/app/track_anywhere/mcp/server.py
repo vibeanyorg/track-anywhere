@@ -146,8 +146,10 @@ def create_mcp_runtime(
         name="Track Anywhere Ledger",
         instructions=(
             "Read verified Track Anywhere V2 ledger data. After explicit user "
-            "confirmation, bootstrap Books, assets, and standard accounts or record "
-            "supported ledger entries. Read responses expose exact integer `units`; "
+            "confirmation, bootstrap Books, assets, standard accounts, categories, "
+            "and payment cards or record supported ledger entries. Categories are "
+            "reporting dimensions, never accounts; list categories before creating "
+            "or selecting one. Read responses expose exact integer `units`; "
             "use asset scale metadata before presenting them as decimals. Write "
             "parameters named `amount`, `expected_balance`, or `actual_balance` are "
             "decimal strings in the asset's major unit, never integer ledger units. "

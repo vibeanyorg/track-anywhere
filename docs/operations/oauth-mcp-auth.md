@@ -86,19 +86,21 @@ resource metadata, then dynamically registers a public OAuth client whose scope
 ceiling includes `book:read book:write ledger:read ledger:write`. The consent
 screen selects only the read scopes present in the current authorization
 request by default; requested write scopes remain off until the owner explicitly
-selects them, and a tool challenge can request missing scopes later. The eight
-query tools remain read-only; listing Books requires `book:read ledger:read`,
-while Book-internal ledger queries require `ledger:read`. Three catalog tools
-create Books, assets, and standard user accounts after explicit confirmation;
-each requires
-`book:read book:write ledger:read`. Four semantic ledger tools record expenses,
-transfers, credit-card charges, and card payments after explicit confirmation;
-each requires `ledger:read ledger:write`. Every write requires a stable
-`request_id` for exact retries, and every tool mirrors its OAuth security scheme
-in both the top-level descriptor and `_meta`. If a committed catalog write
-cannot be read back immediately, the tool returns `verification_status=pending`
-without exposing database details and instructs the client to retry only the
-same `request_id` and arguments.
+selects them, and a tool challenge can request missing scopes later. Read tools
+cover Books, assets, accounts, balances, categories, payment instruments, raw
+journal audit data, and user-facing everyday entries. Listing Books requires
+`book:read ledger:read`; Book-internal queries require `ledger:read`. Catalog
+tools create Books, assets, standard user accounts, categories, and generic
+payment cards, and can close or reopen ordinary zero-balance accounts after
+explicit confirmation; each requires `book:read book:write ledger:read`.
+Financial tools prepare and commit everyday entries, record supported transfers,
+payments, and adjustments, change or clear reporting categories, and append an
+auditable reversal after explicit confirmation; each requires
+`ledger:read ledger:write`. Every write requires a stable `request_id` for exact
+retries, and every tool mirrors its OAuth security scheme in both the top-level
+descriptor and `_meta`. If a committed write cannot be read back immediately,
+the tool returns `verification_status=pending` without exposing database details
+and instructs the client to retry only the same `request_id` and arguments.
 
 When a deployment adds a newly requested scope, disconnect and recreate the
 ChatGPT app instead of only reconnecting it. Dynamic client registration fixes

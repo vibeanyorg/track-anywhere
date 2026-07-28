@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from decimal import Decimal
 import logging
 from typing import Annotated, Literal, TypeVar
 from uuid import UUID, NAMESPACE_URL, uuid5
@@ -10,9 +11,12 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.auth.provider import AccessToken
 from mcp.types import ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from ..api.dependencies import RuntimeDependencies
+from ..api.v2.entry_schemas import EverydayEntryReceiptResponse
 from ..api.v2.schemas import AssetCode, PlainDecimal
 from ..api.v2.query_routes.catalog import (
     AccountResponse,
@@ -21,12 +25,11 @@ from ..api.v2.query_routes.catalog import (
     BalanceItemResponse,
     BookListResponse,
     BookResponse,
-    CategoryListResponse,
+    CategoryResponse,
     serialize_account,
     serialize_asset,
     serialize_balance_item,
     serialize_book,
-    serialize_category,
 )
 from ..api.v2.query_routes.journal import (
     JournalItemResponse,
@@ -40,12 +43,23 @@ from ..queries.catalogs import (
     list_accessible_books,
     list_account_page,
     list_assets,
-    list_categories,
+)
+from ..queries.everyday_entries import (
+    EverydayEntryView,
+    get_everyday_entry,
+    list_everyday_entries,
 )
 from ..queries.journal import get_journal_transaction, list_journal
+from ..queries.reporting import ReportingLine, list_current_reporting_lines
 from ..application.credit_cards.record import (
     PaymentCreditCardCommand,
     execute_payment_credit_card,
+)
+from ..application.catalogs.close_account import (
+    AccountBalanceNonzero,
+    AccountBalanceProjectionMismatch,
+    CloseAccount,
+    close_account as execute_close_account,
 )
 from ..application.catalogs.create_account import (
     CreateAccount,
@@ -59,10 +73,31 @@ from ..application.catalogs.create_book import (
     CreateBook,
     create_book as execute_create_book,
 )
+from ..application.catalogs.create_category import (
+    CreateCategory,
+    create_category as execute_create_category,
+)
+from ..application.catalogs.reopen_account import (
+    ReopenAccount,
+    reopen_account as execute_reopen_account,
+)
 from ..application.idempotency import (
     CommandActor,
     CommandOutcome,
     IdempotencyConflict,
+)
+from ..application.journal.reverse_transaction import (
+    ReverseTransactionCommand,
+    execute_reverse_transaction,
+)
+from ..application.journal.assign_reporting_lines import (
+    AssignReportingLinesCommand,
+    ReportingLineInput,
+    execute_assign_reporting_lines,
+)
+from ..application.journal.clear_reporting_lines import (
+    ClearReportingLinesCommand,
+    execute_clear_reporting_lines,
 )
 from ..application.journal.post_transaction import CreditCardSemanticWriteRequired
 from ..application.journal.record_adjustment import (
@@ -83,7 +118,17 @@ from ..application.payment_instruments import (
     get_payment_instrument,
     list_payment_instruments,
 )
+from ..domain.journal.events import ReversalReasonCode
+from ..domain.reporting.events import ReportingDimension, ReportingLineKind
+from ..infrastructure.db.models.catalog import (
+    CategoryRecord,
+    CategoryVersionRecord,
+)
 from ..infrastructure.db.event_store import StreamVersionConflict
+from ..infrastructure.db.models.event_store import (
+    BookEventHeadRecord,
+    EventStreamHeadRecord,
+)
 from .auth import (
     require_access_token,
     require_book_access,
@@ -120,6 +165,12 @@ CATALOG_WRITE_TOOL_META = {"securitySchemes": CATALOG_WRITE_SECURITY_SCHEMES}
 WRITE_ANNOTATIONS = ToolAnnotations(
     readOnlyHint=False,
     destructiveHint=False,
+    idempotentHint=True,
+    openWorldHint=False,
+)
+DESTRUCTIVE_WRITE_ANNOTATIONS = ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=True,
     idempotentHint=True,
     openWorldHint=False,
 )
@@ -202,6 +253,51 @@ class AccountCatalogWriteResponse(BaseModel):
     account: AccountResponse | None
     verification_status: Literal["verified", "pending"] = "verified"
     retry_guidance: str = "No retry is needed after verified readback."
+
+
+class CategoryDetailResponse(CategoryResponse):
+    path: tuple[str, ...]
+    usage_kind: Literal["expense", "income", "both"]
+
+
+class CategoryPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[CategoryDetailResponse, ...]
+
+
+class CategoryCatalogWriteResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    request_id: UUID
+    committed: Literal[True] = True
+    replayed: bool
+    category: CategoryDetailResponse | None
+    verification_status: Literal["verified", "pending"] = "verified"
+    retry_guidance: str = "No retry is needed after verified readback."
+
+
+class EverydayEntryPageResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[EverydayEntryReceiptResponse, ...]
+    next_cursor: str | None
+    as_of_book_position: int
+
+
+class TransactionCategoryWriteResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    request_id: UUID
+    transaction_id: UUID
+    committed: Literal[True] = True
+    replayed: bool
+    category: CategoryDetailResponse | None
+    classification_revision: int
+    first_book_position: int | None
+    last_book_position: int | None
+    verification_status: Literal["verified", "pending"]
+    retry_guidance: str
 
 
 class PaymentInstrumentPage(BaseModel):
@@ -479,6 +575,232 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         )
 
     @mcp.tool(
+        name="ledger_create_category",
+        title="Create a bookkeeping category",
+        description=(
+            "Use this when the user has explicitly confirmed that no existing "
+            "category fits and wants a new root category or child category. List "
+            "categories first, then pass the parent_category_id for a child. A "
+            "category is an independent reporting dimension: never create or ask "
+            "for an expense, income, clearing, or other internal account. The new "
+            "category can be used for both expenses and income. Reuse request_id "
+            "only for an exact retry."
+        ),
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_create_category(
+        book_id: UUID,
+        request_id: UUID,
+        current_name: Annotated[str, Field(min_length=1, max_length=512)],
+        parent_category_id: UUID | None = None,
+    ) -> CategoryCatalogWriteResponse:
+        token = _require_catalog_book(dependencies, book_id, request_id)
+        category_id = _catalog_entity_id(
+            token.subject or "",
+            book_id,
+            "ledger_create_category",
+            request_id,
+        )
+        category_version_id = _catalog_entity_id(
+            token.subject or "",
+            book_id,
+            "ledger_create_category_version",
+            request_id,
+        )
+        existing = _read_catalog_before_write(
+            lambda: _read_created_category(dependencies, book_id, category_id),
+            request_id=request_id,
+            entity_label="category",
+        )
+        if existing is not None:
+            if (
+                existing.current_name != current_name.strip()
+                or existing.parent_category_id != parent_category_id
+            ):
+                raise ToolError(
+                    "request_id already identifies a category created with different "
+                    "arguments. Reuse it only for the exact same request."
+                )
+            return CategoryCatalogWriteResponse(
+                request_id=request_id,
+                replayed=True,
+                category=existing,
+            )
+        if parent_category_id is not None:
+            parent = _read_catalog_before_write(
+                lambda: _read_created_category(
+                    dependencies,
+                    book_id,
+                    parent_category_id,
+                ),
+                request_id=request_id,
+                entity_label="parent category",
+            )
+            if parent is None or parent.status != "active":
+                raise ToolError(
+                    "parent_category_id must identify an active category in the "
+                    "requested Book. List categories and choose a stable category ID."
+                )
+        _call_catalog_write(
+            lambda: execute_create_category(
+                CreateCategory(
+                    book_id=book_id,
+                    category_id=category_id,
+                    category_version_id=category_version_id,
+                    name=current_name,
+                    parent_category_id=parent_category_id,
+                    change_reason_code="mcp_created",
+                ),
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+            ),
+            request_id=request_id,
+        )
+        created = _read_catalog_after_commit(
+            lambda: _read_created_category(dependencies, book_id, category_id),
+            request_id=request_id,
+            entity_label="category",
+        )
+        if created is None:
+            return CategoryCatalogWriteResponse(
+                request_id=request_id,
+                replayed=False,
+                category=None,
+                verification_status="pending",
+                retry_guidance=_catalog_retry_guidance(request_id),
+            )
+        return CategoryCatalogWriteResponse(
+            request_id=request_id,
+            replayed=False,
+            category=created,
+        )
+
+    @mcp.tool(
+        name="ledger_close_account",
+        title="Close an unused account",
+        description=(
+            "Use this when the user has explicitly confirmed an ordinary account "
+            "should be hidden from future bookkeeping. Closing is reversible but "
+            "requires a verified zero balance and never deletes transaction history. "
+            "System-managed accounts cannot be closed through this tool. Reuse "
+            "request_id only for an exact retry."
+        ),
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_close_account(
+        book_id: UUID,
+        request_id: UUID,
+        account_id: UUID,
+    ) -> AccountCatalogWriteResponse:
+        token = _require_catalog_book(dependencies, book_id, request_id)
+        existing = _read_catalog_before_write(
+            lambda: _read_created_account(dependencies, book_id, account_id),
+            request_id=request_id,
+            entity_label="account",
+        )
+        if existing is None:
+            raise ToolError("account not found in requested Book")
+        if existing.system_role is not None:
+            raise ToolError("system-managed accounts cannot be closed by an Agent")
+        if existing.status == "closed":
+            return AccountCatalogWriteResponse(
+                request_id=request_id,
+                replayed=True,
+                account=existing,
+            )
+        _call_catalog_write(
+            lambda: execute_close_account(
+                CloseAccount(book_id=book_id, account_id=account_id),
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+                ledger_committer=dependencies.ledger_committer,
+            ),
+            request_id=request_id,
+        )
+        updated = _read_catalog_after_commit(
+            lambda: _read_created_account(dependencies, book_id, account_id),
+            request_id=request_id,
+            entity_label="account",
+        )
+        if updated is None:
+            return AccountCatalogWriteResponse(
+                request_id=request_id,
+                replayed=False,
+                account=None,
+                verification_status="pending",
+                retry_guidance=_catalog_retry_guidance(request_id),
+            )
+        return AccountCatalogWriteResponse(
+            request_id=request_id,
+            replayed=False,
+            account=updated,
+        )
+
+    @mcp.tool(
+        name="ledger_reopen_account",
+        title="Reopen a closed account",
+        description=(
+            "Use this when the user has explicitly confirmed that a previously "
+            "closed ordinary account should accept new bookkeeping entries again. "
+            "This does not alter historical transactions. System-managed accounts "
+            "cannot be changed through this tool. Reuse request_id only for an "
+            "exact retry."
+        ),
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_reopen_account(
+        book_id: UUID,
+        request_id: UUID,
+        account_id: UUID,
+    ) -> AccountCatalogWriteResponse:
+        token = _require_catalog_book(dependencies, book_id, request_id)
+        existing = _read_catalog_before_write(
+            lambda: _read_created_account(dependencies, book_id, account_id),
+            request_id=request_id,
+            entity_label="account",
+        )
+        if existing is None:
+            raise ToolError("account not found in requested Book")
+        if existing.system_role is not None:
+            raise ToolError("system-managed accounts cannot be reopened by an Agent")
+        if existing.status == "active":
+            return AccountCatalogWriteResponse(
+                request_id=request_id,
+                replayed=True,
+                account=existing,
+            )
+        _call_catalog_write(
+            lambda: execute_reopen_account(
+                ReopenAccount(book_id=book_id, account_id=account_id),
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+                ledger_committer=dependencies.ledger_committer,
+            ),
+            request_id=request_id,
+        )
+        updated = _read_catalog_after_commit(
+            lambda: _read_created_account(dependencies, book_id, account_id),
+            request_id=request_id,
+            entity_label="account",
+        )
+        if updated is None:
+            return AccountCatalogWriteResponse(
+                request_id=request_id,
+                replayed=False,
+                account=None,
+                verification_status="pending",
+                retry_guidance=_catalog_retry_guidance(request_id),
+            )
+        return AccountCatalogWriteResponse(
+            request_id=request_id,
+            replayed=False,
+            account=updated,
+        )
+
+    @mcp.tool(
         name="ledger_create_payment_card",
         title="Create a payment card",
         description=(
@@ -688,9 +1010,7 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
                 )
             except (LookupError, ValueError) as error:
                 raise ToolError(str(error)) from error
-        next_offset = (
-            offset + limit if offset + limit < page.total else None
-        )
+        next_offset = offset + limit if offset + limit < page.total else None
         return AccountPage(
             items=tuple(serialize_account(item) for item in page.items),
             total=page.total,
@@ -815,25 +1135,350 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         return serialize_journal_item(item)
 
     @mcp.tool(
-        name="ledger_list_categories",
-        title="List Book categories",
+        name="ledger_list_entries",
+        title="List everyday bookkeeping entries",
         description=(
-            "Use this when you need the current category catalog for a Book, "
-            "including parent relationships and stable category IDs."
+            "Use this when the user wants transaction history in everyday "
+            "bookkeeping terms such as expense, income, transfer, refund, or "
+            "credit-card payment. Results include display account names, category "
+            "paths, asset-unit amounts, and reversal relationships without exposing "
+            "internal clearing accounts or debit and credit postings."
         ),
         annotations=READ_ONLY_ANNOTATIONS,
         meta=TOOL_META,
     )
-    def ledger_list_categories(book_id: UUID) -> CategoryListResponse:
+    def ledger_list_entries(
+        book_id: UUID,
+        limit: Annotated[int, Field(ge=1, le=100)] = 50,
+        cursor: Annotated[str | None, Field(max_length=256)] = None,
+        as_of_book_position: Annotated[int | None, Field(ge=0)] = None,
+    ) -> EverydayEntryPageResponse:
         token = require_access_token()
         with session_factory() as session:
             require_book_access(session, token, book_id)
             try:
-                values = list_categories(session, book_id)
+                page = list_everyday_entries(
+                    session,
+                    book_id,
+                    limit=limit,
+                    cursor=cursor,
+                    as_of_book_position=as_of_book_position,
+                )
             except (LookupError, ValueError) as error:
                 raise ToolError(str(error)) from error
-        return CategoryListResponse(
-            items=tuple(serialize_category(item) for item in values)
+        return EverydayEntryPageResponse(
+            items=tuple(
+                EverydayEntryReceiptResponse.from_view(item) for item in page.items
+            ),
+            next_cursor=page.next_cursor,
+            as_of_book_position=page.as_of_book_position,
+        )
+
+    @mcp.tool(
+        name="ledger_get_entry",
+        title="Get an everyday bookkeeping entry",
+        description=(
+            "Use this when the user wants one known transaction in everyday "
+            "bookkeeping terms, including its asset-unit amount, display accounts, "
+            "category path, and reversal relationships. Use ledger_get_transaction "
+            "only when raw journal postings are specifically needed for an audit."
+        ),
+        annotations=READ_ONLY_ANNOTATIONS,
+        meta=TOOL_META,
+    )
+    def ledger_get_entry(
+        book_id: UUID,
+        transaction_id: UUID,
+        as_of_book_position: Annotated[int | None, Field(ge=0)] = None,
+    ) -> EverydayEntryReceiptResponse:
+        token = require_access_token()
+        with session_factory() as session:
+            require_book_access(session, token, book_id)
+            try:
+                item = get_everyday_entry(
+                    session,
+                    book_id,
+                    transaction_id,
+                    as_of_book_position=as_of_book_position,
+                )
+            except (LookupError, ValueError) as error:
+                raise ToolError(str(error)) from error
+        return EverydayEntryReceiptResponse.from_view(item)
+
+    @mcp.tool(
+        name="ledger_list_categories",
+        title="List Book categories",
+        description=(
+            "Use this when you need the current category catalog for a Book, "
+            "including complete human-readable paths, expense or income usage, "
+            "parent relationships, and stable category IDs. Call this before "
+            "creating a category or preparing a categorized entry."
+        ),
+        annotations=READ_ONLY_ANNOTATIONS,
+        meta=TOOL_META,
+    )
+    def ledger_list_categories(book_id: UUID) -> CategoryPage:
+        token = require_access_token()
+        with session_factory() as session:
+            require_book_access(session, token, book_id)
+            try:
+                values = _read_category_details_from_session(session, book_id)
+            except (LookupError, ValueError) as error:
+                raise ToolError(str(error)) from error
+        return CategoryPage(items=values)
+
+    @mcp.tool(
+        name="ledger_reverse_transaction",
+        title="Reverse an incorrect transaction",
+        description=(
+            "Use this when the user has explicitly confirmed that a posted "
+            "transaction is a duplicate, incorrect, imported incorrectly, or "
+            "reversed by its provider. This append-only operation preserves the "
+            "original audit trail and posts an opposite transaction; it never "
+            "deletes or edits history. Inspect the entry first and confirm the "
+            "target, reason, and effective time. A reversal itself cannot be "
+            "reversed. Reuse request_id only for an exact retry."
+        ),
+        annotations=DESTRUCTIVE_WRITE_ANNOTATIONS,
+        meta=WRITE_TOOL_META,
+    )
+    def ledger_reverse_transaction(
+        book_id: UUID,
+        request_id: UUID,
+        transaction_id: UUID,
+        reason_code: Literal[
+            "user_correction",
+            "duplicate",
+            "import_correction",
+            "provider_reversal",
+        ],
+        effective_at: AwareDatetime,
+    ) -> LedgerWriteResponse:
+        token = _require_write_book(dependencies, book_id, request_id)
+        command_id, reversal_transaction_id = _write_ids(
+            token.subject or "",
+            book_id,
+            "ledger_reverse_transaction",
+            request_id,
+        )
+        outcome = _call_write(
+            lambda: execute_reverse_transaction(
+                ReverseTransactionCommand(
+                    book_id=book_id,
+                    command_id=command_id,
+                    reversal_transaction_id=reversal_transaction_id,
+                    reverses_transaction_id=transaction_id,
+                    expected_stream_version=0,
+                    reason_code=ReversalReasonCode(reason_code),
+                    effective_at=effective_at,
+                ),
+                raw_key=f"mcp:ledger_reverse_transaction:{request_id}",
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+                ledger_committer=dependencies.ledger_committer,
+            ),
+            request_id=request_id,
+        )
+        return _write_response(
+            dependencies,
+            book_id,
+            request_id,
+            reversal_transaction_id,
+            outcome,
+        )
+
+    @mcp.tool(
+        name="ledger_set_transaction_category",
+        title="Change a transaction category",
+        description=(
+            "Use this when the user has explicitly confirmed that an existing "
+            "expense, income, or refund belongs to one different category. Inspect "
+            "the entry and list categories first. This changes only the reporting "
+            "category at the transaction's full amount; it never changes accounts, "
+            "money, or journal postings and never asks for an internal account. "
+            "Reuse request_id only for an exact retry."
+        ),
+        annotations=WRITE_ANNOTATIONS,
+        meta=WRITE_TOOL_META,
+    )
+    def ledger_set_transaction_category(
+        book_id: UUID,
+        request_id: UUID,
+        transaction_id: UUID,
+        category_id: UUID,
+        effective_at: AwareDatetime,
+    ) -> TransactionCategoryWriteResponse:
+        token = _require_write_book(dependencies, book_id, request_id)
+        with session_factory() as session:
+            entry, revision, current_lines = _transaction_category_state(
+                session,
+                book_id,
+                transaction_id,
+            )
+            category = next(
+                (
+                    value
+                    for value in _read_category_details_from_session(session, book_id)
+                    if value.category_id == category_id
+                ),
+                None,
+            )
+        if category is None or category.status != "active":
+            raise ToolError(
+                "category_id must identify an active category in the requested Book"
+            )
+        asset_code, units, line_kind = _entry_category_allocation(entry)
+        if (
+            line_kind is ReportingLineKind.EXPENSE
+            and category.usage_kind not in {"expense", "both"}
+        ) or (
+            line_kind is ReportingLineKind.INCOME
+            and category.usage_kind not in {"income", "both"}
+        ):
+            raise ToolError(
+                f"category usage_kind {category.usage_kind!r} does not support "
+                f"{line_kind.value} entries"
+            )
+        if _category_lines_match(
+            current_lines,
+            category=category,
+            asset_code=asset_code,
+            units=units,
+            line_kind=line_kind,
+        ):
+            return TransactionCategoryWriteResponse(
+                request_id=request_id,
+                transaction_id=transaction_id,
+                replayed=True,
+                category=category,
+                classification_revision=revision,
+                first_book_position=None,
+                last_book_position=None,
+                verification_status="verified",
+                retry_guidance="No retry is needed; the requested category is current.",
+            )
+        command_id, _ = _write_ids(
+            token.subject or "",
+            book_id,
+            "ledger_set_transaction_category",
+            request_id,
+        )
+        line_id = _catalog_entity_id(
+            token.subject or "",
+            book_id,
+            "ledger_set_transaction_category_line",
+            request_id,
+        )
+        line_version_id = _catalog_entity_id(
+            token.subject or "",
+            book_id,
+            "ledger_set_transaction_category_line_version",
+            request_id,
+        )
+        outcome = _call_write(
+            lambda: execute_assign_reporting_lines(
+                AssignReportingLinesCommand(
+                    book_id=book_id,
+                    command_id=command_id,
+                    transaction_id=transaction_id,
+                    expected_revision=revision,
+                    lines=(
+                        ReportingLineInput(
+                            line_id=line_id,
+                            line_version_id=line_version_id,
+                            catalog_id=category.current_version_id,
+                            asset_code=asset_code,
+                            units=units,
+                            line_kind=line_kind,
+                            dimension=ReportingDimension.CATEGORY,
+                            dimension_id=category.category_id,
+                        ),
+                    ),
+                    effective_at=effective_at,
+                ),
+                raw_key=f"mcp:ledger_set_transaction_category:{request_id}",
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+                ledger_committer=dependencies.ledger_committer,
+            ),
+            request_id=request_id,
+        )
+        return _transaction_category_write_response(
+            dependencies,
+            request_id=request_id,
+            book_id=book_id,
+            transaction_id=transaction_id,
+            outcome=outcome,
+            category=category,
+        )
+
+    @mcp.tool(
+        name="ledger_clear_transaction_category",
+        title="Clear a transaction category",
+        description=(
+            "Use this when the user has explicitly confirmed that an existing "
+            "expense, income, or refund should be left uncategorized. Inspect the "
+            "entry first. This clears only the reporting category and preserves "
+            "the amount, accounts, journal postings, and audit history. Reuse "
+            "request_id only for an exact retry."
+        ),
+        annotations=WRITE_ANNOTATIONS,
+        meta=WRITE_TOOL_META,
+    )
+    def ledger_clear_transaction_category(
+        book_id: UUID,
+        request_id: UUID,
+        transaction_id: UUID,
+        effective_at: AwareDatetime,
+    ) -> TransactionCategoryWriteResponse:
+        token = _require_write_book(dependencies, book_id, request_id)
+        with session_factory() as session:
+            _, revision, current_lines = _transaction_category_state(
+                session,
+                book_id,
+                transaction_id,
+            )
+        if not current_lines:
+            return TransactionCategoryWriteResponse(
+                request_id=request_id,
+                transaction_id=transaction_id,
+                replayed=True,
+                category=None,
+                classification_revision=revision,
+                first_book_position=None,
+                last_book_position=None,
+                verification_status="verified",
+                retry_guidance="No retry is needed; the entry is already uncategorized.",
+            )
+        command_id, _ = _write_ids(
+            token.subject or "",
+            book_id,
+            "ledger_clear_transaction_category",
+            request_id,
+        )
+        outcome = _call_write(
+            lambda: execute_clear_reporting_lines(
+                ClearReportingLinesCommand(
+                    book_id=book_id,
+                    command_id=command_id,
+                    transaction_id=transaction_id,
+                    expected_revision=revision,
+                    effective_at=effective_at,
+                ),
+                raw_key=f"mcp:ledger_clear_transaction_category:{request_id}",
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+                ledger_committer=dependencies.ledger_committer,
+            ),
+            request_id=request_id,
+        )
+        return _transaction_category_write_response(
+            dependencies,
+            request_id=request_id,
+            book_id=book_id,
+            transaction_id=transaction_id,
+            outcome=outcome,
+            category=None,
         )
 
     @mcp.tool(
@@ -1082,6 +1727,192 @@ def _read_created_account(
     return serialize_account(value)
 
 
+def _read_created_category(
+    dependencies: RuntimeDependencies,
+    book_id: UUID,
+    category_id: UUID,
+) -> CategoryDetailResponse | None:
+    with dependencies.session_factory() as session:
+        values = _read_category_details_from_session(session, book_id)
+    return next(
+        (value for value in values if value.category_id == category_id),
+        None,
+    )
+
+
+def _read_category_details_from_session(
+    session: Session,
+    book_id: UUID,
+) -> tuple[CategoryDetailResponse, ...]:
+    rows = session.execute(
+        select(CategoryRecord, CategoryVersionRecord)
+        .join(
+            CategoryVersionRecord,
+            (
+                (CategoryVersionRecord.book_id == CategoryRecord.book_id)
+                & (CategoryVersionRecord.category_id == CategoryRecord.category_id)
+                & (
+                    CategoryVersionRecord.category_version_id
+                    == CategoryRecord.current_version_id
+                )
+            ),
+        )
+        .where(CategoryRecord.book_id == book_id)
+        .order_by(CategoryRecord.current_name, CategoryRecord.category_id)
+    ).all()
+    records = {category.category_id: category for category, _ in rows}
+    versions = {category.category_id: version for category, version in rows}
+
+    def path_for(category_id: UUID) -> tuple[str, ...]:
+        parts: list[str] = []
+        visited: set[UUID] = set()
+        current_id: UUID | None = category_id
+        while current_id is not None:
+            if current_id in visited:
+                raise ValueError("category parent relationship contains a cycle")
+            visited.add(current_id)
+            current = records.get(current_id)
+            if current is None:
+                raise ValueError("category parent is unavailable in requested Book")
+            parts.append(current.current_name)
+            current_id = current.parent_category_id
+        return tuple(reversed(parts))
+
+    values = (
+        CategoryDetailResponse(
+            category_id=category.category_id,
+            parent_category_id=category.parent_category_id,
+            current_version_id=category.current_version_id,
+            current_name=category.current_name,
+            status=category.status,
+            path=path_for(category.category_id),
+            usage_kind=versions[category.category_id].usage_kind,
+        )
+        for category, _ in rows
+    )
+    return tuple(sorted(values, key=lambda value: (value.path, value.category_id)))
+
+
+def _transaction_category_state(
+    session: Session,
+    book_id: UUID,
+    transaction_id: UUID,
+) -> tuple[EverydayEntryView, int, tuple[ReportingLine, ...]]:
+    head = session.get(BookEventHeadRecord, book_id)
+    if head is None:
+        raise ToolError("Book not found")
+    try:
+        entry = get_everyday_entry(session, book_id, transaction_id)
+    except (LookupError, ValueError) as error:
+        raise ToolError(str(error)) from error
+    stream_head = session.get(
+        EventStreamHeadRecord,
+        (book_id, "reporting_lines", transaction_id),
+    )
+    revision = 0 if stream_head is None else stream_head.last_version
+    lines = tuple(
+        line
+        for line in list_current_reporting_lines(
+            session,
+            book_id,
+            as_of_book_position=head.last_position,
+        )
+        if line.transaction_id == transaction_id
+    )
+    return entry, revision, lines
+
+
+def _entry_category_allocation(
+    entry: EverydayEntryView,
+) -> tuple[str, str, ReportingLineKind]:
+    if entry.kind == "income":
+        line_kind = ReportingLineKind.INCOME
+    elif entry.kind in {"expense", "refund"}:
+        line_kind = ReportingLineKind.EXPENSE
+    else:
+        raise ToolError("only expense, income, and refund entries can have a category")
+    if entry.amount is None:
+        raise ToolError("entry amount is unavailable for category assignment")
+    scaled = Decimal(entry.amount.value) * (Decimal(10) ** entry.amount.scale)
+    integral = scaled.to_integral_value()
+    if scaled != integral or integral <= 0:
+        raise ToolError("entry amount cannot be represented in exact ledger units")
+    return entry.amount.asset_code, str(int(integral)), line_kind
+
+
+def _category_lines_match(
+    lines: tuple[ReportingLine, ...],
+    *,
+    category: CategoryDetailResponse,
+    asset_code: str,
+    units: str,
+    line_kind: ReportingLineKind,
+) -> bool:
+    if len(lines) != 1:
+        return False
+    line = lines[0]
+    return (
+        line.catalog_id == category.current_version_id
+        and line.asset_code == asset_code
+        and line.units == int(units)
+        and line.line_kind == line_kind.value
+        and line.dimension == ReportingDimension.CATEGORY.value
+        and line.dimension_id == category.category_id
+    )
+
+
+def _transaction_category_write_response(
+    dependencies: RuntimeDependencies,
+    *,
+    request_id: UUID,
+    book_id: UUID,
+    transaction_id: UUID,
+    outcome: CommandOutcome,
+    category: CategoryDetailResponse | None,
+) -> TransactionCategoryWriteResponse:
+    first_position = outcome.result.first_book_position
+    last_position = outcome.result.last_book_position
+    if first_position is None or last_position is None:
+        raise ToolError("The category write completed without a Book position.")
+    body = outcome.result.body
+    revision_value = (
+        body.get("classification_revision") if isinstance(body, dict) else None
+    )
+    if type(revision_value) is not int or revision_value <= 0:
+        raise ToolError("The category write completed without a valid revision.")
+    verification_status: Literal["verified", "pending"] = "pending"
+    try:
+        with dependencies.session_factory() as session:
+            _, stored_revision, lines = _transaction_category_state(
+                session,
+                book_id,
+                transaction_id,
+            )
+        if stored_revision == revision_value:
+            if category is None and not lines:
+                verification_status = "verified"
+            elif category is not None and any(
+                line.dimension_id == category.category_id for line in lines
+            ):
+                verification_status = "verified"
+    except Exception:
+        _log_write_boundary("mcp_category_write_readback_pending", request_id)
+    return TransactionCategoryWriteResponse(
+        request_id=request_id,
+        transaction_id=transaction_id,
+        replayed=outcome.replayed,
+        category=category,
+        classification_revision=revision_value,
+        first_book_position=first_position,
+        last_book_position=last_position,
+        verification_status=verification_status,
+        retry_guidance=(
+            "If verification is pending, retry only with request_id "
+            f"{request_id} and the exact same arguments."
+        ),
+    )
+
+
 def _read_catalog_before_write(
     callback: Callable[[], _CatalogValue | None],
     *,
@@ -1144,7 +1975,14 @@ def _call_catalog_write(
         return callback()
     except ToolError:
         raise
-    except (IdempotencyConflict, LookupError, PermissionError, ValueError) as error:
+    except (
+        AccountBalanceNonzero,
+        AccountBalanceProjectionMismatch,
+        IdempotencyConflict,
+        LookupError,
+        PermissionError,
+        ValueError,
+    ) as error:
         raise ToolError(str(error)) from error
     except SQLAlchemyError:
         _log_write_boundary("mcp_catalog_write_outcome_unknown", request_id)
@@ -1300,9 +2138,15 @@ __all__ = [
     "BookCatalogWriteResponse",
     "CATALOG_WRITE_ANNOTATIONS",
     "CATALOG_WRITE_SECURITY_SCHEMES",
+    "CategoryCatalogWriteResponse",
+    "CategoryDetailResponse",
+    "CategoryPage",
+    "DESTRUCTIVE_WRITE_ANNOTATIONS",
+    "EverydayEntryPageResponse",
     "LedgerWriteResponse",
     "READ_ONLY_ANNOTATIONS",
     "SECURITY_SCHEMES",
+    "TransactionCategoryWriteResponse",
     "WRITE_ANNOTATIONS",
     "WRITE_SECURITY_SCHEMES",
     "register_ledger_tools",

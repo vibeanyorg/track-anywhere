@@ -112,18 +112,23 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
     read_tools = {
         "ledger_get_account",
         "ledger_get_balances",
+        "ledger_get_entry",
         "ledger_get_transaction",
         "ledger_list_accounts",
         "ledger_list_assets",
         "ledger_list_books",
         "ledger_list_categories",
+        "ledger_list_entries",
         "ledger_list_transactions",
         "ledger_list_payment_instruments",
     }
     write_tools = {
+        "ledger_clear_transaction_category",
         "ledger_record_adjustment",
         "ledger_record_credit_card_payment",
         "ledger_record_transfer",
+        "ledger_reverse_transaction",
+        "ledger_set_transaction_category",
     }
     entry_prepare_tools = {
         "ledger_prepare_adjustment",
@@ -135,10 +140,13 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
     }
     entry_commit_tools = {"ledger_commit_entry"}
     catalog_write_tools = {
+        "ledger_close_account",
         "ledger_create_account",
         "ledger_create_asset",
         "ledger_create_book",
+        "ledger_create_category",
         "ledger_create_payment_card",
+        "ledger_reopen_account",
     }
     assert {tool.name for tool in tools} == (
         read_tools
@@ -165,7 +173,9 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
             else "Use this when"
         )
         assert tool.annotations.readOnlyHint is (tool.name in read_tools)
-        assert tool.annotations.destructiveHint is (tool.name in entry_commit_tools)
+        assert tool.annotations.destructiveHint is (
+            tool.name in entry_commit_tools | {"ledger_reverse_transaction"}
+        )
         assert tool.annotations.idempotentHint is (tool.name not in entry_prepare_tools)
         assert tool.annotations.openWorldHint is False
         assert tool.outputSchema is not None
@@ -191,6 +201,13 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "liability",
     }
     assert "investment" in account_tool.description
+    category_tool = next(
+        tool for tool in tools if tool.name == "ledger_create_category"
+    )
+    assert "category_id" not in category_tool.inputSchema["properties"]
+    assert "parent_category_id" in category_tool.inputSchema["properties"]
+    assert "expense" in category_tool.description
+    assert "internal account" in category_tool.description
     assert {
         "ledger_record_expense",
         "ledger_record_credit_card_charge",

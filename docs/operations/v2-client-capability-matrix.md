@@ -61,7 +61,7 @@ Books and return a structured `book_selection_required` error with choices.
 | API-key to browser-session exchange | Implemented | `POST /api/v2/auth/session/api-key` |
 | Session status and logout | Implemented | V2 session routes with CSRF/same-origin enforcement |
 | OAuth metadata, PKCE callback, and device approval | Implemented | V2 auth/OAuth routes only |
-| ChatGPT MCP connector | Implemented | OAuth-only; resource-bound read scopes, optional `book:write` catalog tools including generic payment-card configuration, and optional `ledger:write` semantic prepare/commit tools; no API-key fallback |
+| ChatGPT MCP connector | Implemented | OAuth-only; resource-bound reads include user-facing everyday entries and category paths. Optional `book:write` tools cover Book/asset/account/category/payment-card setup plus ordinary account close/reopen. Optional `ledger:write` tools cover semantic prepare/commit, transfer/payment/adjustment, recategorization, and append-only reversal; no API-key fallback and no internal clearing-account inputs. |
 | MCP everyday-entry gateway | Implemented | Scenario-specific prepare tools use the same compiler as REST/CLI, return a short-lived opaque commit capability only when ready, and never expose internal accounts. After showing the preview/warnings and obtaining explicit human confirmation, `ledger_commit_entry` posts exactly that prepared intent. Commit accepts no business-fact overrides and retries reuse one `request_id`. |
 | Ledger entry, query, classify, and reverse UI | Deferred | HTTP contract is implemented; product UI is not yet shipped |
 | Payment, recurring, backup, budget, and V1 draft UI | Removed | No V1 proxy or fallback exists |
