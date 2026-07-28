@@ -734,24 +734,32 @@ tools_by_name = {tool["name"]: tool for tool in tools}
 read_tools = {
     "ledger_get_account",
     "ledger_get_balances",
+    "ledger_get_entry",
     "ledger_get_transaction",
     "ledger_list_accounts",
     "ledger_list_assets",
     "ledger_list_books",
     "ledger_list_categories",
+    "ledger_list_entries",
     "ledger_list_payment_instruments",
     "ledger_list_transactions",
 }
 ledger_write_tools = {
+    "ledger_clear_transaction_category",
     "ledger_record_adjustment",
     "ledger_record_credit_card_payment",
     "ledger_record_transfer",
+    "ledger_reverse_transaction",
+    "ledger_set_transaction_category",
 }
 catalog_write_tools = {
+    "ledger_close_account",
     "ledger_create_account",
     "ledger_create_asset",
     "ledger_create_book",
+    "ledger_create_category",
     "ledger_create_payment_card",
+    "ledger_reopen_account",
 }
 assert set(tools_by_name) == read_tools | ledger_write_tools | catalog_write_tools
 for name, tool in tools_by_name.items():
