@@ -1254,6 +1254,93 @@ def test_mcp_adjustment_reconciles_credit_card_outstanding_balance(
     assert _book_head(pg_engine, scenario) == 2
 
 
+def test_mcp_records_exact_cross_asset_fx_and_replays(pg_engine) -> None:
+    scenario = JournalScenario.create()
+    seed_journal_scenario(
+        pg_engine,
+        scenario,
+        credit_account_type="expense",
+    )
+    source_trading_account_id = uuid4()
+    target_trading_account_id = uuid4()
+    target_account_id = uuid4()
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "insert into assets (asset_code, kind, ledger_scale, input_scale, "
+                "display_scale, current_name, status) values "
+                "('CNY', 'fiat', 2, 2, 2, 'Chinese Yuan', 'active') "
+                "on conflict (asset_code) do nothing"
+            )
+        )
+        connection.execute(
+            text(
+                'update book_members set scopes=\'["ledger:read","ledger:write"]\' '
+                "where book_id=:book_id and user_id=:user_id"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "user_id": scenario.actor_subject_id,
+            },
+        )
+        connection.execute(
+            text(
+                "insert into accounts (book_id, account_id, asset_code, "
+                "account_type, system_role, current_name, status) values "
+                "(:book_id, :source_trading_id, 'USD', 'asset', 'fx_trading', "
+                "'USD FX Trading', 'active'), "
+                "(:book_id, :target_trading_id, 'CNY', 'asset', 'fx_trading', "
+                "'CNY FX Trading', 'active'), "
+                "(:book_id, :target_id, 'CNY', 'asset', null, "
+                "'CNY Wallet', 'active')"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "source_trading_id": source_trading_account_id,
+                "target_trading_id": target_trading_account_id,
+                "target_id": target_account_id,
+            },
+        )
+    write_token = "ta_mcp_fx_write"
+    _seed_oauth_tokens(pg_engine, scenario, write_token, "ta_mcp_fx_read")
+    runtime = create_mcp_runtime(
+        build_engine_dependencies(
+            pg_engine,
+            expected_runtime_role=pg_engine.url.username,
+        ),
+        "http://testserver",
+    )
+    arguments = {
+        "book_id": str(scenario.book_id),
+        "request_id": str(uuid4()),
+        "source_account_id": str(scenario.debit_account_id),
+        "source_trading_account_id": str(source_trading_account_id),
+        "source_asset_code": "USD",
+        "source_amount": "215.20",
+        "target_trading_account_id": str(target_trading_account_id),
+        "target_account_id": str(target_account_id),
+        "target_asset_code": "CNY",
+        "target_amount": "1500.00",
+        "effective_at": EFFECTIVE_AT,
+    }
+
+    with TestClient(runtime.application) as client:
+        recorded = _call_tool(client, write_token, "ledger_record_fx", arguments)
+        replayed = _call_tool(client, write_token, "ledger_record_fx", arguments)
+
+    assert recorded["isError"] is False, recorded
+    assert recorded["structuredContent"]["transaction"]["transaction_kind"] == "fx"
+    assert _posting_pairs(recorded["structuredContent"]) == [
+        (str(target_account_id), "debit", "150000"),
+        (str(target_trading_account_id), "credit", "150000"),
+        (str(source_trading_account_id), "debit", "21520"),
+        (str(scenario.debit_account_id), "credit", "21520"),
+    ]
+    assert replayed["isError"] is False
+    assert replayed["structuredContent"]["replayed"] is True
+    assert _book_head(pg_engine, scenario) == 1
+
+
 @pytest.mark.parametrize(
     ("tool_name", "system_account_argument"),
     [

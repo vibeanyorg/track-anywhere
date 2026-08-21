@@ -126,6 +126,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_clear_transaction_category",
         "ledger_record_adjustment",
         "ledger_record_credit_card_payment",
+        "ledger_record_fx",
         "ledger_record_transfer",
         "ledger_reverse_transaction",
         "ledger_set_transaction_category",
@@ -232,6 +233,21 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "request_id",
     } == set(adjustment_tool.inputSchema["required"])
     assert "adjustment_account_id" not in adjustment_tool.inputSchema["properties"]
+    fx_tool = next(tool for tool in tools if tool.name == "ledger_record_fx")
+    assert set(fx_tool.inputSchema["required"]) == {
+        "book_id",
+        "effective_at",
+        "request_id",
+        "source_account_id",
+        "source_amount",
+        "source_asset_code",
+        "source_trading_account_id",
+        "target_account_id",
+        "target_amount",
+        "target_asset_code",
+        "target_trading_account_id",
+    }
+    assert "Never infer or round" in fx_tool.description
 
 
 def test_entry_tools_are_hidden_without_write_scope_and_still_guard_calls() -> None:
