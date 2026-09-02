@@ -749,6 +749,7 @@ ledger_write_tools = {
     "ledger_record_adjustment",
     "ledger_record_credit_card_payment",
     "ledger_record_fx",
+    "ledger_record_fx_credit_card_payment",
     "ledger_record_transfer",
     "ledger_reverse_transaction",
     "ledger_set_transaction_category",

@@ -20,6 +20,7 @@ from ...infrastructure.db.models.projections import (
     JournalTransactionRecord,
     TransactionReversalRecord,
 )
+from ...infrastructure.db.models.event_store import LedgerEventRecord
 from ...infrastructure.db.repositories.catalogs import CatalogRepository
 from ...serialization.canonical_json import JSONValue, format_utc_microseconds
 from ..command_bus import execute_financial
@@ -273,7 +274,7 @@ def _build_assign_plan(
     _validate_lines(
         command,
         uow,
-        transaction_kind=transaction.transaction_kind,
+        transaction=transaction,
     )
     revision = command.expected_revision + 1
     payload = build_reporting_lines_assigned(
@@ -311,8 +312,21 @@ def _validate_lines(
     command: AssignReportingLinesCommand,
     uow: UnitOfWork,
     *,
-    transaction_kind: str,
+    transaction: JournalTransactionRecord,
 ) -> None:
+    source_event_type = uow.session.scalar(
+        select(LedgerEventRecord.event_type).where(
+            LedgerEventRecord.book_id == command.book_id,
+            LedgerEventRecord.event_id == transaction.source_event_id,
+        )
+    )
+    if (
+        transaction.transaction_kind == "credit_card_payment"
+        and source_event_type != "JournalTransactionPosted"
+    ):
+        raise UnsupportedCreditCardReporting(
+            "credit-card payments are balance-sheet transfers and cannot be categorized"
+        )
     catalogs = CatalogRepository(uow.session)
     for line in command.lines:
         if (
@@ -347,7 +361,7 @@ def _validate_lines(
     validate_reporting_allocations(
         lines=command.lines,
         postings=postings,
-        transaction_kind=transaction_kind,
+        transaction_kind=transaction.transaction_kind,
     )
 
 
@@ -376,10 +390,6 @@ def validate_reporting_allocations(
     if type(transaction_kind) is not str or not transaction_kind:
         raise IdempotencyValidationError("transaction_kind must be nonblank")
 
-    if transaction_kind == "credit_card_payment":
-        raise UnsupportedCreditCardReporting(
-            "credit-card payments are balance-sheet transfers and cannot be categorized"
-        )
     if transaction_kind in {
         "credit_card_charge",
         "credit_card_fee",

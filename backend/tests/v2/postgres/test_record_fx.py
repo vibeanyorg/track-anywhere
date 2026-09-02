@@ -15,7 +15,9 @@ from track_anywhere.application.idempotency import (
 )
 from track_anywhere.application.journal.record_fx import (
     RecordFxCommand,
+    RecordFxCreditCardPaymentCommand,
     execute_record_fx,
+    execute_record_fx_credit_card_payment,
 )
 from track_anywhere.application.ledger_committer import LedgerCommitter
 from track_anywhere.domain.journal import InvalidFxTransaction
@@ -29,9 +31,14 @@ from track_anywhere.infrastructure.db.models.projections import (
     AccountBalanceRecord,
     JournalPostingRecord,
     JournalTransactionRecord,
+    ReportingLineRecord,
 )
 from track_anywhere.infrastructure.db.repositories.catalogs import CatalogRepository
 from track_anywhere.infrastructure.db.unit_of_work import SqlAlchemyUnitOfWork
+from track_anywhere.queries.everyday_entries import (
+    EverydayEntryKind,
+    get_everyday_entry,
+)
 
 
 EFFECTIVE_AT = datetime(2026, 7, 14, 12, 30, tzinfo=UTC)
@@ -345,6 +352,129 @@ def test_fx_rejects_credit_card_accounts_without_partial_writes(pg_engine) -> No
         )
         head = session.get(BookEventHeadRecord, scenario.book_id)
         assert head is not None and head.last_position == 0
+
+
+def test_records_atomic_cross_asset_card_payment_and_fee(pg_engine) -> None:
+    scenario = FxScenario.create()
+    category_id = uuid4()
+    category_version_id = uuid4()
+    fee_account_id = uuid4()
+    _seed_fx_scenario(
+        pg_engine,
+        scenario,
+        target_account_type="liability",
+        target_account_subtype="credit_card",
+    )
+    with pg_engine.begin() as connection:
+        connection.execute(
+            text(
+                "insert into accounts ("
+                "book_id, account_id, asset_code, account_type, account_subtype, "
+                "system_role, current_name, status"
+                ") values ("
+                ":book_id, :account_id, 'CNY', 'expense', null, "
+                "'expense_clearing', 'Expense Clearing', 'active'"
+                ")"
+            ),
+            {"book_id": scenario.book_id, "account_id": fee_account_id},
+        )
+        connection.execute(
+            text(
+                "insert into categories ("
+                "book_id, category_id, current_name, current_version_id, status"
+                ") values (:book_id, :category_id, '金融手续费', null, 'active')"
+            ),
+            {"book_id": scenario.book_id, "category_id": category_id},
+        )
+        connection.execute(
+            text(
+                "insert into category_versions ("
+                "book_id, category_id, category_version_id, name, status, "
+                "usage_kind, change_reason_code"
+                ") values ("
+                ":book_id, :category_id, :version_id, '金融手续费', 'active', "
+                "'expense', 'created'"
+                ")"
+            ),
+            {
+                "book_id": scenario.book_id,
+                "category_id": category_id,
+                "version_id": category_version_id,
+            },
+        )
+    command = RecordFxCreditCardPaymentCommand(
+        book_id=scenario.book_id,
+        command_id=scenario.command_id,
+        transaction_id=scenario.transaction_id,
+        expected_stream_version=0,
+        source_account_id=scenario.source_account_id,
+        source_trading_account_id=scenario.source_trading_account_id,
+        source_asset_code="CNY",
+        source_amount="13.88",
+        target_trading_account_id=scenario.target_trading_account_id,
+        target_account_id=scenario.target_account_id,
+        target_asset_code="USD",
+        target_amount="2.06",
+        fee_amount="0.10",
+        fee_category_id=category_id,
+        fee_category_version_id=category_version_id,
+        effective_at=EFFECTIVE_AT,
+    )
+    factory = sessionmaker(pg_engine, expire_on_commit=False)
+
+    outcome = execute_record_fx_credit_card_payment(
+        command,
+        raw_key=f"fx-card:{command.command_id}",
+        actor=CommandActor(subject_id=scenario.actor_subject_id),
+        uow_factory=lambda: SqlAlchemyUnitOfWork(factory),
+    )
+
+    assert outcome.result.body["as_of_book_position"] == 2
+    with Session(pg_engine) as session:
+        transaction = session.get(
+            JournalTransactionRecord,
+            (scenario.book_id, scenario.transaction_id),
+        )
+        assert transaction is not None
+        assert transaction.transaction_kind == "credit_card_payment"
+        postings = tuple(
+            session.scalars(
+                select(JournalPostingRecord).order_by(
+                    JournalPostingRecord.posting_position
+                )
+            )
+        )
+        assert tuple(
+            (posting.account_id, posting.asset_code, posting.side, int(posting.units))
+            for posting in postings
+        ) == (
+            (scenario.target_account_id, "USD", "debit", 206),
+            (scenario.target_trading_account_id, "USD", "credit", 206),
+            (scenario.source_trading_account_id, "CNY", "debit", 1388),
+            (fee_account_id, "CNY", "debit", 10),
+            (scenario.source_account_id, "CNY", "credit", 1398),
+        )
+        line = session.scalar(select(ReportingLineRecord))
+        assert line is not None
+        assert (
+            line.asset_code,
+            int(line.units),
+            line.dimension_id,
+            line.catalog_id,
+        ) == ("CNY", 10, category_id, category_version_id)
+        assert session.scalar(select(func.count()).select_from(LedgerEventRecord)) == 2
+        entry = get_everyday_entry(
+            session,
+            scenario.book_id,
+            scenario.transaction_id,
+        )
+        assert entry.kind is EverydayEntryKind.CREDIT_CARD_PAYMENT
+        assert entry.amount is None
+        assert entry.source_account is not None
+        assert entry.source_account.account_id == scenario.source_account_id
+        assert entry.target_account is not None
+        assert entry.target_account.account_id == scenario.target_account_id
+        assert entry.category_allocations[0].amount.value == "0.10"
 
 
 def test_requires_book_owned_fx_trading_accounts(pg_engine) -> None:

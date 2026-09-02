@@ -127,6 +127,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_record_adjustment",
         "ledger_record_credit_card_payment",
         "ledger_record_fx",
+        "ledger_record_fx_credit_card_payment",
         "ledger_record_transfer",
         "ledger_reverse_transaction",
         "ledger_set_transaction_category",
@@ -247,6 +248,17 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "target_asset_code",
         "target_trading_account_id",
     }
+    fx_card_tool = next(
+        tool
+        for tool in tools
+        if tool.name == "ledger_record_fx_credit_card_payment"
+    )
+    assert {
+        "fee_amount",
+        "fee_category_id",
+        "fee_category_version_id",
+    } <= set(fx_card_tool.inputSchema["required"])
+    assert "source_amount excludes fee_amount" in fx_card_tool.description
     assert "Never infer or round" in fx_tool.description
 
 

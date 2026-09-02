@@ -94,6 +94,7 @@
         "transfer",
         "refund",
         "fx",
+        "credit_card_payment",
         "investment_cash"
       ],
       "title": "TransactionKind",

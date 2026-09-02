@@ -104,7 +104,12 @@ from ..application.journal.record_adjustment import (
     RecordAdjustmentCommand,
     execute_record_adjustment,
 )
-from ..application.journal.record_fx import RecordFxCommand, execute_record_fx
+from ..application.journal.record_fx import (
+    RecordFxCommand,
+    RecordFxCreditCardPaymentCommand,
+    execute_record_fx,
+    execute_record_fx_credit_card_payment,
+)
 from ..application.journal.record_simple import (
     RecordTransferCommand,
     execute_record_transfer,
@@ -1593,6 +1598,83 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
                     effective_at=effective_at,
                 ),
                 raw_key=f"mcp:ledger_record_fx:{request_id}",
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+                ledger_committer=dependencies.ledger_committer,
+            ),
+            request_id=request_id,
+        )
+        return _write_response(
+            dependencies,
+            book_id,
+            request_id,
+            transaction_id,
+            outcome,
+        )
+
+    @mcp.tool(
+        name="ledger_record_fx_credit_card_payment",
+        title="Record a cross-asset credit-card payment",
+        description=(
+            "Use this when the user has explicitly confirmed one cross-asset "
+            "credit-card payment, including the exact source principal, exact card "
+            "payment amount, source-asset fee, fee category version, and effective "
+            "time. source_amount excludes fee_amount; the source account is credited "
+            "for their sum. Use the standard source asset account, the credit-card "
+            "liability as target_account_id, and both matching system-managed "
+            "fx_trading accounts. Never infer or round either amount from a rate. "
+            "Reuse request_id only for an exact retry."
+        ),
+        annotations=WRITE_ANNOTATIONS,
+        meta=WRITE_TOOL_META,
+    )
+    def ledger_record_fx_credit_card_payment(
+        book_id: UUID,
+        request_id: UUID,
+        source_account_id: UUID,
+        source_trading_account_id: UUID,
+        source_asset_code: AssetCode,
+        source_amount: PlainDecimal,
+        target_trading_account_id: UUID,
+        target_account_id: UUID,
+        target_asset_code: AssetCode,
+        target_amount: PlainDecimal,
+        fee_amount: PlainDecimal,
+        fee_category_id: UUID,
+        fee_category_version_id: UUID,
+        effective_at: AwareDatetime,
+    ) -> LedgerWriteResponse:
+        token = _require_write_book(dependencies, book_id, request_id)
+        command_id, transaction_id = _write_ids(
+            token.subject or "",
+            book_id,
+            "ledger_record_fx_credit_card_payment",
+            request_id,
+        )
+        outcome = _call_write(
+            lambda: execute_record_fx_credit_card_payment(
+                RecordFxCreditCardPaymentCommand(
+                    book_id=book_id,
+                    command_id=command_id,
+                    transaction_id=transaction_id,
+                    expected_stream_version=0,
+                    source_account_id=source_account_id,
+                    source_trading_account_id=source_trading_account_id,
+                    source_asset_code=source_asset_code,
+                    source_amount=source_amount,
+                    target_trading_account_id=target_trading_account_id,
+                    target_account_id=target_account_id,
+                    target_asset_code=target_asset_code,
+                    target_amount=target_amount,
+                    fee_amount=fee_amount,
+                    fee_category_id=fee_category_id,
+                    fee_category_version_id=fee_category_version_id,
+                    effective_at=effective_at,
+                ),
+                raw_key=(
+                    "mcp:ledger_record_fx_credit_card_payment:"
+                    f"{request_id}"
+                ),
                 actor=CommandActor(token.subject or ""),
                 uow_factory=dependencies.uow_factory,
                 ledger_committer=dependencies.ledger_committer,

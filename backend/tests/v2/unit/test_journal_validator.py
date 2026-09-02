@@ -364,6 +364,7 @@ def test_transaction_kind_contract_has_only_the_approved_values() -> None:
         "transfer",
         "refund",
         "fx",
+        "credit_card_payment",
         "investment_cash",
     }
     assert not hasattr(TransactionKind, "GENERAL")

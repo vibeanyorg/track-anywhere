@@ -32,7 +32,12 @@ from .record_adjustment import (
     RecordAdjustmentCommand,
     execute_record_adjustment,
 )
-from .record_fx import RecordFxCommand, execute_record_fx
+from .record_fx import (
+    RecordFxCommand,
+    RecordFxCreditCardPaymentCommand,
+    execute_record_fx,
+    execute_record_fx_credit_card_payment,
+)
 from .correct_transaction import (
     CorrectTransactionCommand,
     CorrectionReplacement,
@@ -64,6 +69,7 @@ __all__ = [
     "ReportingAllocationExceeded",
     "ReportingLineInput",
     "RecordFxCommand",
+    "RecordFxCreditCardPaymentCommand",
     "RecordAdjustmentCommand",
     "ReverseTransactionCommand",
     "TransactionAlreadyReversed",
@@ -77,5 +83,6 @@ __all__ = [
     "execute_post_transaction",
     "execute_record_adjustment",
     "execute_record_fx",
+    "execute_record_fx_credit_card_payment",
     "execute_reverse_transaction",
 ]

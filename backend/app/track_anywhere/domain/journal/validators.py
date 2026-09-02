@@ -206,7 +206,10 @@ class JournalValidator:
         if imbalances:
             raise UnbalancedAsset(imbalances)
 
-        if checked_command.kind is TransactionKind.FX:
+        if checked_command.kind in {
+            TransactionKind.FX,
+            TransactionKind.CREDIT_CARD_PAYMENT,
+        }:
             exchanged_assets = set(balances)
             if len(exchanged_assets) < 2:
                 raise InvalidFxTransaction(

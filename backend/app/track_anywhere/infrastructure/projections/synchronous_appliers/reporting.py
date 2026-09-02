@@ -68,7 +68,14 @@ def _validate_reporting_lines(
     payload: ReportingLinesAssigned,
     transaction: JournalTransactionRecord,
 ) -> None:
-    if transaction.transaction_kind == "credit_card_payment":
+    source_event = session.get(LedgerEventRecord, transaction.source_event_id)
+    if (
+        transaction.transaction_kind == "credit_card_payment"
+        and (
+            source_event is None
+            or source_event.event_type != "JournalTransactionPosted"
+        )
+    ):
         raise SynchronousProjectionError(
             "credit-card payments cannot have reporting lines"
         )

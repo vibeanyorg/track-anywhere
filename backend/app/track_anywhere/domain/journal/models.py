@@ -21,6 +21,7 @@ class TransactionKind(str, Enum):
     TRANSFER = "transfer"
     REFUND = "refund"
     FX = "fx"
+    CREDIT_CARD_PAYMENT = "credit_card_payment"
     INVESTMENT_CASH = "investment_cash"
 
 

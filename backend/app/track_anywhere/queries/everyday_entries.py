@@ -656,6 +656,7 @@ def _build_view(
         facts,
         kind=kind,
         transaction_amount=amount,
+        cross_asset=len({posting.asset_code for posting in item.postings}) > 1,
     )
     narrative = _narrative_view(
         item.description_ref,
@@ -798,6 +799,9 @@ def _account_displays(
     elif kind is EverydayEntryKind.TRANSFER:
         values = (credit, debit, None)
         available = credit is not None and debit is not None
+    elif kind is EverydayEntryKind.CREDIT_CARD_PAYMENT:
+        values = (credit, debit, None)
+        available = credit is not None and debit is not None
     elif kind in {EverydayEntryKind.ADJUSTMENT, EverydayEntryKind.REVERSAL}:
         values = (credit, debit, None)
         available = credit is not None or debit is not None
@@ -831,12 +835,12 @@ def _category_allocations(
     *,
     kind: EverydayEntryKind,
     transaction_amount: AssetUnitAmount | None,
+    cross_asset: bool,
 ) -> tuple[tuple[CategoryAllocationView, ...], FieldAvailability]:
     if kind in {
         EverydayEntryKind.TRANSFER,
-        EverydayEntryKind.CREDIT_CARD_PAYMENT,
         EverydayEntryKind.ADJUSTMENT,
-    }:
+    } or (kind is EverydayEntryKind.CREDIT_CARD_PAYMENT and not cross_asset):
         return (), FieldAvailability.NOT_APPLICABLE
     lines = facts.reporting
     if not lines and kind in {EverydayEntryKind.REFUND, EverydayEntryKind.REVERSAL}:
