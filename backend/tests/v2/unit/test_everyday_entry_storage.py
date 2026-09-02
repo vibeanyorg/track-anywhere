@@ -239,6 +239,13 @@ def test_narrative_amount_source_text_is_bounded_and_redacted(
     assert "private-source-" not in str(error.value)
 
 
+@pytest.mark.parametrize("field_path", ("source_amount", "fee_amount"))
+def test_fx_card_amount_source_paths_are_supported(field_path: str) -> None:
+    source = NarrativeAmountSource(field_path=field_path, source_text="private amount")
+
+    assert source.field_path == field_path
+
+
 @pytest.mark.parametrize(
     "field_path",
     (

@@ -34,7 +34,7 @@ class NarrativeAmountSource(FrozenContract):
 
     field_path: StrictStr = Field(
         pattern=(
-            r"^(?:amount|actual_balance|"
+            r"^(?:amount|actual_balance|source_amount|fee_amount|"
             r"narrative\.(?:gross_amount|discount_amount)|"
             r"category_allocations\.(?:[0-9]|[1-5][0-9]|6[0-3])\.amount)$"
         ),
@@ -74,7 +74,7 @@ class TransactionNarrativeV2(FrozenContract):
 
     contract_version: Literal[2] = 2
     amount_sources: tuple[NarrativeAmountSource, ...] = Field(
-        max_length=67,
+        max_length=69,
         repr=False,
     )
     purpose: StrictStr | None = Field(default=None, repr=False)
@@ -123,7 +123,7 @@ class TransactionNarrative(FrozenContract):
 
     amount_sources: tuple[NarrativeAmountSource, ...] = Field(
         default=(),
-        max_length=67,
+        max_length=69,
         repr=False,
     )
     purpose: StrictStr | None = Field(default=None, repr=False)
