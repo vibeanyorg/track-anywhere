@@ -24,6 +24,7 @@ from track_anywhere.application.entries.compiler import (
     OriginalEntry,
     compile_entry,
 )
+from track_anywhere.application.entries.prepare import preview_and_resolved
 from track_anywhere.application.entries.duplicate_detector import (
     DuplicateCandidate,
     DuplicateEvidenceKind,
@@ -77,6 +78,9 @@ EXPENSE_CLEARING_ID = UUID("00000000-0000-0000-0000-000000000012")
 INCOME_CLEARING_ID = UUID("00000000-0000-0000-0000-000000000013")
 ADJUSTMENT_ID = UUID("00000000-0000-0000-0000-000000000014")
 BANK_ID = UUID("00000000-0000-0000-0000-000000000015")
+USD_CARD_ID = UUID("00000000-0000-0000-0000-000000000016")
+CNY_FX_ID = UUID("00000000-0000-0000-0000-000000000017")
+USD_FX_ID = UUID("00000000-0000-0000-0000-000000000018")
 FOOD_ID = UUID("00000000-0000-0000-0000-000000000020")
 DRINK_ID = UUID("00000000-0000-0000-0000-000000000021")
 FOOD_VERSION_ID = UUID("00000000-0000-0000-0000-000000000030")
@@ -104,12 +108,13 @@ def _account(
     subtype: str | None = None,
     role: AccountSystemRole = AccountSystemRole.STANDARD,
     last4: str | None = None,
+    asset_code: str = "CNY",
 ) -> EntryAccount:
     return EntryAccount(
         account_id=account_id,
         book_id=BOOK_ID,
         display_name=display_name,
-        asset_code="CNY",
+        asset_code=asset_code,
         account_type=account_type,
         account_subtype=subtype,
         system_role=role,
@@ -580,6 +585,81 @@ def test_card_payment_is_typed_and_has_no_reporting_event() -> None:
         (WALLET_ID, PostingSide.CREDIT, "200000"),
     )
     assert ("reporting_lines", TRANSACTION_ID) not in plan.expected_stream_versions
+
+
+def test_fx_card_payment_preserves_both_amounts_and_only_reports_the_fee() -> None:
+    usd = EntryAsset(
+        asset_code="USD",
+        kind="fiat",
+        ledger_scale=2,
+        input_scale=2,
+        minor_unit_scale=2,
+    )
+    accounts = _accounts() + (
+        _account(
+            USD_CARD_ID,
+            "广发 Visa",
+            AccountType.LIABILITY,
+            subtype="credit_card",
+            asset_code="USD",
+        ),
+        _account(
+            CNY_FX_ID,
+            "FX trading CNY",
+            AccountType.SYSTEM,
+            role=AccountSystemRole.FX_TRADING,
+        ),
+        _account(
+            USD_FX_ID,
+            "FX trading USD",
+            AccountType.SYSTEM,
+            role=AccountSystemRole.FX_TRADING,
+            asset_code="USD",
+        ),
+    )
+    context = replace(_context(accounts=accounts), assets=(_asset(), usd))
+    entry = CreditCardPaymentEntryInput(
+        amount=MoneyInput(
+            value="2.06",
+            asset_code="USD",
+            source_text="$2.06",
+        ),
+        source_amount=_money("13.88", source_text="¥13.88"),
+        fee_amount=_money("0.10", source_text="¥0.10"),
+        fee_category=CategoryRef(category_id=FOOD_ID),
+        funding_account=AccountRef(account_id=WALLET_ID),
+        card_account=AccountRef(account_id=USD_CARD_ID),
+        occurred_at=OCCURRED_AT,
+    )
+
+    plan = compile_entry(entry, context=context)
+    preview, resolved = preview_and_resolved(entry, context=context, plan=plan)
+
+    financial = plan.events[0].payload
+    reporting = plan.events[1].payload
+    assert type(financial) is JournalTransactionPosted
+    assert financial.kind is TransactionKind.CREDIT_CARD_PAYMENT
+    assert tuple(
+        (posting.account_id, posting.asset_code, posting.side, posting.units)
+        for posting in financial.postings
+    ) == (
+        (USD_CARD_ID, "USD", PostingSide.DEBIT, "206"),
+        (USD_FX_ID, "USD", PostingSide.CREDIT, "206"),
+        (CNY_FX_ID, "CNY", PostingSide.DEBIT, "1388"),
+        (EXPENSE_CLEARING_ID, "CNY", PostingSide.DEBIT, "10"),
+        (WALLET_ID, "CNY", PostingSide.CREDIT, "1398"),
+    )
+    assert type(reporting) is ReportingLinesAssigned
+    assert tuple(
+        (line.asset_code, line.units, line.dimension_id) for line in reporting.lines
+    ) == (("CNY", "10", FOOD_ID),)
+    assert preview.amount.value == "2.06"
+    assert preview.source_amount is not None
+    assert preview.source_amount.value == "13.88"
+    assert preview.fee_amount is not None
+    assert preview.fee_amount.value == "0.10"
+    assert resolved.source_trading_account_id == CNY_FX_ID
+    assert resolved.target_trading_account_id == USD_FX_ID
 
 
 def test_reporting_builder_validates_proposed_postings_without_projection() -> None:

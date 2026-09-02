@@ -66,7 +66,6 @@ from .contracts import (
     AccountRef,
     AdjustmentEntryInput,
     BalanceInput,
-    CategoryRef,
     Clarification,
     ClarificationCode,
     ClarificationChoice,
@@ -561,9 +560,14 @@ def preview_and_resolved(
             )
         )
     elif isinstance(entry, CreditCardPaymentEntryInput):
-        assert isinstance(financial, CreditCardTransactionRecorded)
-        funding = financial.counter_account_id
-        card = financial.card_account_id
+        if entry.source_amount is None:
+            assert isinstance(financial, CreditCardTransactionRecorded)
+            funding = financial.counter_account_id
+            card = financial.card_account_id
+        else:
+            assert isinstance(financial, JournalTransactionPosted)
+            card = financial.postings[0].account_id
+            funding = financial.postings[4].account_id
         preview_accounts.extend(
             (
                 PreviewAccount(
@@ -595,6 +599,18 @@ def preview_and_resolved(
         funding_account_id=funding,
         card_account_id=card,
         adjusted_account_id=adjusted,
+        source_trading_account_id=(
+            financial.postings[2].account_id
+            if isinstance(entry, CreditCardPaymentEntryInput)
+            and entry.source_amount is not None
+            else None
+        ),
+        target_trading_account_id=(
+            financial.postings[1].account_id
+            if isinstance(entry, CreditCardPaymentEntryInput)
+            and entry.source_amount is not None
+            else None
+        ),
         category_ids=category_ids,
         category_version_ids=category_versions,
         original_transaction_id=(
@@ -603,15 +619,52 @@ def preview_and_resolved(
             else None
         ),
     )
+    source_preview = fee_preview = None
+    summary = f"{entry.kind.replace('_', ' ').title()} {value} {asset_code}"
+    if (
+        isinstance(entry, CreditCardPaymentEntryInput)
+        and entry.source_amount is not None
+    ):
+        source_posting = financial.postings[2]
+        fee_posting = financial.postings[3]
+        source_asset = next(
+            item
+            for item in context.assets
+            if item.asset_code == source_posting.asset_code
+        )
+        source_value = _format_units(
+            int(source_posting.units), source_asset.ledger_scale
+        )
+        fee_value = _format_units(int(fee_posting.units), source_asset.ledger_scale)
+        gross_value = _format_units(
+            int(financial.postings[4].units), source_asset.ledger_scale
+        )
+        source_preview = PreviewMoney(
+            value=source_value,
+            asset_code=source_asset.asset_code,
+            display=f"{source_value} {source_asset.asset_code}",
+        )
+        fee_preview = PreviewMoney(
+            value=fee_value,
+            asset_code=source_asset.asset_code,
+            display=f"{fee_value} {source_asset.asset_code}",
+        )
+        summary = (
+            f"Cross-asset card payment {value} {asset_code}; funding total "
+            f"{gross_value} {source_asset.asset_code} (principal {source_value}, "
+            f"fee {fee_value})"
+        )
     preview = EntryPreview(
         kind=entry.kind,
-        summary=f"{entry.kind.replace('_', ' ').title()} {value} {asset_code}",
+        summary=summary,
         amount=PreviewMoney(
             value=value,
             asset_code=asset_code,
             display=f"{value} {asset_code}",
         ),
         occurred_at=entry.occurred_at,
+        source_amount=source_preview,
+        fee_amount=fee_preview,
         accounts=tuple(preview_accounts),
         category_paths=tuple(category_by_id[item].path for item in category_ids),
     )
@@ -643,6 +696,11 @@ def canonical_prepared_payload(
     category_ids = iter(resolved.category_ids)
     if "category" in resolved_entry and resolved_entry.get("category") is not None:
         resolved_entry["category"] = {"category_id": str(next(category_ids))}
+    if (
+        "fee_category" in resolved_entry
+        and resolved_entry.get("fee_category") is not None
+    ):
+        resolved_entry["fee_category"] = {"category_id": str(next(category_ids))}
     allocations = resolved_entry.get("category_allocations")
     if isinstance(allocations, list):
         for allocation in allocations:
@@ -816,6 +874,8 @@ def _fingerprint(
             entry.kind,
             preview.amount.value,
             preview.amount.asset_code,
+            "-" if preview.source_amount is None else preview.source_amount.value,
+            "-" if preview.fee_amount is None else preview.fee_amount.value,
             format_utc_microseconds(entry.occurred_at),
             str(
                 resolved.source_account_id
@@ -1005,6 +1065,8 @@ def _collect_amount_sources(
         append("actual_balance", entry.actual_balance)
     else:
         append("amount", entry.amount)
+        append("source_amount", getattr(entry, "source_amount", None))
+        append("fee_amount", getattr(entry, "fee_amount", None))
     for index, allocation in enumerate(
         getattr(entry, "category_allocations", ())
     ):
@@ -1055,7 +1117,7 @@ def _amount_source_targets(
             )
         targets[field_path] = candidate
 
-    for field in ("amount", "actual_balance"):
+    for field in ("amount", "actual_balance", "source_amount", "fee_amount"):
         if field in value and value[field] is not None:
             add(field, value[field])
     allocations = value.get("category_allocations", [])

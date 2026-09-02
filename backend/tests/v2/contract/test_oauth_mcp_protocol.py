@@ -135,6 +135,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
     entry_prepare_tools = {
         "ledger_prepare_adjustment",
         "ledger_prepare_credit_card_payment",
+        "ledger_prepare_fx_credit_card_payment",
         "ledger_prepare_expense",
         "ledger_prepare_income",
         "ledger_prepare_refund",

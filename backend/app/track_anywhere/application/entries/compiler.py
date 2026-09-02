@@ -37,7 +37,6 @@ from .category_resolver import (
 )
 from .contracts import (
     AdjustmentEntryInput,
-    CategoryAllocationInput,
     Clarification,
     ClarificationCode,
     CreditCardPaymentEntryInput,
@@ -302,6 +301,8 @@ def _compile_card_payment(
     context: EntryCompilationContext,
     asset: EntryAsset,
 ) -> LedgerWritePlan:
+    if entry.source_amount is not None:
+        return _compile_fx_card_payment(entry, context=context, target_asset=asset)
     amount = normalize_amount(entry.amount, asset=asset)
     if entry.card_account is None:
         raise EntryGatewayError(
@@ -344,6 +345,110 @@ def _compile_card_payment(
             postings=postings,
         ),
         transaction_kind="credit_card_payment",
+    )
+
+
+def _compile_fx_card_payment(
+    entry: CreditCardPaymentEntryInput,
+    *,
+    context: EntryCompilationContext,
+    target_asset: EntryAsset,
+) -> LedgerWritePlan:
+    assert entry.source_amount is not None
+    assert entry.fee_amount is not None
+    assert entry.fee_category is not None
+    if entry.card_account is None:
+        raise EntryGatewayError(
+            EntryErrorCode.INVALID_INPUT,
+            "credit-card payment instrument was not resolved",
+            field="payment_instrument",
+        )
+    source_asset = _asset(context, entry.source_amount.asset_code)
+    target = normalize_amount(entry.amount, asset=target_asset)
+    source = normalize_amount(entry.source_amount, asset=source_asset)
+    fee = normalize_amount(entry.fee_amount, asset=source_asset)
+    funding = _account(
+        entry.funding_account,
+        context=context,
+        asset_code=source_asset.asset_code,
+        use=AccountUse.CARD_PAYMENT_FUNDING,
+        field="funding_account",
+    )
+    card = _account(
+        entry.card_account,
+        context=context,
+        asset_code=target_asset.asset_code,
+        use=AccountUse.CARD_PAYMENT_CARD,
+        field="card_account",
+    )
+    source_trading = resolve_internal_account(
+        accounts=context.accounts,
+        book_id=context.book_id,
+        asset_code=source_asset.asset_code,
+        role=AccountSystemRole.FX_TRADING,
+    )
+    target_trading = resolve_internal_account(
+        accounts=context.accounts,
+        book_id=context.book_id,
+        asset_code=target_asset.asset_code,
+        role=AccountSystemRole.FX_TRADING,
+    )
+    fee_clearing = resolve_internal_account(
+        accounts=context.accounts,
+        book_id=context.book_id,
+        asset_code=source_asset.asset_code,
+        role=AccountSystemRole.EXPENSE_CLEARING,
+    )
+    require_distinct_accounts(funding.account_id, card.account_id)
+    category = _category(
+        entry.fee_category,
+        context=context,
+        usage_kind=CategoryUsageKind.EXPENSE,
+        field="fee_category",
+    )
+    postings = _mixed_postings(
+        context,
+        transaction_kind=TransactionKind.CREDIT_CARD_PAYMENT,
+        legs=(
+            (card, target_asset.asset_code, PostingSide.DEBIT, target.units),
+            (
+                target_trading,
+                target_asset.asset_code,
+                PostingSide.CREDIT,
+                target.units,
+            ),
+            (
+                source_trading,
+                source_asset.asset_code,
+                PostingSide.DEBIT,
+                source.units,
+            ),
+            (
+                fee_clearing,
+                source_asset.asset_code,
+                PostingSide.DEBIT,
+                fee.units,
+            ),
+            (
+                funding,
+                source_asset.asset_code,
+                PostingSide.CREDIT,
+                source.units + fee.units,
+            ),
+        ),
+    )
+    return _plan(
+        entry=entry,
+        context=context,
+        financial=JournalTransactionPosted(
+            transaction_id=context.transaction_id,
+            kind=TransactionKind.CREDIT_CARD_PAYMENT,
+            postings=postings,
+        ),
+        transaction_kind=TransactionKind.CREDIT_CARD_PAYMENT.value,
+        allocations=(_ResolvedAllocation(category=category, units=fee.units),),
+        line_kind=ReportingLineKind.EXPENSE,
+        reporting_asset_code=source_asset.asset_code,
     )
 
 
@@ -516,6 +621,7 @@ def _plan(
     transaction_kind: str,
     allocations: tuple[_ResolvedAllocation, ...] = (),
     line_kind: ReportingLineKind | None = None,
+    reporting_asset_code: str | None = None,
 ) -> LedgerWritePlan:
     financial_event_id = uuid5(_FINANCIAL_EVENT_NAMESPACE, str(context.command_id))
     financial_pending = PendingEvent(
@@ -544,7 +650,7 @@ def _plan(
                     f"{context.command_id}:{position}:version",
                 ),
                 catalog_id=allocation.category.category_version_id,
-                asset_code=_financial_asset(financial),
+                asset_code=reporting_asset_code or _financial_asset(financial),
                 units=str(allocation.units),
                 line_kind=line_kind,
                 dimension=ReportingDimension.CATEGORY,
@@ -599,6 +705,19 @@ def _postings(
     units: int,
     legs: tuple[tuple[EntryAccount, PostingSide], tuple[EntryAccount, PostingSide]],
 ) -> tuple[JournalPostingFact, ...]:
+    return _mixed_postings(
+        context,
+        transaction_kind=TransactionKind.STANDARD,
+        legs=tuple((account, asset_code, side, units) for account, side in legs),
+    )
+
+
+def _mixed_postings(
+    context: EntryCompilationContext,
+    *,
+    transaction_kind: TransactionKind,
+    legs: tuple[tuple[EntryAccount, str, PostingSide, int], ...],
+) -> tuple[JournalPostingFact, ...]:
     drafts = tuple(
         PostingDraft(
             posting_id=str(
@@ -609,21 +728,21 @@ def _postings(
             ),
             position=position,
             account_id=str(account.account_id),
-            asset_code=asset_code,
+            asset_code=leg_asset_code,
             side=side,
-            units=units,
+            units=leg_units,
         )
-        for position, (account, side) in enumerate(legs)
+        for position, (account, leg_asset_code, side, leg_units) in enumerate(legs)
     )
     JournalValidator.validate(
         PostTransaction(
             transaction_id=str(context.transaction_id),
             book_id=str(context.book_id),
-            kind=TransactionKind.STANDARD,
+            kind=transaction_kind,
             postings=drafts,
         ),
         catalog=AccountCatalogSnapshot(
-            accounts=tuple(_domain_account(account) for account, _ in legs)
+            accounts=tuple(_domain_account(account) for account, _, _, _ in legs)
         ),
     )
     return tuple(

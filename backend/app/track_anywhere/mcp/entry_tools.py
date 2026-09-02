@@ -292,6 +292,50 @@ def register_entry_tools(
         )
 
     @mcp.tool(
+        name="ledger_prepare_fx_credit_card_payment",
+        title="Preview a cross-asset credit-card payment",
+        description=(
+            "Use this when the user pays a credit-card liability in one asset "
+            "from an account in another asset. "
+            f"{_AMOUNT_DESCRIPTION} target_amount is the exact card payment; "
+            "source_amount is the exchanged principal and excludes fee_amount. "
+            "The funding account is charged source_amount plus fee_amount. "
+            "Supply an expense-eligible fee category. Never infer either amount "
+            "or an exchange rate. "
+            f"{_PREPARE_DESCRIPTION}"
+        ),
+        annotations=ENTRY_PREPARE_ANNOTATIONS,
+        meta=ENTRY_PREPARE_TOOL_META,
+    )
+    def ledger_prepare_fx_credit_card_payment(
+        book_id: UUID,
+        target_amount: MoneyInput,
+        source_amount: MoneyInput,
+        fee_amount: MoneyInput,
+        funding_account: AccountRef,
+        fee_category: CategoryRef,
+        occurred_at: AwareDatetime,
+        card_account: AccountRef | None = None,
+        payment_instrument: PaymentInstrumentRef | None = None,
+        narrative: EntryNarrativeInput | None = None,
+    ) -> McpPreparedEntry:
+        return _prepare(
+            book_id=book_id,
+            entry=CreditCardPaymentEntryInput(
+                amount=target_amount,
+                source_amount=source_amount,
+                fee_amount=fee_amount,
+                funding_account=funding_account,
+                fee_category=fee_category,
+                card_account=card_account,
+                payment_instrument=payment_instrument,
+                occurred_at=occurred_at,
+                narrative=narrative,
+            ),
+            service_provider=service_provider,
+        )
+
+    @mcp.tool(
         name="ledger_prepare_refund",
         title="Preview a refund",
         description=(

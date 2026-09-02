@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal, Protocol, TypeAlias, runtime_checkable
 from uuid import UUID
@@ -304,6 +303,9 @@ class CreditCardPaymentEntryInput(_TimedEntryInput):
     funding_account: AccountRef
     card_account: AccountRef | None = None
     payment_instrument: PaymentInstrumentRef | None = None
+    source_amount: MoneyInput | None = None
+    fee_amount: MoneyInput | None = None
+    fee_category: CategoryRef | None = None
 
     @model_validator(mode="after")
     def validate_payment_target(self) -> CreditCardPaymentEntryInput:
@@ -317,6 +319,18 @@ class CreditCardPaymentEntryInput(_TimedEntryInput):
             and self.funding_account == self.card_account
         ):
             raise ValueError("credit-card payment accounts must be distinct")
+        fx_fields = (self.source_amount, self.fee_amount, self.fee_category)
+        if any(value is not None for value in fx_fields):
+            if any(value is None for value in fx_fields):
+                raise ValueError(
+                    "cross-asset card payment requires source amount, fee amount, "
+                    "and fee category"
+                )
+            assert self.source_amount is not None and self.fee_amount is not None
+            if self.source_amount.asset_code == self.amount.asset_code:
+                raise ValueError("cross-asset card payment requires two assets")
+            if self.fee_amount.asset_code != self.source_amount.asset_code:
+                raise ValueError("fee asset must match the source asset")
         return self
 
 
@@ -397,6 +411,8 @@ class EntryPreview(EntryContract):
     ]
     summary: NonBlankText
     amount: PreviewMoney
+    source_amount: PreviewMoney | None = None
+    fee_amount: PreviewMoney | None = None
     occurred_at: AwareDatetime
     accounts: tuple[PreviewAccount, ...] = Field(default=(), max_length=4)
     category_paths: tuple[tuple[StrictStr, ...], ...] = Field(
@@ -428,6 +444,8 @@ class ResolvedEntryReferences(EntryContract):
     funding_account_id: UUID | None = None
     card_account_id: UUID | None = None
     adjusted_account_id: UUID | None = None
+    source_trading_account_id: UUID | None = None
+    target_trading_account_id: UUID | None = None
     category_ids: tuple[UUID, ...] = Field(default=(), max_length=64)
     category_version_ids: tuple[UUID, ...] = Field(default=(), max_length=64)
     original_transaction_id: UUID | None = None

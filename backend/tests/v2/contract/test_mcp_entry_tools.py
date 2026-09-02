@@ -53,6 +53,7 @@ PREPARE_TOOL_NAMES = {
     "ledger_prepare_income",
     "ledger_prepare_transfer",
     "ledger_prepare_credit_card_payment",
+    "ledger_prepare_fx_credit_card_payment",
     "ledger_prepare_refund",
     "ledger_prepare_adjustment",
 }
@@ -269,6 +270,20 @@ def _arguments_by_tool() -> dict[str, dict[str, object]]:
             "funding_account": _account(),
             "card_account": _account(OTHER_ACCOUNT_ID),
         },
+        "ledger_prepare_fx_credit_card_payment": {
+            **common,
+            "target_amount": {
+                "value": "2.06",
+                "denomination": "asset_unit",
+                "asset_code": "USD",
+                "source_text": "$2.06",
+            },
+            "source_amount": _money("13.88", "¥13.88"),
+            "fee_amount": _money("0.10", "¥0.10"),
+            "funding_account": _account(),
+            "card_account": _account(OTHER_ACCOUNT_ID),
+            "fee_category": {"path": ["金融", "手续费"]},
+        },
         "ledger_prepare_refund": {
             **common,
             "original_transaction_id": str(ORIGINAL_ID),
@@ -345,6 +360,11 @@ def test_entry_descriptors_keep_prepare_friendly_and_commit_narrow() -> None:
         "category"
         not in by_name["ledger_prepare_credit_card_payment"].inputSchema["properties"]
     )
+    fx_payment = by_name["ledger_prepare_fx_credit_card_payment"].inputSchema
+    assert {"target_amount", "source_amount", "fee_amount", "fee_category"} <= set(
+        fx_payment["required"]
+    )
+    assert "amount" not in fx_payment["properties"]
     assert (
         "actual_balance" in by_name["ledger_prepare_adjustment"].inputSchema["required"]
     )
@@ -399,6 +419,7 @@ def test_runtime_provider_construction_does_not_require_entry_secrets() -> None:
         ("ledger_prepare_income", "income"),
         ("ledger_prepare_transfer", "transfer"),
         ("ledger_prepare_credit_card_payment", "credit_card_payment"),
+        ("ledger_prepare_fx_credit_card_payment", "credit_card_payment"),
         ("ledger_prepare_refund", "refund"),
         ("ledger_prepare_adjustment", "adjustment"),
     ],
