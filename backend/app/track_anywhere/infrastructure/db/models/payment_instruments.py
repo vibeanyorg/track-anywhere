@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     ForeignKeyConstraint,
@@ -17,7 +18,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..base import V2Base
-
 
 _NOW = text("clock_timestamp()")
 
@@ -74,6 +74,13 @@ class PaymentInstrumentRecord(V2Base):
     current_name: Mapped[str] = mapped_column(Text)
     last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="active")
+    version: Mapped[int] = mapped_column(Integer, server_default=text("1"))
+    effective_from: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=_NOW
+    )
+    effective_to: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )
@@ -186,3 +193,24 @@ __all__ = [
     "PaymentInstrumentRecord",
     "PaymentInstrumentTransactionRecord",
 ]
+
+
+class PaymentInstrumentMutationRecord(V2Base):
+    __tablename__ = "payment_instrument_mutations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["book_id", "instrument_id"],
+            ["payment_instruments.book_id", "payment_instruments.instrument_id"],
+            ondelete="RESTRICT",
+        ),
+    )
+    book_id: Mapped[UUID] = mapped_column(primary_key=True)
+    request_id: Mapped[UUID] = mapped_column(primary_key=True)
+    instrument_id: Mapped[UUID]
+    actor_subject_id: Mapped[str] = mapped_column(Text)
+    command: Mapped[dict] = mapped_column(JSON)
+    before: Mapped[dict] = mapped_column(JSON)
+    after: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=_NOW
+    )

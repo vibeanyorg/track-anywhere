@@ -282,3 +282,27 @@ def test_gateway_errors_expose_stable_codes_without_dynamic_payloads() -> None:
     assert error.field == "source_account"
     assert error.retryable is False
     assert str(error) == "account selection is ambiguous"
+
+
+def test_payment_instrument_mutation_fields_are_operation_specific():
+    from uuid import uuid4
+    from pydantic import ValidationError
+    from track_anywhere.application.payment_instruments.contracts import (
+        PaymentInstrumentMutation,
+    )
+
+    identity = dict(book_id=uuid4(), instrument_id=uuid4(), request_id=uuid4())
+    for fields in (
+        dict(operation="update"),
+        dict(operation="update", current_name="  "),
+        dict(operation="close", network="visa"),
+        dict(operation="add_binding", asset_code="USD"),
+        dict(operation="close_binding", binding_id=uuid4()),
+        dict(operation="update", network=None),
+    ):
+        with pytest.raises(ValidationError):
+            PaymentInstrumentMutation(**identity, **fields)
+    assert (
+        PaymentInstrumentMutation(**identity, operation="update", last4=None).last4
+        is None
+    )

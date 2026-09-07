@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import (
@@ -113,25 +114,99 @@ class CreatePaymentInstrument(FrozenContract):
         return normalized
 
 
+class PaymentInstrumentBindingView(FrozenContract):
+    binding_id: UUID
+    asset_code: str
+    settlement_policy: SettlementPolicy
+    settlement_account_id: UUID
+    settlement_account_name: str
+    binding_role: BindingRole
+    status: str
+    effective_from: datetime
+    effective_to: datetime | None
+
+
+class PaymentInstrumentMutation(FrozenContract):
+    book_id: UUID
+    request_id: UUID
+    instrument_id: UUID
+    operation: Literal["update", "close", "reopen", "add_binding", "close_binding"]
+    current_name: StrictStr | None = Field(default=None, min_length=1, max_length=512)
+    network: CardNetwork | None = None
+    provider_code: StrictStr | None = Field(
+        default=None, pattern=r"^[a-z][a-z0-9_-]{0,31}$"
+    )
+    form_factor: CardFormFactor | None = None
+    last4: StrictStr | None = Field(default=None, pattern=r"^[0-9]{4}$")
+    binding_id: UUID | None = None
+    settlement_account_id: UUID | None = None
+    asset_code: StrictStr | None = Field(
+        default=None, pattern=r"^[A-Z][A-Z0-9._-]{0,15}$"
+    )
+    settlement_policy: SettlementPolicy | None = None
+    effective_from: AwareDatetime | None = None
+    effective_to: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def validate_operation(self) -> PaymentInstrumentMutation:
+        allowed = {
+            "update": {
+                "current_name",
+                "network",
+                "provider_code",
+                "form_factor",
+                "last4",
+            },
+            "close": set(),
+            "reopen": set(),
+            "add_binding": {
+                "settlement_account_id",
+                "asset_code",
+                "settlement_policy",
+                "effective_from",
+            },
+            "close_binding": {"binding_id", "effective_to"},
+        }[self.operation]
+        supplied = self.model_fields_set - {
+            "book_id",
+            "request_id",
+            "instrument_id",
+            "operation",
+        }
+        if supplied - allowed or (self.operation == "update" and not supplied):
+            raise ValueError("invalid fields for payment instrument operation")
+        if self.operation in {"add_binding", "close_binding"} and any(
+            getattr(self, f) is None for f in allowed
+        ):
+            raise ValueError("missing required binding fields")
+        if any(getattr(self, f) is None for f in supplied - {"last4"}):
+            raise ValueError("only last4 can be cleared")
+        if self.current_name is not None and not self.current_name.strip():
+            raise ValueError("current_name must be nonblank")
+        return self
+
+
 class PaymentInstrumentView(FrozenContract):
     model_config = ConfigDict(extra="forbid", frozen=True, from_attributes=True)
 
     book_id: UUID
     instrument_id: UUID
-    binding_id: UUID
+    binding_id: UUID | None
     instrument_kind: str
     current_name: str
     form_factor: CardFormFactor
     network: CardNetwork
     provider_code: str
-    settlement_policy: SettlementPolicy
-    settlement_account_id: UUID
-    asset_code: str
-    binding_role: BindingRole
+    settlement_policy: SettlementPolicy | None
+    settlement_account_id: UUID | None
+    asset_code: str | None
+    binding_role: BindingRole | None
     last4: str | None
     status: str
     effective_from: datetime
     effective_to: datetime | None
+    bindings: tuple[PaymentInstrumentBindingView, ...] = ()
+    version: int = 1
 
 
 __all__ = [

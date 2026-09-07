@@ -48,6 +48,7 @@ from .contracts import (
     CommitEntryInput,
     CommittedEntry,
     EverydayEntryInput,
+    ResolvedEntryReferences,
 )
 from .errors import EntryErrorCode, EntryGatewayError
 from .prepare import (
@@ -75,7 +76,10 @@ class CommitPreparedEntryCommand:
             for value in (self.book_id, self.command_id, self.intent_id)
         ):
             raise IdempotencyValidationError("entry commit identifiers are invalid")
-        if type(self.commit_token_hash) is not bytes or len(self.commit_token_hash) != 32:
+        if (
+            type(self.commit_token_hash) is not bytes
+            or len(self.commit_token_hash) != 32
+        ):
             raise IdempotencyValidationError("entry commit token digest is invalid")
 
     def idempotency_payload(self) -> dict[str, JSONValue]:
@@ -194,6 +198,9 @@ def _build_commit_plan(
         payload.get("entry"),
         amount_sources=amount_sources,
     )
+    prepared_resolved = ResolvedEntryReferences.model_validate(
+        _thaw_json(payload.get("resolved"))
+    )
     instrument_resolution = _revalidate_payment_instrument(
         uow,
         book_id=command.book_id,
@@ -218,6 +225,8 @@ def _build_commit_plan(
                 update={
                     "payment_instrument_id": instrument_id,
                     "payment_instrument_binding_id": binding_id,
+                    "payment_instrument_name": prepared_resolved.payment_instrument_name,
+                    "payment_instrument_version": prepared_resolved.payment_instrument_version,
                 }
             )
     except EntryGatewayError as error:
@@ -227,10 +236,9 @@ def _build_commit_plan(
             EntryErrorCode.INTENT_STALE,
             "entry accounts or categories changed after prepare",
         ) from error
-    if (
-        preview.model_dump(mode="json") != _thaw_json(payload.get("preview"))
-        or resolved.model_dump(mode="json") != _thaw_json(payload.get("resolved"))
-    ):
+    if preview.model_dump(mode="json") != _thaw_json(
+        payload.get("preview")
+    ) or resolved.model_dump(mode="json") != prepared_resolved.model_dump(mode="json"):
         raise EntryGatewayError(
             EntryErrorCode.INTENT_STALE,
             "entry accounts or categories changed after prepare",

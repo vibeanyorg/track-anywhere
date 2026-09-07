@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
-from pydantic import AwareDatetime, Field, StrictStr
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import AwareDatetime, BaseModel, Field, StrictStr
 from sqlalchemy.orm import Session
 
 from ...application.payment_instruments import (
@@ -17,6 +17,8 @@ from ...application.payment_instruments import (
     get_payment_instrument,
     list_payment_instruments,
 )
+from ...application.payment_instruments.contracts import PaymentInstrumentMutation
+from ...application.payment_instruments.service import mutate_payment_instrument
 from ..dependencies import SessionDependency, UnitOfWorkFactory
 from .query_routes.authorization import authorize_book_read
 from .schemas import (
@@ -28,6 +30,14 @@ from .schemas import (
     call_application,
     create_actor_dependency,
 )
+
+
+class PaymentInstrumentMutationResponse(BaseModel):
+    request_id: UUID
+    committed: Literal[True] = True
+    replayed: bool
+    verification_status: Literal["verified"] = "verified"
+    instrument: PaymentInstrumentView
 
 
 class CreatePaymentInstrumentRequest(StrictRequest):
@@ -84,6 +94,30 @@ def create_payment_instrument_router(
             )
         )
 
+    @router.post(
+        "/books/{book_id}/payment-instruments/{instrument_id}/mutations",
+        response_model=PaymentInstrumentMutationResponse,
+    )
+    def mutate(
+        book_id: UUID,
+        instrument_id: UUID,
+        payload: PaymentInstrumentMutation,
+        actor: RequestActor = Depends(request_actor),
+    ) -> PaymentInstrumentMutationResponse:
+        command_actor = actor.require_book_scope(book_id, "book:write")
+        if payload.book_id != book_id or payload.instrument_id != instrument_id:
+            raise HTTPException(
+                status_code=422, detail="path and command identifiers must match"
+            )
+        instrument, replayed = call_application(
+            lambda: mutate_payment_instrument(
+                payload, actor=command_actor, uow_factory=uow_factory
+            )
+        )
+        return PaymentInstrumentMutationResponse(
+            request_id=payload.request_id, replayed=replayed, instrument=instrument
+        )
+
     @router.get(
         "/books/{book_id}/payment-instruments",
         response_model=tuple[PaymentInstrumentView, ...],
@@ -91,7 +125,7 @@ def create_payment_instrument_router(
     def list_all(
         book_id: UUID,
         request: Request,
-        status: Literal["active", "frozen", "closed"] | None = None,
+        status: Literal["active", "frozen", "closed", "inactive", "all"] | None = None,
         asset_code: AssetCode | None = None,
         name: str | None = None,
         session: Session = Depends(get_session),

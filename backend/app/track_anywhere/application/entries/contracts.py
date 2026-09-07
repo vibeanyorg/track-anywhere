@@ -451,6 +451,8 @@ class ResolvedEntryReferences(EntryContract):
     original_transaction_id: UUID | None = None
     payment_instrument_id: UUID | None = None
     payment_instrument_binding_id: UUID | None = None
+    payment_instrument_name: str | None = None
+    payment_instrument_version: int | None = None
 
     @model_validator(mode="after")
     def validate_payment_instrument_pair(self) -> ResolvedEntryReferences:

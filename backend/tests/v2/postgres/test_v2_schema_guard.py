@@ -59,6 +59,7 @@ V2_MODEL_TABLES = {
     "payment_instrument_bindings",
     "payment_instrument_transactions",
     "payment_instruments",
+    "payment_instrument_mutations",
     "prepared_entry_intents",
     "protected_description_sidecars",
     "reporting_lines",
@@ -926,6 +927,7 @@ def test_payment_instrument_revision_downgrades_and_reapplies(
     with create_engine(migrated_postgres_database.runtime_url).connect() as connection:
         for table_name in (
             "payment_instruments",
+    "payment_instrument_mutations",
             "payment_instrument_bindings",
             "payment_instrument_transactions",
         ):

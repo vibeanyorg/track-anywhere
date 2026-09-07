@@ -206,11 +206,15 @@ def prepare_entry(
                 plan=plan,
             )
             if instrument_resolution is not None:
-                instrument_id, binding_id = instrument_resolution
+                instrument_id, binding_id, instrument_name, instrument_version = (
+                    instrument_resolution
+                )
                 resolved = resolved.model_copy(
                     update={
                         "payment_instrument_id": instrument_id,
                         "payment_instrument_binding_id": binding_id,
+                        "payment_instrument_name": instrument_name,
+                        "payment_instrument_version": instrument_version,
                     }
                 )
             fingerprint = _fingerprint(
@@ -322,7 +326,7 @@ def _resolve_payment_instrument_source(
     *,
     book_id: UUID,
     entry: EverydayEntryInput,
-) -> tuple[EverydayEntryInput, tuple[UUID, UUID] | None]:
+) -> tuple[EverydayEntryInput, tuple[UUID, UUID, str, int] | None]:
     reference = (
         entry.payment_instrument
         if isinstance(entry, (ExpenseEntryInput, CreditCardPaymentEntryInput))
@@ -364,7 +368,12 @@ def _resolve_payment_instrument_source(
                 "payment_instrument": None,
             }
         )
-    return normalized, (instrument.instrument_id, binding.binding_id)
+    return normalized, (
+        instrument.instrument_id,
+        binding.binding_id,
+        instrument.current_name,
+        instrument.version,
+    )
 
 
 def load_compilation_context(
@@ -427,10 +436,7 @@ def load_compilation_context(
             .join(
                 CategoryVersionRecord,
                 (CategoryVersionRecord.book_id == CategoryRecord.book_id)
-                & (
-                    CategoryVersionRecord.category_id
-                    == CategoryRecord.category_id
-                )
+                & (CategoryVersionRecord.category_id == CategoryRecord.category_id)
                 & (
                     CategoryVersionRecord.category_version_id
                     == CategoryRecord.current_version_id
@@ -518,7 +524,9 @@ def preview_and_resolved(
         if not isinstance(reporting, ReportingLinesAssigned):
             raise RuntimeError("entry compiler returned an invalid reporting event")
         category_ids = tuple(
-            line.dimension_id for line in reporting.lines if line.dimension_id is not None
+            line.dimension_id
+            for line in reporting.lines
+            if line.dimension_id is not None
         )
         category_versions = tuple(line.catalog_id for line in reporting.lines)
 
@@ -759,7 +767,8 @@ def _nonready_prepared(
         entry.actual_balance.asset_code
         if isinstance(entry, AdjustmentEntryInput)
         else context.original_entry.asset_code
-        if isinstance(entry, RefundEntryInput) and entry.amount is None
+        if isinstance(entry, RefundEntryInput)
+        and entry.amount is None
         and context.original_entry is not None
         else entry.amount.asset_code  # type: ignore[union-attr]
     )
@@ -774,7 +783,8 @@ def _nonready_prepared(
                 if item.asset_code == asset_code
             ),
         )
-        if isinstance(entry, RefundEntryInput) and entry.amount is None
+        if isinstance(entry, RefundEntryInput)
+        and entry.amount is None
         and context.original_entry is not None
         else entry.amount.value  # type: ignore[union-attr]
     )
@@ -856,9 +866,7 @@ def _duplicate_candidates(
             created_since=cutoff,
         )
     )
-    return tuple(
-        {item.transaction_id: item for item in candidates}.values()
-    )
+    return tuple({item.transaction_id: item for item in candidates}.values())
 
 
 def _fingerprint(
@@ -886,7 +894,9 @@ def _fingerprint(
                 or resolved.original_transaction_id
             ),
             str(resolved.payment_instrument_id or "-"),
-            "-" if narrative is None or narrative.merchant is None else narrative.merchant,
+            "-"
+            if narrative is None or narrative.merchant is None
+            else narrative.merchant,
         ),
     )
 
@@ -1067,9 +1077,7 @@ def _collect_amount_sources(
         append("amount", entry.amount)
         append("source_amount", getattr(entry, "source_amount", None))
         append("fee_amount", getattr(entry, "fee_amount", None))
-    for index, allocation in enumerate(
-        getattr(entry, "category_allocations", ())
-    ):
+    for index, allocation in enumerate(getattr(entry, "category_allocations", ())):
         append(f"category_allocations.{index}.amount", allocation.amount)
     if entry.narrative is not None:
         append("narrative.gross_amount", entry.narrative.gross_amount)

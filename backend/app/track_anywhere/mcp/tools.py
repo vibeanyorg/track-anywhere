@@ -121,9 +121,10 @@ from ..application.payment_instruments import (
     PaymentInstrumentView,
     SettlementPolicy,
     create_payment_instrument,
-    get_payment_instrument,
     list_payment_instruments,
 )
+from ..application.payment_instruments.contracts import PaymentInstrumentMutation
+from ..application.payment_instruments.service import mutate_payment_instrument
 from ..domain.journal.events import ReversalReasonCode
 from ..domain.reporting.events import ReportingDimension, ReportingLineKind
 from ..infrastructure.db.models.catalog import (
@@ -319,6 +320,7 @@ class PaymentInstrumentCatalogWriteResponse(BaseModel):
     committed: Literal[True] = True
     replayed: bool
     instrument: PaymentInstrumentView
+    verification_status: Literal["verified", "pending"] = "verified"
 
 
 def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> None:
@@ -811,8 +813,9 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         title="Create a payment card",
         description=(
             "Use this when the user wants to create a generic physical or virtual "
-            "payment card for the first time and bind it to the account that drives "
-            "its purchases. This is one-time configuration, not a step repeated for "
+            "payment card for the first time and bind its first currency to a settlement account. "
+            "For another currency on an existing card use ledger_add_payment_instrument_binding. "
+            "This is one-time configuration, not a step repeated for "
             "every expense. Choose immediate or prepaid for an asset account, and "
             "statement for a credit-card liability account. Once configured, pass "
             "the returned instrument_id for purchases and let the service apply the "
@@ -856,48 +859,13 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
             "ledger_create_payment_card_binding",
             request_id,
         )
-        try:
-            with session_factory() as session:
-                existing = get_payment_instrument(
-                    session,
-                    book_id=book_id,
-                    instrument_id=instrument_id,
-                )
-        except LookupError:
-            existing = None
-        if existing is not None:
-            expected = (
-                current_name.strip(),
-                form_factor,
-                network,
-                provider_code,
-                settlement_policy,
-                settlement_account_id,
-                asset_code,
-                last4,
-                effective_from,
+        with session_factory() as session:
+            from ..infrastructure.db.models.payment_instruments import (
+                PaymentInstrumentRecord,
             )
-            actual = (
-                existing.current_name,
-                existing.form_factor,
-                existing.network,
-                existing.provider_code,
-                existing.settlement_policy,
-                existing.settlement_account_id,
-                existing.asset_code,
-                existing.last4,
-                existing.effective_from,
-            )
-            if actual != expected:
-                raise ToolError(
-                    "request_id already identifies a payment card created with "
-                    "different arguments. Reuse it only for the exact same request."
-                )
-            return PaymentInstrumentCatalogWriteResponse(
-                request_id=request_id,
-                replayed=True,
-                instrument=existing,
-            )
+
+            existing = session.get(PaymentInstrumentRecord, (book_id, instrument_id))
+            replayed = existing is not None
         created = _call_catalog_write(
             lambda: create_payment_instrument(
                 CreatePaymentInstrument(
@@ -921,8 +889,150 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         )
         return PaymentInstrumentCatalogWriteResponse(
             request_id=request_id,
-            replayed=False,
+            replayed=replayed,
             instrument=created,
+        )
+
+    def mutate_card(
+        command: PaymentInstrumentMutation,
+    ) -> PaymentInstrumentCatalogWriteResponse:
+        token = _require_catalog_book(dependencies, command.book_id, command.request_id)
+        instrument, replayed = _call_catalog_write(
+            lambda: mutate_payment_instrument(
+                command,
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+            ),
+            request_id=command.request_id,
+        )
+        return PaymentInstrumentCatalogWriteResponse(
+            request_id=command.request_id, replayed=replayed, instrument=instrument
+        )
+
+    @mcp.tool(
+        name="ledger_update_payment_instrument",
+        description="Use this when the user wants to correct card metadata in place. Saves an audit version without changing postings or balances. Omitted fields remain unchanged. Configuration only; requires book:write. Reuse request_id only for an exact retry. Returns committed, replayed and verified readback.",
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_update_payment_instrument(
+        book_id: UUID,
+        request_id: UUID,
+        payment_instrument_id: UUID,
+        current_name: Annotated[str, Field(min_length=1, max_length=512)] | None = None,
+        network: CardNetwork | None = None,
+        provider_code: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")]
+        | None = None,
+        form_factor: CardFormFactor | None = None,
+        last4: Annotated[str, Field(pattern=r"^[0-9]{4}$")] | None = None,
+    ) -> PaymentInstrumentCatalogWriteResponse:
+        return mutate_card(
+            PaymentInstrumentMutation(
+                book_id=book_id,
+                request_id=request_id,
+                instrument_id=payment_instrument_id,
+                operation="update",
+                **{
+                    k: v
+                    for k, v in dict(
+                        current_name=current_name,
+                        network=network,
+                        provider_code=provider_code,
+                        form_factor=form_factor,
+                        last4=last4,
+                    ).items()
+                    if v is not None
+                },
+            )
+        )
+
+    @mcp.tool(
+        name="ledger_close_payment_instrument",
+        description="Use this when the user wants to deactivate a card for future preparations; preserve bindings and all historical transactions. Configuration only; requires book:write. Reuse request_id only for an exact retry. Returns committed, replayed and verified readback.",
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_close_payment_instrument(
+        book_id: UUID, request_id: UUID, payment_instrument_id: UUID
+    ) -> PaymentInstrumentCatalogWriteResponse:
+        return mutate_card(
+            PaymentInstrumentMutation(
+                book_id=book_id,
+                request_id=request_id,
+                instrument_id=payment_instrument_id,
+                operation="close",
+            )
+        )
+
+    @mcp.tool(
+        name="ledger_reopen_payment_instrument",
+        description="Use this when the user wants to reopen a closed card. Closed bindings remain closed. Configuration only; requires book:write. Reuse request_id only for an exact retry. Returns committed, replayed and verified readback.",
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_reopen_payment_instrument(
+        book_id: UUID, request_id: UUID, payment_instrument_id: UUID
+    ) -> PaymentInstrumentCatalogWriteResponse:
+        return mutate_card(
+            PaymentInstrumentMutation(
+                book_id=book_id,
+                request_id=request_id,
+                instrument_id=payment_instrument_id,
+                operation="reopen",
+            )
+        )
+
+    @mcp.tool(
+        name="ledger_add_payment_instrument_binding",
+        description="Use this when the user wants to add a currency settlement account to an EXISTING physical card. One card can have multiple currency bindings; never create another card for another currency. Account must already exist and match the currency and card policy. Configuration only; requires book:write. Reuse request_id only for an exact retry. Returns committed, replayed and verified readback.",
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_add_payment_instrument_binding(
+        book_id: UUID,
+        request_id: UUID,
+        payment_instrument_id: UUID,
+        settlement_account_id: UUID,
+        asset_code: AssetCode,
+        settlement_policy: SettlementPolicy,
+        effective_from: AwareDatetime,
+    ) -> PaymentInstrumentCatalogWriteResponse:
+        return mutate_card(
+            PaymentInstrumentMutation(
+                book_id=book_id,
+                request_id=request_id,
+                instrument_id=payment_instrument_id,
+                operation="add_binding",
+                **dict(
+                    settlement_account_id=settlement_account_id,
+                    asset_code=asset_code,
+                    settlement_policy=settlement_policy,
+                    effective_from=effective_from,
+                ),
+            )
+        )
+
+    @mcp.tool(
+        name="ledger_close_payment_instrument_binding",
+        description="Use this when the user wants to close a currency binding with a past or current end time, preserving history. It cannot be selected for new preparations. Configuration only; requires book:write. Reuse request_id only for an exact retry. Returns committed, replayed and verified readback.",
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_close_payment_instrument_binding(
+        book_id: UUID,
+        request_id: UUID,
+        payment_instrument_id: UUID,
+        binding_id: UUID,
+        effective_to: AwareDatetime,
+    ) -> PaymentInstrumentCatalogWriteResponse:
+        return mutate_card(
+            PaymentInstrumentMutation(
+                book_id=book_id,
+                request_id=request_id,
+                instrument_id=payment_instrument_id,
+                operation="close_binding",
+                **dict(binding_id=binding_id, effective_to=effective_to),
+            )
         )
 
     @mcp.tool(
@@ -930,7 +1040,7 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         title="List payment instruments",
         description=(
             "Use this when you need configured payment cards and their current "
-            "account bindings. When the user names a card, select a unique match and "
+            "account bindings. One physical card may have multiple currency bindings; amount.asset_code selects the binding (target amount for FX repayment). Missing currency requires clarification, never automatic FX or account creation. Use status=all or inactive for audit. When the user names a card, select a unique match and "
             "use its instrument_id in expense or statement-payment preparation. The "
             "service selects the correct funding asset or card liability "
             "automatically; do not ask the user to choose that account again."
@@ -1671,10 +1781,7 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
                     fee_category_version_id=fee_category_version_id,
                     effective_at=effective_at,
                 ),
-                raw_key=(
-                    "mcp:ledger_record_fx_credit_card_payment:"
-                    f"{request_id}"
-                ),
+                raw_key=(f"mcp:ledger_record_fx_credit_card_payment:{request_id}"),
                 actor=CommandActor(token.subject or ""),
                 uow_factory=dependencies.uow_factory,
                 ledger_committer=dependencies.ledger_committer,

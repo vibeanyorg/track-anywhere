@@ -150,7 +150,8 @@ def register_entry_tools(
             "Use this when the user wants to record a purchase or other expense. "
             f"{_AMOUNT_DESCRIPTION} Supply exactly one ordinary source account or "
             "payment instrument. A payment instrument resolves its configured "
-            "asset/prepaid funding or statement liability account automatically. "
+            "asset/prepaid funding or statement liability account by amount.asset_code. "
+            "One physical card may have multiple currency bindings. If none matches, ask for the actual billing currency and amount; never convert, guess, or create accounts automatically. "
             "For a named physical or virtual card, list configured payment "
             "instruments and pass the unique matching instrument; do not select or "
             "create an account for that purchase. "
@@ -262,7 +263,7 @@ def register_entry_tools(
             "Use this when the user pays a credit-card liability from an asset "
             f"account. {_AMOUNT_DESCRIPTION} Supply the exact liability account "
             "or a statement payment instrument; the latter resolves its bound "
-            "liability automatically. A card payment is a balance-sheet "
+            "liability by amount.asset_code. A multicurrency card is one instrument with multiple bindings. If funding currency differs, use ledger_prepare_fx_credit_card_payment with both exact amounts. A card payment is a balance-sheet "
             "transfer and never takes an expense category. "
             f"{_PREPARE_DESCRIPTION}"
         ),
@@ -301,7 +302,7 @@ def register_entry_tools(
             "source_amount is the exchanged principal and excludes fee_amount. "
             "The funding account is charged source_amount plus fee_amount. "
             "Supply an expense-eligible fee category. Never infer either amount "
-            "or an exchange rate. "
+            "or an exchange rate. For a multicurrency payment instrument, target_amount.asset_code selects its liability binding. "
             f"{_PREPARE_DESCRIPTION}"
         ),
         annotations=ENTRY_PREPARE_ANNOTATIONS,
