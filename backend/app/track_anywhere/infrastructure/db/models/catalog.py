@@ -4,11 +4,13 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     SmallInteger,
     String,
     Text,
@@ -142,10 +144,33 @@ class AccountRecord(V2Base):
     system_role: Mapped[str | None] = mapped_column(String(32), nullable=True)
     current_name: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16))
+    version: Mapped[int] = mapped_column(Integer, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=_NOW
+    )
+
+
+class AccountMutationRecord(V2Base):
+    __tablename__ = "account_mutations"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["book_id", "account_id"],
+            ["accounts.book_id", "accounts.account_id"],
+            ondelete="RESTRICT",
+        ),
+    )
+
+    book_id: Mapped[UUID] = mapped_column(primary_key=True)
+    request_id: Mapped[UUID] = mapped_column(primary_key=True)
+    account_id: Mapped[UUID]
+    actor_subject_id: Mapped[str] = mapped_column(Text)
+    command: Mapped[dict] = mapped_column(JSON)
+    before: Mapped[dict] = mapped_column(JSON)
+    after: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=_NOW
     )
 
@@ -239,6 +264,7 @@ class CategoryVersionRecord(V2Base):
 
 
 __all__ = [
+    "AccountMutationRecord",
     "AccountRecord",
     "AssetRecord",
     "BookRecord",

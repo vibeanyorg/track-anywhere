@@ -25,6 +25,7 @@ from track_anywhere.infrastructure.db.models.auth import (
     UserRecord,
 )
 from track_anywhere.infrastructure.db.models.catalog import (
+    AccountMutationRecord,
     AccountRecord,
     AssetRecord,
     BookRecord,
@@ -198,6 +199,27 @@ def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
                 ],
             },
         )
+        rename_request_id = str(uuid4())
+        rename_arguments = {
+            "book_id": book_id,
+            "request_id": rename_request_id,
+            "account_id": created_account["structuredContent"]["account"][
+                "account_id"
+            ],
+            "current_name": "Everyday card",
+        }
+        renamed_account = _call_tool(
+            client, write_token, "ledger_rename_account", rename_arguments
+        )
+        replayed_rename = _call_tool(
+            client, write_token, "ledger_rename_account", rename_arguments
+        )
+        conflicting_rename = _call_tool(
+            client,
+            write_token,
+            "ledger_rename_account",
+            {**rename_arguments, "current_name": "Different card"},
+        )
         reopened_account = _call_tool(
             client,
             write_token,
@@ -268,6 +290,15 @@ def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
     ]
     assert closed_account["isError"] is False
     assert closed_account["structuredContent"]["account"]["status"] == "closed"
+    assert renamed_account["isError"] is False
+    assert renamed_account["structuredContent"]["account"]["current_name"] == (
+        "Everyday card"
+    )
+    assert renamed_account["structuredContent"]["account"]["status"] == "closed"
+    assert renamed_account["structuredContent"]["replayed"] is False
+    assert replayed_rename["structuredContent"]["replayed"] is True
+    assert conflicting_rename["isError"] is True
+    assert "idempotency" in conflicting_rename["content"][0]["text"]
     assert reopened_account["isError"] is False
     assert reopened_account["structuredContent"]["account"]["status"] == "active"
     assert rejected_expense_account["isError"] is True
@@ -292,6 +323,9 @@ def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
         account = session.get(
             AccountRecord,
             (parsed_book_id, UUID(account_body["account_id"])),
+        )
+        rename_receipt = session.get(
+            AccountMutationRecord, (parsed_book_id, UUID(rename_request_id))
         )
         child_category_id = UUID(
             created_child_category["structuredContent"]["category"]["category_id"]
@@ -326,6 +360,11 @@ def test_mcp_catalog_tools_bootstrap_an_empty_user_into_a_usable_book(
     assert conflicting_asset_record is None
     assert account is not None
     assert account.status == "active"
+    assert account.current_name == "Everyday card"
+    assert account.version == 2
+    assert rename_receipt is not None
+    assert rename_receipt.before["current_name"] == "Everyday checking"
+    assert rename_receipt.after["current_name"] == "Everyday card"
     assert child_category is not None
     assert child_category.parent_category_id == UUID(root_category_id)
     assert child_version is not None

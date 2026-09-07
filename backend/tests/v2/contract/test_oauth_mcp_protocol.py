@@ -155,6 +155,7 @@ def test_mcp_descriptors_mirror_oauth_security_and_tool_annotations() -> None:
         "ledger_add_payment_instrument_binding",
         "ledger_close_payment_instrument_binding",
         "ledger_reopen_account",
+        "ledger_rename_account",
     }
     assert {tool.name for tool in tools} == (
         read_tools

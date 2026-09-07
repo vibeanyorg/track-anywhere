@@ -39,6 +39,7 @@ V2_MODEL_TABLES = {
     "event_stream_heads",
     "everyday_entry_external_references",
     "everyday_entry_source_fingerprints",
+    "account_mutations",
     "journal_postings",
     "journal_transactions",
     "investment_lot_allocations",

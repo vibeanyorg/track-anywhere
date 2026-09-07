@@ -767,6 +767,7 @@ catalog_write_tools = {
     "ledger_add_payment_instrument_binding",
     "ledger_close_payment_instrument_binding",
     "ledger_reopen_account",
+    "ledger_rename_account",
 }
 assert set(tools_by_name) == read_tools | ledger_write_tools | catalog_write_tools
 for name, tool in tools_by_name.items():

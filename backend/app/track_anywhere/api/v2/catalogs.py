@@ -28,6 +28,10 @@ from ...application.catalogs.reopen_account import (
     ReopenAccount,
     reopen_account as execute_reopen_account,
 )
+from ...application.catalogs.rename_account import (
+    RenameAccount,
+    rename_account as execute_rename_account,
+)
 from ...application.ledger_committer import LedgerCommitter
 from ..dependencies import SessionDependency, UnitOfWorkFactory
 from .schemas import (
@@ -36,6 +40,8 @@ from .schemas import (
     CreateBookRequest,
     CreateCategoryRequest,
     RequestActor,
+    RenameAccountRequest,
+    RenameAccountResponse,
     call_application,
     create_actor_dependency,
 )
@@ -151,6 +157,38 @@ def create_catalog_router(
                 uow_factory=uow_factory,
                 ledger_committer=committer,
             )
+        )
+
+    @router.post(
+        "/books/{book_id}/accounts/{account_id}/rename",
+        response_model=RenameAccountResponse,
+    )
+    def rename_account(
+        book_id: UUID,
+        account_id: UUID,
+        payload: RenameAccountRequest,
+        actor: RequestActor = Depends(request_actor),
+    ) -> RenameAccountResponse:
+        command_actor = actor.require_book_scope(book_id, "book:write")
+        account, replayed = call_application(
+            lambda: execute_rename_account(
+                RenameAccount(
+                    book_id=book_id,
+                    account_id=account_id,
+                    current_name=payload.current_name,
+                    request_id=payload.request_id,
+                ),
+                actor=command_actor,
+                uow_factory=uow_factory,
+                ledger_committer=committer,
+            )
+        )
+        return RenameAccountResponse(
+            request_id=payload.request_id,
+            committed=True,
+            replayed=replayed,
+            account=account,
+            verification_status="verified",
         )
 
     @router.post("/books/{book_id}/accounts/{account_id}/reopen")

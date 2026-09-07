@@ -9,6 +9,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 
 
 CATALOG_TABLES = (
+    "account_mutations",
     "accounts",
     "assets",
     "books",
@@ -963,6 +964,8 @@ def test_catalog_acl_is_exact_and_runtime_cannot_delete_or_manage_triggers(
             ("SELECT", "INSERT")
             if table_name
             in {
+                "account_mutations",
+                "accounts",
                 "category_versions",
                 "import_archive_manifests",
                 "protected_description_sidecars",
@@ -971,6 +974,21 @@ def test_catalog_acl_is_exact_and_runtime_cannot_delete_or_manage_triggers(
         )
     }
     assert grants == expected
+
+    with pg_engine.connect() as connection:
+        account_update_columns = {
+            row.column_name
+            for row in connection.execute(
+                text("""
+                select column_name
+                  from information_schema.column_privileges
+                 where table_schema='public' and table_name='accounts'
+                   and grantee=:runtime and privilege_type='UPDATE'
+                """),
+                {"runtime": migrated_postgres_database.runtime_role},
+            )
+        }
+    assert account_update_columns == {"current_name", "status", "updated_at", "version"}
 
     for table_name in CATALOG_TABLES:
         _rejects_database_operation(

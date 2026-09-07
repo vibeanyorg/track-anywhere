@@ -81,6 +81,10 @@ from ..application.catalogs.reopen_account import (
     ReopenAccount,
     reopen_account as execute_reopen_account,
 )
+from ..application.catalogs.rename_account import (
+    RenameAccount,
+    rename_account as execute_rename_account,
+)
 from ..application.idempotency import (
     CommandActor,
     CommandOutcome,
@@ -805,6 +809,58 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         return AccountCatalogWriteResponse(
             request_id=request_id,
             replayed=False,
+            account=updated,
+        )
+
+    @mcp.tool(
+        name="ledger_rename_account",
+        title="Rename an account",
+        description=(
+            "Use this when the user has explicitly confirmed a new display name "
+            "for an ordinary account. This preserves the account identity, balance, "
+            "and journal history, and also supports closed accounts. System-managed "
+            "accounts cannot be renamed. Reuse request_id only for an exact retry."
+        ),
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_rename_account(
+        book_id: UUID,
+        request_id: UUID,
+        account_id: UUID,
+        current_name: Annotated[str, Field(min_length=1, max_length=512)],
+    ) -> AccountCatalogWriteResponse:
+        token = _require_catalog_book(dependencies, book_id, request_id)
+        _, replayed = _call_catalog_write(
+            lambda: execute_rename_account(
+                RenameAccount(
+                    book_id=book_id,
+                    account_id=account_id,
+                    current_name=current_name,
+                    request_id=request_id,
+                ),
+                actor=CommandActor(token.subject or ""),
+                uow_factory=dependencies.uow_factory,
+                ledger_committer=dependencies.ledger_committer,
+            ),
+            request_id=request_id,
+        )
+        updated = _read_catalog_after_commit(
+            lambda: _read_created_account(dependencies, book_id, account_id),
+            request_id=request_id,
+            entity_label="account",
+        )
+        if updated is None:
+            return AccountCatalogWriteResponse(
+                request_id=request_id,
+                replayed=replayed,
+                account=None,
+                verification_status="pending",
+                retry_guidance=_catalog_retry_guidance(request_id),
+            )
+        return AccountCatalogWriteResponse(
+            request_id=request_id,
+            replayed=replayed,
             account=updated,
         )
 

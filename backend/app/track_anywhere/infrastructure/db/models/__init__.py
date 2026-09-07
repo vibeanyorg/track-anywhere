@@ -17,6 +17,7 @@ from .auth import (
     UserRecord,
 )
 from .catalog import (
+    AccountMutationRecord,
     AccountRecord,
     AssetRecord,
     BookRecord,
@@ -58,6 +59,7 @@ from .projections import (
 
 __all__ = [
     "AccountRecord",
+    "AccountMutationRecord",
     "AccountBalanceRecord",
     "AssetRecord",
     "AuthIdentityRecord",

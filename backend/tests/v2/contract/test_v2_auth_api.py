@@ -1796,6 +1796,7 @@ def test_dcr_book_write_grant_bootstraps_a_book_through_mcp(pg_engine) -> None:
         "ledger_list_entries",
         "ledger_list_payment_instruments",
         "ledger_reopen_account",
+        "ledger_rename_account",
     }.issubset(tool_names)
     assert not any(name.startswith("ledger_prepare_") for name in tool_names)
     assert {

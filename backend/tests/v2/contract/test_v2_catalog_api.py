@@ -161,6 +161,31 @@ def test_catalog_routes_delegate_to_handlers_and_return_book_positions(
         "as_of_book_position": 0,
         "status": "closed",
     }
+    request_id = uuid4()
+    renamed = client.post(
+        f"/api/v2/books/{book_id}/accounts/{account_id}/rename",
+        headers=_headers(),
+        json={"request_id": str(request_id), "current_name": "Renamed card"},
+    )
+    replayed_rename = client.post(
+        f"/api/v2/books/{book_id}/accounts/{account_id}/rename",
+        headers=_headers(),
+        json={"request_id": str(request_id), "current_name": "Renamed card"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["account"] == {
+        "account_id": str(account_id),
+        "asset_code": "USD",
+        "account_type": "liability",
+        "account_subtype": "credit_card",
+        "system_role": None,
+        "current_name": "Renamed card",
+        "status": "closed",
+        "version": 2,
+    }
+    assert renamed.json()["committed"] is True
+    assert renamed.json()["replayed"] is False
+    assert replayed_rename.json()["replayed"] is True
     reopened = client.post(
         f"/api/v2/books/{book_id}/accounts/{account_id}/reopen",
         headers=_headers(),
@@ -177,7 +202,8 @@ def test_catalog_routes_delegate_to_handlers_and_return_book_positions(
         assert account is not None
         assert account.status == "active"
         assert account.account_type == "liability"
-        assert account.account_subtype == "credit_card"
+    assert account.account_subtype == "credit_card"
+    assert account.current_name == "Renamed card"
 
 
 def test_catalog_account_request_fails_closed_for_type_and_subtype(pg_engine) -> None:

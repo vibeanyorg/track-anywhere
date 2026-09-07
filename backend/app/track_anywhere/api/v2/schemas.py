@@ -129,6 +129,30 @@ class CreateAccountRequest(StrictRequest):
     system_role: Annotated[StrictStr, Field(min_length=1, max_length=32)] | None = None
 
 
+class RenameAccountRequest(StrictRequest):
+    request_id: UUID
+    current_name: NonBlankText
+
+
+class RenamedAccountResponse(StrictRequest):
+    account_id: UUID
+    asset_code: str
+    account_type: str
+    account_subtype: str | None
+    system_role: str | None
+    current_name: str
+    status: str
+    version: int
+
+
+class RenameAccountResponse(StrictRequest):
+    request_id: UUID
+    committed: bool
+    replayed: bool
+    account: RenamedAccountResponse
+    verification_status: str
+
+
 class CreateCategoryRequest(StrictRequest):
     category_id: UUID
     category_version_id: UUID
@@ -481,6 +505,8 @@ __all__ = [
     "PostTransactionRequest",
     "RecordFxRequest",
     "RequestActor",
+    "RenameAccountRequest",
+    "RenameAccountResponse",
     "ReverseTransactionRequest",
     "authenticate_request_actor",
     "call_application",
