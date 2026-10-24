@@ -20,7 +20,7 @@ RUN VIRTUAL_ENV=/opt/venv uv sync --frozen --no-dev --extra postgres \
     && find /opt/venv -type d \( -name __pycache__ -o -name test -o -name tests \) -prune -exec rm -rf '{}' + \
     && find /opt/venv -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 
-FROM node:22-alpine AS web-builder
+FROM node:22.23.4-alpine AS web-builder
 
 WORKDIR /app/frontend
 

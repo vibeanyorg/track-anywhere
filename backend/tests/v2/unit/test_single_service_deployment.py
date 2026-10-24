@@ -31,7 +31,7 @@ def test_runtime_image_contains_the_static_export_without_a_node_server() -> Non
     dockerfile = _read("Dockerfile")
     dockerignore = _read(".dockerignore")
 
-    assert "FROM node:22-alpine AS web-builder" in dockerfile
+    assert "FROM node:22.23.4-alpine AS web-builder" in dockerfile
     assert "COPY --from=web-builder /app/frontend/out /app/frontend" in dockerfile
     assert "TRACK_ANYWHERE_STATIC_DIRECTORY=/app/frontend" in dockerfile
     assert "FROM node:22-alpine AS web-runtime" not in dockerfile
