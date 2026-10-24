@@ -23,7 +23,7 @@ def test_ci_requires_every_v2_gate_before_both_image_channels() -> None:
 
     assert "postgres:17" in source
     assert "actions/setup-node@v4" in source
-    assert 'node-version: "22"' in source
+    assert 'node-version: "22.23.4"' in source
     assert "backend/tests/v2/unit" in source
     assert "backend/tests/v2/postgres" in source
     assert "backend/tests/v2/concurrency" in source
