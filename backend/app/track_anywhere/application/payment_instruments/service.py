@@ -392,6 +392,53 @@ def mutate_payment_instrument(
                     effective_from=command.effective_from,
                 )
             )
+        elif command.operation == "backdate_binding":
+            binding = session.get(
+                PaymentInstrumentBindingRecord, (command.book_id, command.binding_id)
+            )
+            if binding is None or binding.instrument_id != command.instrument_id:
+                raise PaymentInstrumentError("binding was not found on this instrument")
+            if instrument.status != "active" or binding.status != "active":
+                raise PaymentInstrumentError(
+                    "backdate requires an active instrument and binding"
+                )
+            if (
+                not command.effective_from < binding.effective_from
+                or command.effective_from > now
+            ):
+                raise PaymentInstrumentError(
+                    "backdate requires an earlier, nonfuture effective_from"
+                )
+            # Include closed history: extending the interval must not reassign
+            # dates previously covered by another binding for this currency.
+            conflict = session.scalar(
+                select(PaymentInstrumentBindingRecord).where(
+                    PaymentInstrumentBindingRecord.book_id == command.book_id,
+                    PaymentInstrumentBindingRecord.instrument_id
+                    == command.instrument_id,
+                    PaymentInstrumentBindingRecord.asset_code == binding.asset_code,
+                    PaymentInstrumentBindingRecord.binding_id != binding.binding_id,
+                    PaymentInstrumentBindingRecord.effective_from
+                    < binding.effective_from,
+                    (
+                        PaymentInstrumentBindingRecord.effective_to.is_(None)
+                        | (
+                            PaymentInstrumentBindingRecord.effective_to
+                            > command.effective_from
+                        )
+                    ),
+                )
+            )
+            if conflict is not None:
+                raise PaymentInstrumentError(
+                    "overlapping settlement binding for asset_code"
+                )
+            binding.effective_from = command.effective_from
+            # Resolution checks both dates; correcting only the binding would
+            # still prevent historical entries for a newly registered card.
+            instrument.effective_from = min(
+                instrument.effective_from, command.effective_from
+            )
         else:
             binding = session.get(
                 PaymentInstrumentBindingRecord, (command.book_id, command.binding_id)

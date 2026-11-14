@@ -766,6 +766,7 @@ catalog_write_tools = {
     "ledger_reopen_payment_instrument",
     "ledger_add_payment_instrument_binding",
     "ledger_close_payment_instrument_binding",
+    "ledger_backdate_payment_instrument_binding",
     "ledger_reopen_account",
     "ledger_rename_account",
 }

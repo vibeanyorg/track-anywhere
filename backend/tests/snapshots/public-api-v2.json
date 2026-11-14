@@ -413,6 +413,173 @@
       ],
       "title": "ReportingLineResponse",
       "type": "object"
+    },
+    "PaymentInstrumentMutation": {
+      "properties": {
+        "book_id": {
+          "type": "string",
+          "format": "uuid",
+          "title": "Book Id"
+        },
+        "request_id": {
+          "type": "string",
+          "format": "uuid",
+          "title": "Request Id"
+        },
+        "instrument_id": {
+          "type": "string",
+          "format": "uuid",
+          "title": "Instrument Id"
+        },
+        "operation": {
+          "type": "string",
+          "enum": [
+            "update",
+            "close",
+            "reopen",
+            "add_binding",
+            "close_binding",
+            "backdate_binding"
+          ],
+          "title": "Operation"
+        },
+        "current_name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 512,
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current Name"
+        },
+        "network": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/CardNetwork"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider_code": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Provider Code"
+        },
+        "form_factor": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/CardFormFactor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last4": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9]{4}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last4"
+        },
+        "binding_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Binding Id"
+        },
+        "settlement_account_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Settlement Account Id"
+        },
+        "asset_code": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Z][A-Z0-9._-]{0,15}$"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Asset Code"
+        },
+        "settlement_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/SettlementPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effective_from": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Effective From"
+        },
+        "effective_to": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Effective To"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "book_id",
+        "request_id",
+        "instrument_id",
+        "operation"
+      ],
+      "title": "PaymentInstrumentMutation"
     }
   }
 }

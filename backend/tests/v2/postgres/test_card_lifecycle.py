@@ -302,3 +302,250 @@ def test_multicurrency_lifecycle_audit_and_idempotency(pg_engine):
             ).bindings
             == ended.bindings
         )
+
+
+def test_backdate_binding_restores_historical_resolution(pg_engine, monkeypatch):
+    scenario, category_id = _seed(pg_engine)
+    factory = sessionmaker(pg_engine, expire_on_commit=False)
+    uow = lambda: SqlAlchemyUnitOfWork(factory)
+    actor = CommandActor(scenario.actor_subject_id)
+    with pg_engine.begin() as conn:
+        conn.execute(
+            text(
+                'update book_members set scopes=\'["book:write","ledger:write"]\'::jsonb where book_id=:b'
+            ),
+            {"b": scenario.book_id},
+        )
+    card = create_payment_instrument(
+        CreatePaymentInstrument(
+            book_id=scenario.book_id,
+            instrument_id=uuid4(),
+            binding_id=uuid4(),
+            current_name="2863",
+            form_factor="physical",
+            network="visa",
+            provider_code="bank",
+            settlement_policy="immediate",
+            settlement_account_id=scenario.credit_account_id,
+            asset_code="USD",
+            last4="2863",
+            effective_from=OCCURRED_AT + timedelta(days=4),
+        ),
+        actor=actor,
+        uow_factory=uow,
+    )
+    reference = PaymentInstrumentRef(instrument_id=card.instrument_id)
+    with Session(pg_engine) as session:
+        with pytest.raises(PaymentInstrumentError, match="No active"):
+            resolve_payment_instrument(
+                session,
+                book_id=scenario.book_id,
+                reference=reference,
+                asset_code="USD",
+                occurred_at=OCCURRED_AT,
+            )
+    command = PaymentInstrumentMutation(
+        book_id=scenario.book_id,
+        instrument_id=card.instrument_id,
+        request_id=uuid4(),
+        operation="backdate_binding",
+        binding_id=card.binding_id,
+        effective_from=OCCURRED_AT,
+    )
+    after, replayed = mutate_payment_instrument(command, actor=actor, uow_factory=uow)
+    assert not replayed
+    assert after.effective_from == after.bindings[0].effective_from == OCCURRED_AT
+    assert after.version == card.version + 1
+    assert mutate_payment_instrument(command, actor=actor, uow_factory=uow) == (
+        after,
+        True,
+    )
+    with Session(pg_engine) as session:
+        _, binding = resolve_payment_instrument(
+            session,
+            book_id=scenario.book_id,
+            reference=reference,
+            asset_code="USD",
+            occurred_at=OCCURRED_AT,
+        )
+        assert binding.account_id == scenario.credit_account_id
+        receipt = session.get(
+            PaymentInstrumentMutationRecord, (scenario.book_id, command.request_id)
+        )
+        assert (
+            receipt.before["bindings"][0]["effective_from"]
+            != receipt.after["bindings"][0]["effective_from"]
+        )
+        assert (
+            session.execute(text("select count(*) from journal_postings")).scalar_one()
+            == 0
+        )
+    preparation, _ = _runtime(pg_engine, scenario)
+    prepared = prepare_entry(
+        book_id=scenario.book_id,
+        runtime=preparation,
+        entry=ExpenseEntryInput(
+            amount=MoneyInput(
+                value="111.98", asset_code="USD", source_text="111.98 USD"
+            ),
+            occurred_at=OCCURRED_AT,
+            payment_instrument=reference,
+            category=CategoryRef(category_id=category_id),
+        ),
+    )
+    assert prepared.resolved.source_account_id == scenario.credit_account_id
+    for date in (OCCURRED_AT, OCCURRED_AT + timedelta(days=1)):
+        with pytest.raises(PaymentInstrumentError, match="earlier"):
+            mutate_payment_instrument(
+                command.model_copy(
+                    update={"request_id": uuid4(), "effective_from": date}
+                ),
+                actor=actor,
+                uow_factory=uow,
+            )
+    with pytest.raises(PaymentInstrumentError, match="request_id conflicts"):
+        mutate_payment_instrument(
+            command.model_copy(
+                update={"effective_from": OCCURRED_AT - timedelta(days=1)}
+            ),
+            actor=actor,
+            uow_factory=uow,
+        )
+    # A closed historical interval must block extension, including partial overlap.
+    mutate_payment_instrument(
+        PaymentInstrumentMutation(
+            book_id=scenario.book_id,
+            instrument_id=card.instrument_id,
+            request_id=uuid4(),
+            operation="close_binding",
+            binding_id=card.binding_id,
+            effective_to=OCCURRED_AT + timedelta(days=1),
+        ),
+        actor=actor,
+        uow_factory=uow,
+    )
+    later, _ = mutate_payment_instrument(
+        PaymentInstrumentMutation(
+            book_id=scenario.book_id,
+            instrument_id=card.instrument_id,
+            request_id=uuid4(),
+            operation="add_binding",
+            settlement_account_id=scenario.credit_account_id,
+            asset_code="USD",
+            settlement_policy="immediate",
+            effective_from=OCCURRED_AT + timedelta(days=2),
+        ),
+        actor=actor,
+        uow_factory=uow,
+    )
+    active = next(b for b in later.bindings if b.status == "active")
+    with pytest.raises(PaymentInstrumentError, match="overlapping"):
+        mutate_payment_instrument(
+            command.model_copy(
+                update={"request_id": uuid4(), "binding_id": active.binding_id}
+            ),
+            actor=actor,
+            uow_factory=uow,
+        )
+    with pytest.raises(PaymentInstrumentError, match="active"):
+        mutate_payment_instrument(
+            command.model_copy(
+                update={
+                    "request_id": uuid4(),
+                    "effective_from": OCCURRED_AT - timedelta(days=1),
+                }
+            ),
+            actor=actor,
+            uow_factory=uow,
+        )
+    # Half-open adjacent intervals are valid.
+    adjacent, _ = mutate_payment_instrument(
+        command.model_copy(
+            update={
+                "request_id": uuid4(),
+                "binding_id": active.binding_id,
+                "effective_from": OCCURRED_AT + timedelta(days=1),
+            }
+        ),
+        actor=actor,
+        uow_factory=uow,
+    )
+    assert next(
+        b for b in adjacent.bindings if b.status == "active"
+    ).effective_from == OCCURRED_AT + timedelta(days=1)
+
+    # Exercise the HTTP command boundary with the same real persistence layer.
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from track_anywhere.api.v2 import payment_instruments as routes
+    from track_anywhere.api.v2.schemas import RequestActor
+
+    request_actor = RequestActor(actor, scenario.book_id, frozenset({"book:write"}))
+    monkeypatch.setattr(
+        routes, "create_actor_dependency", lambda _: lambda: request_actor
+    )
+    app = FastAPI()
+    app.include_router(
+        routes.create_payment_instrument_router(
+            get_session=lambda: None, uow_factory=uow
+        ),
+        prefix="/api/v2",
+    )
+    url = f"/api/v2/books/{scenario.book_id}/payment-instruments/{card.instrument_id}/mutations"
+    payload = command.model_dump(mode="json", exclude_unset=True)
+    with TestClient(app) as client:
+        response = client.post(url, json=payload)
+        assert response.status_code == 200
+        assert response.json()["replayed"] is True
+        assert response.json()["verification_status"] == "verified"
+        invalid = dict(payload)
+        invalid.pop("effective_from")
+        assert client.post(url, json=invalid).status_code == 422
+        assert (
+            client.post(url, json={**payload, "book_id": str(uuid4())}).status_code
+            == 422
+        )
+        request_actor = RequestActor(
+            actor, scenario.book_id, frozenset({"ledger:write"})
+        )
+        assert client.post(url, json=payload).status_code == 403
+
+
+def test_backdate_permission_migration_is_reversible(migrated_postgres_database):
+    from sqlalchemy import create_engine
+    from backend.tests.v2.postgres.test_v2_schema_guard import _run_alembic
+
+    database = migrated_postgres_database
+    engine = create_engine(database.runtime_url)
+    try:
+        for revision, action, expected in (
+            ("v2_0019_binding_backdate", "upgrade", True),
+            ("v2_0018_account_rename", "downgrade", False),
+            ("v2_0019_binding_backdate", "upgrade", True),
+        ):
+            result = _run_alembic(
+                action,
+                revision,
+                database_url=database.migrator_url,
+                runtime_role=database.runtime_role,
+            )
+            assert result.returncode == 0, result.stderr
+            with engine.connect() as connection:
+                assert (
+                    connection.scalar(
+                        text(
+                            "select has_column_privilege(current_user, 'payment_instrument_bindings', 'effective_from', 'UPDATE')"
+                        )
+                    )
+                    is expected
+                )
+                assert (
+                    connection.scalar(
+                        text(
+                            "select has_column_privilege(current_user, 'payment_instrument_bindings', 'account_id', 'UPDATE')"
+                        )
+                    )
+                    is False
+                )
+    finally:
+        engine.dispose()

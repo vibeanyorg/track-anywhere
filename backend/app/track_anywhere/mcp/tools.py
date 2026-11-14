@@ -1069,6 +1069,30 @@ def register_ledger_tools(mcp: FastMCP, dependencies: RuntimeDependencies) -> No
         )
 
     @mcp.tool(
+        name="ledger_backdate_payment_instrument_binding",
+        description="Use this when a historical expense or correction is blocked because an existing card currency binding starts too late, and the user confirms the card was valid on the earlier date. Moves an active binding's effective_from earlier and also moves the card start earlier if needed. Rejects overlap with historical bindings. Configuration only: does not change transactions; prepare the correction again after success. Requires book:write. Reuse request_id only for an exact retry. Returns committed, replayed and verified readback.",
+        annotations=CATALOG_WRITE_ANNOTATIONS,
+        meta=CATALOG_WRITE_TOOL_META,
+    )
+    def ledger_backdate_payment_instrument_binding(
+        book_id: UUID,
+        request_id: UUID,
+        payment_instrument_id: UUID,
+        binding_id: UUID,
+        effective_from: AwareDatetime,
+    ) -> PaymentInstrumentCatalogWriteResponse:
+        return mutate_card(
+            PaymentInstrumentMutation(
+                book_id=book_id,
+                request_id=request_id,
+                instrument_id=payment_instrument_id,
+                operation="backdate_binding",
+                binding_id=binding_id,
+                effective_from=effective_from,
+            )
+        )
+
+    @mcp.tool(
         name="ledger_close_payment_instrument_binding",
         description="Use this when the user wants to close a currency binding with a past or current end time, preserving history. It cannot be selected for new preparations. Configuration only; requires book:write. Reuse request_id only for an exact retry. Returns committed, replayed and verified readback.",
         annotations=CATALOG_WRITE_ANNOTATIONS,

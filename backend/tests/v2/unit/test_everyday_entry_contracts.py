@@ -298,6 +298,9 @@ def test_payment_instrument_mutation_fields_are_operation_specific():
         dict(operation="close", network="visa"),
         dict(operation="add_binding", asset_code="USD"),
         dict(operation="close_binding", binding_id=uuid4()),
+        dict(operation="backdate_binding", binding_id=uuid4()),
+        dict(operation="backdate_binding", effective_from="2026-09-27T00:00:00Z"),
+        dict(operation="backdate_binding", binding_id=uuid4(), effective_from="2026-09-27T00:00:00"),
         dict(operation="update", network=None),
     ):
         with pytest.raises(ValidationError):

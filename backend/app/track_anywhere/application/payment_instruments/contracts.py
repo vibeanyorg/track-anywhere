@@ -130,7 +130,9 @@ class PaymentInstrumentMutation(FrozenContract):
     book_id: UUID
     request_id: UUID
     instrument_id: UUID
-    operation: Literal["update", "close", "reopen", "add_binding", "close_binding"]
+    operation: Literal[
+        "update", "close", "reopen", "add_binding", "close_binding", "backdate_binding"
+    ]
     current_name: StrictStr | None = Field(default=None, min_length=1, max_length=512)
     network: CardNetwork | None = None
     provider_code: StrictStr | None = Field(
@@ -166,6 +168,7 @@ class PaymentInstrumentMutation(FrozenContract):
                 "effective_from",
             },
             "close_binding": {"binding_id", "effective_to"},
+            "backdate_binding": {"binding_id", "effective_from"},
         }[self.operation]
         supplied = self.model_fields_set - {
             "book_id",
@@ -175,9 +178,11 @@ class PaymentInstrumentMutation(FrozenContract):
         }
         if supplied - allowed or (self.operation == "update" and not supplied):
             raise ValueError("invalid fields for payment instrument operation")
-        if self.operation in {"add_binding", "close_binding"} and any(
-            getattr(self, f) is None for f in allowed
-        ):
+        if self.operation in {
+            "add_binding",
+            "close_binding",
+            "backdate_binding",
+        } and any(getattr(self, f) is None for f in allowed):
             raise ValueError("missing required binding fields")
         if any(getattr(self, f) is None for f in supplied - {"last4"}):
             raise ValueError("only last4 can be cleared")

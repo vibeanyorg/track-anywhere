@@ -35,6 +35,9 @@ def test_public_v2_openapi_matches_reviewed_snapshot(
             for path, operations in sorted(openapi["paths"].items())
         }
         schemas = {
+            "PaymentInstrumentMutation": openapi["components"]["schemas"][
+                "PaymentInstrumentMutation"
+            ],
             "PasswordSessionCommand": openapi["components"]["schemas"][
                 "PasswordSessionCommand"
             ],
@@ -43,7 +46,7 @@ def test_public_v2_openapi_matches_reviewed_snapshot(
             ],
             "ReportingLineResponse": openapi["components"]["schemas"][
                 "ReportingLineResponse"
-            ]
+            ],
         }
         protected_schema_names = (
             "ImportArchiveExportResponse",
@@ -90,9 +93,10 @@ def test_public_v2_openapi_matches_reviewed_snapshot(
         }
         assert password_signup["properties"]["password"]["minLength"] == 12
         assert password_signup["properties"]["password"]["maxLength"] == 128
-        assert "description" not in protected_schemas[
-            "JournalItemWithDescriptionResponse"
-        ]["required"]
+        assert (
+            "description"
+            not in protected_schemas["JournalItemWithDescriptionResponse"]["required"]
+        )
         assert protected_schemas["ImportArchiveMetadataResponse"]["properties"] == [
             "archive_id",
             "card_review_hash",
